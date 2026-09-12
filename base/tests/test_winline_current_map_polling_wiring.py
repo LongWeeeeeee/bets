@@ -1449,7 +1449,8 @@ def test_missing_pinned_event_is_selected_then_fast_dom_reparsed(monkeypatch):
     assert out["p2_odds"] is not None
 
 
-def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch):
+@pytest.mark.parametrize("batch_enabled", [False, True])
+def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch, batch_enabled):
     _clear_wiring_state()
     modes: List[str] = []
 
@@ -1497,6 +1498,12 @@ def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch):
     monkeypatch.setattr(
         cs, "_bookmaker_parse_site_in_camoufox_page", _fake_parse, raising=False
     )
+    if batch_enabled:
+        monkeypatch.setattr(cs, "_winline_current_map_batch_context", {
+            "payload": {"html": "cached page before recovery"},
+        })
+        monkeypatch.setattr(cs, "_winline_fast_collect_from_payload",
+                            lambda *_a, **_k: _missing_collector_result())
 
     kwargs = dict(
         acquisition_mode="controlled_reload",
@@ -1504,10 +1511,59 @@ def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch):
         team1=TEAM1,
         team2=TEAM2,
     )
-    cs._winline_current_map_poller_collect(series="series-a", **kwargs)
-    cs._winline_current_map_poller_collect(series="series-b", **kwargs)
+    first = cs._winline_current_map_poller_collect(series="series-a", **kwargs)
+    second = cs._winline_current_map_poller_collect(series="series-b", **kwargs)
 
     assert modes == ["controlled_reload", "dynamic_dom"]
+    assert first["reload_attempted"] is True
+    assert second["reload_attempted"] is False
+
+
+def test_failed_reload_does_not_cache_old_dom_for_next_map(monkeypatch):
+    _clear_wiring_state()
+    calls = []
+    old_payload = {"html": "old DOM that survived a navigation timeout"}
+    batch = {"payload": old_payload}
+
+    class Page:
+        def evaluate(self, *_args):
+            return old_payload
+
+    class Session:
+        def get_or_create_page(self, *_args):
+            return Page()
+
+    def parse(*_args, acquisition_mode=None, **_kwargs):
+        calls.append(acquisition_mode)
+        return _missing_collector_result(
+            page_valid=False, market_status="error",
+            acquisition_error="navigation_timeout",
+        )
+
+    monkeypatch.setattr(cs, "_winline_current_map_batch_context", batch)
+    monkeypatch.setattr(cs, "_shared_camoufox_session", Session())
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True)
+    monkeypatch.setattr(cs, "_bookmaker_urls_for_mode",
+                        lambda _mode: {"winline": "https://winline.example/live"})
+    monkeypatch.setattr(cs, "_run_shared_camoufox_job",
+                        lambda _label, callback, **_kw: callback(object()))
+    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(cs, "_winline_fast_collect_from_payload",
+                        lambda *_a, **_k: _accepted_collector_result())
+    monkeypatch.setattr(cs, "_bookmaker_parse_site_in_camoufox_page", parse)
+    monkeypatch.setattr(cs, "_winline_map_site_result_to_collector_dict",
+                        lambda result, **_kw: result)
+    kwargs = dict(map_num=MAP_NUM, team1=TEAM1, team2=TEAM2)
+    first = cs._winline_current_map_poller_collect(
+        acquisition_mode="controlled_reload", series="series-a", **kwargs)
+    second = cs._winline_current_map_poller_collect(
+        acquisition_mode="dynamic_dom", series="series-b", **kwargs)
+
+    assert first["page_valid"] is False
+    assert batch["payload"] is None
+    assert calls == ["controlled_reload", "dynamic_dom"]
+    assert second["page_valid"] is False
+    assert second["p1_odds"] is None
 
 
 def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):

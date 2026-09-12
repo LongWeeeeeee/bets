@@ -117,3 +117,17 @@ def test_wrong_url_never_claims_absence():
     """Не тот URL — сначала вернуться на нужный, а не рапортовать отсутствие."""
     page = FakePage(_whole_page(), url="https://winline.ru/stavki/sport/futbol")
     assert _collect(page, map_num=4, team1="FOKUS", team2="MOUZ") is None
+
+
+def test_missing_market_freshness_ignores_changes_outside_captured_card():
+    """A changing neighbour must not make a frozen target card look fresh."""
+    before = _collect(FakePage(_whole_page()), map_num=4, team1="FOKUS", team2="MOUZ")
+    after = _collect(
+        FakePage(_whole_page(REAL_PAGE_SLICE + "<aside>Other live score 12:8</aside>")),
+        map_num=4, team1="FOKUS", team2="MOUZ",
+    )
+    for result in (before, after):
+        assert result["match_found"] is True
+        assert result["market_status"] == "missing"
+        assert result["p1_odds"] is None and result["p2_odds"] is None
+    assert before["dom_signature"] == after["dom_signature"]

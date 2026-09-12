@@ -66,6 +66,9 @@ RELOAD_SETTLE_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_SETTLE_S", 30.0)
 # счёт и таймер каждую секунду, поэтому неизменная подпись минутами означает,
 # что страница перестала получать обновления.
 RELOAD_STALE_DOM_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_STALE_DOM_S", 120.0)
+# A live market that disappears must recover by elapsed time even when a
+# deployment still overrides the miss-count threshold for an older cadence.
+RELOAD_MISSING_MARKET_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_MISSING_MARKET_S", 120.0)
 SAFETY_CEILING_SECONDS = 90 * 60.0  # 90 minutes; not proof map ended
 
 # Потолок существует ради опроса, который некому остановить: когда реестр не
@@ -394,6 +397,7 @@ class WinlineCurrentMapOddsPoller:
         reload_min_spacing_seconds: float = RELOAD_MIN_SPACING_SECONDS,
         reload_settle_seconds: float = RELOAD_SETTLE_SECONDS,
         reload_stale_dom_seconds: float = RELOAD_STALE_DOM_SECONDS,
+        reload_missing_market_seconds: float = RELOAD_MISSING_MARKET_SECONDS,
         safety_ceiling_seconds: float = SAFETY_CEILING_SECONDS,
         safety_ceiling_extension_seconds: float = SAFETY_CEILING_EXTENSION_SECONDS,
         safety_ceiling_max_seconds: float = SAFETY_CEILING_MAX_SECONDS,
@@ -412,6 +416,7 @@ class WinlineCurrentMapOddsPoller:
         self._reload_spacing = float(reload_min_spacing_seconds)
         self._reload_settle = float(reload_settle_seconds)
         self._reload_stale_dom = float(reload_stale_dom_seconds)
+        self._reload_missing_market = float(reload_missing_market_seconds)
         self._safety_ceiling_base = float(safety_ceiling_seconds)
         self._safety_ceiling = float(safety_ceiling_seconds)
         self._safety_ceiling_step = max(0.0, float(safety_ceiling_extension_seconds))
@@ -437,6 +442,9 @@ class WinlineCurrentMapOddsPoller:
         # поллер опрашивает раз в секунду, а интересно только ДВИЖЕНИЕ линии.
         self._history_last_key: Optional[tuple] = None
         self._consecutive_misses = 0
+        self._market_missing_since_mono: Optional[float] = None
+        self._had_accepted_odds = False
+        self._last_dom_scope: Optional[str] = None
         self._reload_count = 0
         self._last_reload_mono: Optional[float] = None
         self._last_dom_signature: Optional[str] = None
@@ -671,6 +679,9 @@ class WinlineCurrentMapOddsPoller:
         self._attempt_index = 0
         self._attempts = []
         self._consecutive_misses = 0
+        self._market_missing_since_mono = None
+        self._had_accepted_odds = False
+        self._last_dom_scope = None
         self._reload_count = 0
         self._last_reload_mono = None
         self._last_dom_signature = None
@@ -702,14 +713,23 @@ class WinlineCurrentMapOddsPoller:
         """
         if self._reload_stale_dom <= 0 or self._last_dom_change_mono is None:
             return False
+        if (self._last_dom_scope == "card" and self._continuous
+                and not (self._had_accepted_odds or self._map_confirmed_seen)):
+            # An unconfirmed next-map header can legitimately stay unchanged
+            # throughout the intermission. It is not a frozen live market.
+            return False
         return (now_mono - self._last_dom_change_mono) >= self._reload_stale_dom
 
     def _choose_acquisition_mode(self, now_mono: float) -> str:
         if not self._page_valid_for_dynamic:
             return "initial_goto"
-        # Перезагрузка — крайняя мера: она сама на десятки секунд лишает страницу
-        # карточек. Поводов ровно два: длинная серия промахов и застывший DOM.
-        if self._consecutive_misses >= self._reload_after or self._dom_is_stale(now_mono):
+        missing_overdue = (
+            self._reload_missing_market > 0
+            and self._market_missing_since_mono is not None
+            and now_mono - self._market_missing_since_mono >= self._reload_missing_market
+        )
+        if (self._consecutive_misses >= self._reload_after
+                or self._dom_is_stale(now_mono) or missing_overdue):
             if self._last_reload_mono is None or (
                 now_mono - self._last_reload_mono
             ) >= self._reload_spacing:
@@ -775,17 +795,21 @@ class WinlineCurrentMapOddsPoller:
             attempt_start_delta = max(0.0, started_mono - float(prior_start))
         self._last_attempt_start_mono = started_mono
 
-        mode_used = str(result.get("acquisition_mode_echo") or mode)
-        # If collector echoes a mode, trust caller-requested mode for policy.
         mode_used = mode
+        # A shared-page cooldown can serve a DOM read instead. A request alone
+        # must not reset recovery or count as a physical reload attempt.
+        reload_attempted = mode == "controlled_reload" and result.get("reload_attempted") is not False
+        if mode == "controlled_reload" and not reload_attempted:
+            mode_used = str(result.get("acquisition_mode_echo") or "dynamic_dom")
 
-        if mode_used == "controlled_reload":
+        if reload_attempted:
             self._reload_count += 1
             self._last_reload_mono = finished_mono
             # Страницу только что обновили: доказательства «рынка нет» набираем
             # заново, иначе прежняя серия промахов закажет следующую
             # перезагрузку сразу, как истечёт спейсинг.
             self._consecutive_misses = 0
+            self._market_missing_since_mono = None
 
         page_valid = result.get("page_valid")
         if page_valid is None:
@@ -794,6 +818,7 @@ class WinlineCurrentMapOddsPoller:
 
         dom_sig = _bounded_dom(result.get("dom_signature"))
         dom_hash = _bounded_dom(result.get("dom_hash"))
+        self._last_dom_scope = result.get("dom_signature_scope")
         # Отметка живости страницы: любая смена подписи DOM означает, что
         # обновления доходят. По ней (а не по отсутствию рынка) решается,
         # нужна ли перезагрузка.
@@ -811,6 +836,20 @@ class WinlineCurrentMapOddsPoller:
         browser_fail = _is_browser_failure(result)
         eligible_miss = _is_eligible_miss(result)
         accepted = _odds_accepted(result, identity=self._identity) if not browser_fail else False
+        if accepted:
+            self._had_accepted_odds = True
+        recovering_live_market = (
+            self._continuous and (self._had_accepted_odds or self._map_confirmed_seen)
+            and eligible_miss and page_valid and market_status == "missing"
+        )
+        settling = (
+            self._last_reload_mono is not None
+            and finished_mono - self._last_reload_mono < self._reload_settle
+        )
+        if not recovering_live_market or settling:
+            self._market_missing_since_mono = None
+        elif self._market_missing_since_mono is None:
+            self._market_missing_since_mono = finished_mono
 
         # Track classification signals
         if browser_fail:
@@ -923,15 +962,22 @@ class WinlineCurrentMapOddsPoller:
             # Overrun/coalesce is explicitly non-compliant even when serialized.
             "cadence_compliant": (not cadence_overrun),
             "acquisition_mode": mode_used,
+            "acquisition_mode_requested": mode,
+            "reload_attempted": reload_attempted,
             "current_url": _bounded_dom(result.get("current_url"), 256),
             "dom_signature": dom_sig,
             "dom_hash": dom_hash,
+            "dom_signature_scope": self._last_dom_scope,
             "market_status": market_status,
             "source": source,
             "p1_odds": p1,
             "p2_odds": p2,
             "parser_failure_reasons": parser_reasons,
             "consecutive_misses": self._consecutive_misses,
+            "market_missing_seconds": (
+                None if self._market_missing_since_mono is None
+                else round(max(0.0, finished_mono - self._market_missing_since_mono), 3)
+            ),
             "reload_count": self._reload_count,
             "last_reload_at_monotonic": self._last_reload_mono,
             "next_poll_at_monotonic": next_poll,

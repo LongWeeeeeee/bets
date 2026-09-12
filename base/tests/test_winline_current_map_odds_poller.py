@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import math
 import sys
 import time
@@ -1773,3 +1774,118 @@ def test_terminal_carries_the_moment_polling_started() -> None:
     term = (poller.tick() or {}).get("terminal") or {}
 
     assert term.get("started_at") == 1_788_257_000.0
+
+
+def test_dawn_mouz_capture_recovers_missing_market_before_114_misses(monkeypatch) -> None:
+    """Replay the actual 25:11→40:13 gap, retaining acquisition latency and prices."""
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "winline_dawn_mouz_gap_20260912.json").read_text())
+    mod = _load_mod()
+    monkeypatch.setattr(mod, "WINLINE_ODDS_HISTORY_PATH", None)
+    rows = fixture["attempts"]
+    clock = FakeClock(mono=0, wall=rows[0]["attempt_started_at"])
+    current = {}
+    reload_times = []
+
+    def collect(**kwargs):
+        if kwargs["acquisition_mode"] == "controlled_reload":
+            reload_times.append(clock.wall)
+        clock.advance(current["attempt_finished_at"] - current["attempt_started_at"])
+        # The capture is observation data, not a simulated bookmaker: requesting
+        # recovery earlier does not invent an earlier successful market response.
+        return dict(current)
+
+    poller, _, _ = _make_poller(
+        mod, collector=collect, clock=clock, continuous=True,
+        poll_interval_seconds=3.5, reload_after_consecutive_misses=114,
+    )
+    poller.begin(series=fixture["series"], **fixture["identity"])
+    outputs = []
+    for row in rows:
+        current = row
+        clock.advance(row["attempt_started_at"] - clock.wall)
+        out = poller.tick()
+        assert "attempt" in out, out
+        outputs.append(out["attempt"])
+
+    first_miss = next(row["attempt_finished_at"] for row in rows
+                      if row["market_status"] == "missing")
+    assert reload_times, "A long loaded-market miss must attempt recovery"
+    # 120-second recovery deadline plus the next recorded scheduler opportunity.
+    assert 120 <= reload_times[0] - first_miss < 140
+    assert all(b - a >= 300 for a, b in zip(reload_times, reload_times[1:]))
+    assert (outputs[-1]["p1_odds"], outputs[-1]["p2_odds"]) == (1.45, 2.50)
+    assert outputs[-1]["accepted"] is True
+    assert all(not out["accepted"] for row, out in zip(rows, outputs)
+               if row["market_status"] != "open")
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_missing_next_map_header_requires_live_confirmation(confirmed) -> None:
+    mod = _load_mod()
+    collector = FakeCollector([_miss(dom_signature_scope="card") for _ in range(35)])
+    poller, _, clock = _make_poller(
+        mod, collector=collector, continuous=True, reload_after_consecutive_misses=114,
+        is_map_current=lambda **_kw: {"current": True, "confirmed": confirmed},
+    )
+    poller.begin(**_base_identity())
+    modes = _drive(poller, clock, 30, step_seconds=10)
+    assert ("controlled_reload" in modes) is confirmed
+
+
+def test_shared_reload_suppression_preserves_pending_recovery_and_cooldown() -> None:
+    mod = _load_mod()
+    collector = FakeCollector([
+        {"market_status": "open", "p1_odds": 1.4, "p2_odds": 2.6},
+        _miss(),
+        _miss(reload_attempted=False, acquisition_mode_echo="shared_dom_batch"),
+    ])
+    poller, _, clock = _make_poller(
+        mod, collector=collector, continuous=True, reload_after_consecutive_misses=114,
+    )
+    poller.begin(**_base_identity())
+    poller.tick()
+    clock.advance(5)
+    poller.tick()
+    clock.advance(120)
+    suppressed = poller.tick()["attempt"]
+    assert suppressed["acquisition_mode_requested"] == "controlled_reload"
+    assert suppressed["acquisition_mode"] == "shared_dom_batch"
+    assert suppressed["reload_attempted"] is False
+    assert suppressed["reload_count"] == 0
+    assert suppressed["market_missing_seconds"] == 120
+
+    clock.advance(5)
+    recovered = poller.tick()["attempt"]
+    assert recovered["reload_attempted"] is True
+    assert recovered["reload_count"] == 1
+    assert recovered["market_missing_seconds"] is None
+    clock.advance(30)
+    poller.tick()
+    clock.advance(140)
+    assert poller.tick()["attempt"]["reload_attempted"] is False
+    clock.advance(130)
+    assert poller.tick()["attempt"]["reload_attempted"] is True
+
+
+@pytest.mark.parametrize("interrupt", ["open", "closed"])
+def test_missing_market_deadline_restarts_after_price_or_suspension(interrupt) -> None:
+    mod = _load_mod()
+    open_market = {"market_status": "open", "p1_odds": 1.4, "p2_odds": 2.6}
+    script = [open_market, _miss(), _miss(),
+              open_market if interrupt == "open" else _miss(market_status="closed"),
+              _miss(), _miss(), _miss()]
+    collector = FakeCollector([
+        dict(row, dom_signature=f"card-{i}", dom_hash=f"card-{i}")
+        for i, row in enumerate(script)
+    ])
+    poller, _, clock = _make_poller(
+        mod, collector=collector, continuous=True, reload_after_consecutive_misses=114,
+    )
+    poller.begin(**_base_identity())
+    for delay in (0, 5, 60, 50, 5, 70):
+        clock.advance(delay)
+        assert poller.tick()["attempt"]["reload_attempted"] is False
+    # A new uninterrupted 120s miss is required after the intervening price/close.
+    clock.advance(50)
+    assert poller.tick()["attempt"]["reload_attempted"] is True

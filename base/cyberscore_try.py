@@ -2303,8 +2303,9 @@ def _winline_fast_collect_from_payload(
             # всё равно обязан быть непустым, иначе преобразователь спишет это на
             # сбой браузера вместо честного отсутствия.
             details=card_text[:700] or f"winline_page_without_card:{len(html)}b",
-            dom_signature=str(abs(hash(html)))[:32],
+            dom_signature=str(abs(hash(card_text or html)))[:32],
         )
+        negative.dom_signature_scope = "card" if card_text else "page"
         negative.market_closed = market_closed
         # Карточка найдена -> отсутствует РЫНОК; карточки нет -> матч не выставлен.
         negative.match_found = bool(card_text)
@@ -2330,6 +2331,7 @@ def _winline_fast_collect_from_payload(
         dom_signature=str(abs(hash(card or "")))[:32],
     )
     result.promoted_from_match = bool(getattr(extract, "promoted_from_match", False))
+    result.dom_signature_scope = "card"
     result.card_team_order = getattr(extract, "card_team_order", None)
     result.card_odds = list(getattr(extract, "card_odds", None) or [])
     if result.promoted_from_match:
@@ -2517,6 +2519,7 @@ def _winline_map_site_result_to_collector_dict(
         "series": series,
         "current_url": current_url,
         "dom_signature": dom_signature,
+        "dom_signature_scope": getattr(result, "dom_signature_scope", None) or "page",
         "dom_hash": str(
             getattr(result, "dom_hash", None) or getattr(result, "dom_signature", None) or ""
         )[:128],
@@ -2622,7 +2625,8 @@ def _winline_current_map_poller_collect(
         }
 
     batch_context = globals().get("_winline_current_map_batch_context")
-    if isinstance(batch_context, dict) and isinstance(batch_context.get("payload"), dict):
+    if (mode != "controlled_reload" and isinstance(batch_context, dict)
+            and isinstance(batch_context.get("payload"), dict)):
         batched = _winline_fast_collect_from_payload(
             batch_context["payload"],
             series=series_s,
@@ -2633,6 +2637,7 @@ def _winline_current_map_poller_collect(
         )
         if batched is not None:
             batched["acquisition_mode_echo"] = "shared_dom_batch"
+            batched["reload_attempted"] = False
             return batched
 
     def _job(browser):
@@ -2695,7 +2700,11 @@ def _winline_current_map_poller_collect(
                         reason="winline_valid_page"
                     )
                 fast["acquisition_mode_echo"] = effective_mode
+                fast["reload_attempted"] = False
                 return fast
+        if effective_mode == "controlled_reload" and isinstance(batch_context, dict):
+            # Later cards must not reuse the snapshot taken before this reload.
+            batch_context["payload"] = None
         result = _bookmaker_parse_site_in_camoufox_page(
             page,
             site="winline",
@@ -2719,6 +2728,7 @@ def _winline_current_map_poller_collect(
             team2=t2,
             expected_url=urls.get("winline"),
         )
+        normalized["reload_attempted"] = effective_mode == "controlled_reload"
         if normalized.get("page_valid") is False and normalized.get("acquisition_error"):
             # A navigation timeout is not a market miss.  Do not keep polling a
             # stale named page forever.  Recovery is process-wide because all
@@ -2767,7 +2777,9 @@ def _winline_current_map_poller_collect(
             _bookmaker_restore_shared_camoufox_direct_route(
                 reason="winline_valid_page"
             )
-        if isinstance(batch_context, dict) and batch_context.get("payload") is None:
+        if (normalized.get("page_valid") is True
+                and not normalized.get("acquisition_error")
+                and isinstance(batch_context, dict) and batch_context.get("payload") is None):
             with contextlib.suppress(Exception):
                 snapshot = page.evaluate(
                     _WINLINE_FAST_CARD_JS,
