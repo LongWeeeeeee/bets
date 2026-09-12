@@ -11831,27 +11831,34 @@ def _ml_dispatch_sent_ledger():
 
 
 def _ml_dispatch_open_kills_windows(game_time: Optional[float]) -> List[str]:
-    """Окна ``KILLS_WINDOW_POLICY``, открытые для kills_window-решения ml_dispatch.
+    """Окна ``_kills_window_specs()`` (5-15/10-20/15-25/20-30), открытые для
+    kills_window-решения ml_dispatch.
 
-    Дедлайн окна = старт - 120 с (позже уже поздно ставить), lead = 180 с
-    (раньше ещё рано): окно "открыто" на ``[band_start-180, band_start-120)``
-    (план, п.«Тайминг»: «для kills_window дедлайн окна (старт − 120 с, lead
-    180 с) сохраняется»). Первое окно (``band_start=0``) поэтому никогда не
-    открывается для kills_window — у него нет времени на предварительную
-    ставку.
+    Дефект 2 (план ml-диспатча, этап 2): раньше эта функция читала
+    ``KILLS_WINDOW_POLICY`` — это пороги NW/lane для early-беттинга
+    (0/180/480/780 с), а не старты kill-окон. Правильный источник — те же
+    спецификации и правило, что использует
+    ``_select_nearest_kills_window``: окно открыто, если у него ещё есть
+    ``EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS`` (180 с по умолчанию) лида до
+    старта (``game_time + lead <= window_start``). Возвращает метки в порядке
+    от ближайшего открытого окна — ``ml_dispatch.evaluate`` берёт первую как
+    "ближайшую" (``ctx.kills_windows_open[0]``).
     """
     try:
         gt = float(game_time)
     except (TypeError, ValueError):
         return []
-    open_windows = []
-    for candidate in KILLS_WINDOW_POLICY:
-        band_start = float(candidate["band_start"])
-        lead_open = band_start - 180.0
-        deadline = band_start - 120.0
-        if lead_open <= gt < deadline:
-            open_windows.append(str(candidate["window"]))
-    return open_windows
+    if not math.isfinite(gt):
+        return []
+    lead = float(EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS)
+    candidates: List[Tuple[float, str]] = []
+    for start_m, end_m in _kills_window_specs():
+        window_start_s = float(start_m) * 60.0
+        if gt + lead > window_start_s:
+            continue
+        candidates.append((window_start_s, _kills_window_label(start_m, end_m)))
+    candidates.sort(key=lambda item: item[0])
+    return [label for _, label in candidates]
 
 
 def _ml_dispatch_extract_index_details(*blocks) -> Tuple[Optional[float], Dict[str, Any]]:
