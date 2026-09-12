@@ -91,19 +91,37 @@ class LaningService:
 _SERVICE = LaningService()
 
 
+def _dispatch_min_conf():
+    """``ML_DISPATCH_MIN_CONF`` read at format time (default 0.60, see ml_dispatch.py)."""
+    try:
+        return float(os.getenv("ML_DISPATCH_MIN_CONF", "0.60"))
+    except (TypeError, ValueError):
+        return 0.60
+
+
 def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
     """Build fresh per-match strings; each estimate can fail independently.
 
-    All uses the existing WIN_MODEL_DIR reader and its hero-keyed cache. Its
-    standalone draft probability is never recovered from an ensemble index.
+    All uses the existing WIN_MODEL_DIR reader (draft_model.win_index_draft,
+    a draft-phase ensemble index, E-260 "All >=20") and its hero-keyed cache.
+    Its standalone draft probability is never recovered from an ensemble
+    index, and is NOT the 35-feature prematch model (that one lives in
+    cyberscore_try/win_model_veto and is keyed by SOURCE_PREMATCH).
+
+    Each line gets a " ★" suffix when the confidence shown in that
+    same line is >= ML_DISPATCH_MIN_CONF (default 0.60), read at format
+    time so systemd env overrides apply without a restart-free reload.
     """
     result = {"ml_laning_line": "", "all_model_line": ""}
+    min_conf = _dispatch_min_conf()
     try:
         index = draft_model.win_index_draft(radiant_dict, dire_dict)
         if index is not None and np.isfinite(index) and -50 <= index <= 50:
             side = "Radiant" if index >= 0 else "Dire"
+            confidence = (50 + abs(index)) / 100.0
+            star = " ★" if confidence >= min_conf else ""
             result["all_model_line"] = (
-                f"🌐 All ML-модель: {side} {50 + abs(index):.1f}%")
+                f"🌐 All ML-модель: {side} {50 + abs(index):.1f}%{star}")
     except Exception:
         pass
     try:
@@ -118,8 +136,57 @@ def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
         if probability is not None:
             winner = int(np.argmax(probability))
             side = ("Dire", "Равенство", "Radiant")[winner]
+            confidence = float(probability[winner])
+            star = " ★" if confidence >= min_conf else ""
             result["ml_laning_line"] = (
-                f"ML Laning: {side} {probability[winner] * 100:.1f}% (золото, 10 мин)")
+                f"ML Laning: {side} {probability[winner] * 100:.1f}% (золото, 10 мин){star}")
+    except Exception:
+        pass
+    return result
+
+
+def verdicts(radiant_dict, dire_dict, timestamp, *, draft_model):
+    """Export the two model verdicts also shown by :func:`panel_lines`.
+
+    Returns ``{"all": {"side", "confidence"}|None, "lane": {"side",
+    "confidence", "p_tie"}|None}`` for ``ml_dispatch.Ctx.all``/``Ctx.lane``
+    (stage 2 wraps these dicts into ``ml_dispatch.ModelVerdict``). Sides are
+    strictly "Radiant"/"Dire" (never "tie"), matching the ml_dispatch
+    contract, even though "lane" reports a tie-aware ML Laning model:
+
+    - "all": same value as ``all_model_line`` above (draft_model.win_index_draft,
+      NOT the prematch index) — side by sign of the index, confidence =
+      (50 + |index|) / 100.
+    - "lane": side is whichever of Radiant/Dire has the higher of the two
+      non-tie probabilities (ignoring whether the tie class is actually the
+      argmax, unlike the printed ``ml_laning_line``, which can read
+      "Равенство"); confidence is that side's own probability; "p_tie" is
+      the tie-class probability, exposed separately so a caller can decide
+      how to treat near-toss-up predictions.
+    """
+    result = {"all": None, "lane": None}
+    try:
+        index = draft_model.win_index_draft(radiant_dict, dire_dict)
+        if index is not None and np.isfinite(index) and -50 <= index <= 50:
+            side = "Radiant" if index >= 0 else "Dire"
+            result["all"] = {"side": side, "confidence": (50 + abs(index)) / 100.0}
+    except Exception:
+        pass
+    try:
+        heroes = draft_model._heroes_vector(radiant_dict, dire_dict)
+        if heroes is None:
+            return result
+        accounts = [
+            (side.get(f"pos{position}") or {}).get("account_id", 0) or 0
+            for side in (radiant_dict, dire_dict) for position in range(1, 6)
+        ]
+        probability = _SERVICE.predict(heroes, accounts, timestamp)
+        if probability is not None:
+            dire_p, tie_p, radiant_p = (float(probability[0]), float(probability[1]), float(probability[2]))
+            if radiant_p >= dire_p:
+                result["lane"] = {"side": "Radiant", "confidence": radiant_p, "p_tie": tie_p}
+            else:
+                result["lane"] = {"side": "Dire", "confidence": dire_p, "p_tie": tie_p}
     except Exception:
         pass
     return result

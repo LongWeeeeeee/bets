@@ -82,7 +82,9 @@ def test_all_and_laning_fail_independently(monkeypatch):
         return np.array([.39, .01, .60])
     monkeypatch.setattr(serving, '_SERVICE', SimpleNamespace(predict=predict))
     lines = serving.panel_lines(*teams, 12345, draft_model=draft)
-    assert lines == {'ml_laning_line': 'ML Laning: Radiant 60.0% (золото, 10 мин)',
+    # ml_laning_line hits 60.0%, exactly ML_DISPATCH_MIN_CONF's default
+    # threshold, so it gets the " ★" marker; all_model_line at 55.4% does not.
+    assert lines == {'ml_laning_line': 'ML Laning: Radiant 60.0% (золото, 10 мин) ★',
                      'all_model_line': '🌐 All ML-модель: Dire 55.4%'}
     assert calls == [(heroes, list(range(1, 11)), 12345)]
     draft.win_index_draft = lambda *args: None
@@ -100,4 +102,6 @@ def test_equal_gold_is_a_real_class(monkeypatch):
     draft = SimpleNamespace(_heroes_vector=lambda *args: tuple(range(1, 11)),
                             win_index_draft=lambda *args: None)
     result = serving.panel_lines({}, {}, 12345, draft_model=draft)
-    assert result['ml_laning_line'] == 'ML Laning: Равенство 60.0% (золото, 10 мин)'
+    # 60.0% also hits the default ML_DISPATCH_MIN_CONF threshold -> starred,
+    # even though "Равенство" itself is not a bettable side (display-only).
+    assert result['ml_laning_line'] == 'ML Laning: Равенство 60.0% (золото, 10 мин) ★'
