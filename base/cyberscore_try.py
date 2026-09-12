@@ -7568,21 +7568,32 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     # раннего перевеса по нетворту (маркер словаря early_dict, окно 20-28 минут).
     # Стоит ВЫШЕ late-строки: раньше по игровому времени. Отказ молчаливый, как
     # у late, — нет оценки, нет строки, карточка выглядит ровно как раньше.
+    # ★-порог читается инлайново (не отдельной функцией): `_format_win_model_line`
+    # исполняется тестами в изолированном exec() без остального модуля
+    # (test_early_win_model.py), где имя внешнего хелпера было бы NameError.
+    try:
+        _ml_star_min_conf = float(os.getenv("ML_DISPATCH_MIN_CONF", "0.60"))
+    except Exception:                                # noqa: BLE001
+        _ml_star_min_conf = 0.60
     try:
         _early_nw = details.get("early_nw") if details else win_model_veto.last_early_nw(index)
     except Exception:                                # noqa: BLE001
         _early_nw = None
     if _early_nw:
+        _early_nw_conf = float(_early_nw['confidence'])
+        _early_nw_star = " ★" if _early_nw_conf >= _ml_star_min_conf else ""
         line += (f"\n\U0001F550 Early NW ML-модель: "
-                 f"{_early_nw['side']} {float(_early_nw['confidence']) * 100:.1f}%")
+                 f"{_early_nw['side']} {_early_nw_conf * 100:.1f}%{_early_nw_star}")
     # Display-only winner estimate for the 20–34 minute population.
     try:
         _early_win = details.get("early_win") if details else win_model_veto.last_early_win(index)
     except Exception:                                # noqa: BLE001
         _early_win = None
     if _early_win:
+        _early_win_conf = float(_early_win['confidence'])
+        _early_win_star = " ★" if _early_win_conf >= _ml_star_min_conf else ""
         line += (f"\n\U0001F3C1 Early Win ML-модель: "
-                 f"{_early_win['side']} {float(_early_win['confidence']) * 100:.1f}%")
+                 f"{_early_win['side']} {_early_win_conf * 100:.1f}%{_early_win_star}")
     if standalone_all_line:
         line += f"\n{standalone_all_line}"
     # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
@@ -7594,8 +7605,10 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     except Exception:                                # noqa: BLE001
         _late = None
     if _late:
+        _late_conf = float(_late['confidence'])
+        _late_star = " ★" if _late_conf >= _ml_star_min_conf else ""
         line += (f"\n\U0001F551 Late ML-\u043c\u043e\u0434\u0435\u043b\u044c: "
-                 f"{_late['side']} {float(_late['confidence']) * 100:.1f}%")
+                 f"{_late['side']} {_late_conf * 100:.1f}%{_late_star}")
     # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
     # тогда выглядит ровно как раньше.
     try:
@@ -11713,6 +11726,19 @@ def _half_stake_elo_underdog_reject(
 # вызове (не модульной константой), чтобы тесты и systemd env-override не
 # требовали перезагрузки модуля.
 _DISPATCH_MODE_VALUES = ("star", "shadow", "ml")
+
+
+def _ml_dispatch_min_conf() -> float:
+    """``ML_DISPATCH_MIN_CONF`` at format time (default 0.60), see ml_dispatch.py.
+
+    То же значение и то же чтение "при каждом вызове", что и
+    `laning_serving._dispatch_min_conf()` — обе панели (Early NW/Early
+    Win/Late здесь, All/ML Laning там) подсвечивают ★ по одному порогу.
+    """
+    try:
+        return float(os.getenv("ML_DISPATCH_MIN_CONF", "0.60"))
+    except (TypeError, ValueError):
+        return 0.60
 
 
 def dispatch_mode() -> str:
