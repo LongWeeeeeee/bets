@@ -4,8 +4,8 @@ title: "ML-диспатч: правила владельца и режимы sta
 date: "2026-09-12"
 area: model
 status: "in-progress"
-corpus: "код `base/ml_dispatch.py` (457 строк, unit-тесты `test_ml_dispatch.py`) + гейт `DISPATCH_MODE` в `cyberscore_try.py`; офлайн-обоснование — E-282 (калибровка/бэктест) и E-283 (replay по журналу отправленных ставок); прод-числа shadow-режима ещё не собраны"
-verdict: "Реализация (stage 1+2 плана `swirling-giggling-kurzweil.md`) завершена и покрыта тестами; правила соответствуют владельческим решениям E-282/E-283 (порог 0.60, вето Late/All ПОСЛЕ поддержки по стороне, U/F по ELO-диффу 50, тайминг lane->00/600с). Прод-эффект (доля решений, расхождение сторон со STAR-панелью, реальные skip-причины) НЕ измерен — включение в shadow ещё не запускалось на момент записи; addendum обязателен после 24-48ч shadow."
+corpus: "код `base/ml_dispatch.py` (unit-тесты `test_ml_dispatch.py`, 66 зелёных вместе с `test_dispatch_mode_gate.py`) + гейт `DISPATCH_MODE` в `cyberscore_try.py`; офлайн-обоснование — E-282 (калибровка/бэктест) и E-283 (replay по журналу отправленных ставок); shadow на serv1 12.09 (7d60666): 135 тиков, 5 карт за 2.4 ч, фикстура `base/tests/fixtures/ml_dispatch_shadow_8995161253_map2_tick61.json`"
+verdict: "Реализация (stage 1+2 плана `swirling-giggling-kurzweil.md`) завершена и покрыта тестами; правила соответствуют владельческим решениям E-282/E-283 (порог 0.60, вето Late/All ПОСЛЕ поддержки по стороне, U/F по ELO-диффу 50, тайминг lane->00/600с). Addendum 12.09 (shadow 2.4 ч, 5 карт): 3/5 карт получили `win/now`, 2 из них — через вето Late при более сильных ★ Early NW/Early Win за другую сторону (0.81/0.77 против late 0.60); 1 карта с одиночной ★ Early NW 0.74 осталась без решения; пример владельца 8995161253 m2 решён верно и не доставлен только из-за shadow. По правилу владельца «хоть одна ★ → сигнал» `early_nw` добавлен в `DEFAULT_WIN_MODELS` (red 5 → green 66), прод переведён в `DISPATCH_MODE=ml`; вето и тайминг не менялись — отдельное решение."
 harness: "base/ml_dispatch.py; base/cyberscore_try.py:_ml_dispatch_tick/_dispatch_mode_reject_for_delivery; pytest base/tests/test_ml_dispatch.py base/tests/test_dispatch_mode_gate.py -q"
 ---
 
@@ -192,3 +192,58 @@ PY
   (см. память `map-end-is-seen-20-minutes-late.md` про похожий класс
   проблем в другом месте pipeline), `_timing_for_win`/`_ml_dispatch_open_kills_windows`
   могут посчитать окно открытым/закрытым по устаревшему времени.
+
+## Addendum 12.09.2026 16:50 MSK — shadow на serv1 и правило «хоть одна ★»
+
+**Что измерено.** `runtime/ml_dispatch_decisions.jsonl` на serv1 (7d60666,
+`DISPATCH_MODE=shadow`, до дедупа лога 66b1de5): 135 тиков, 5 уникальных карт
+за 2.4 ч (`ts` 1789214579..1789221070). Команда — скрипт
+`shadow_permap.py` (стоит в фикстуре `base/tests/fixtures/…tick61.README.md`),
+поданный через `ssh root@serv1 'cd /root/main && python3 -' < script`.
+
+| карта | elo_diff / U | вердикты (последний тик) | решение | почему |
+|---|---|---|---|---|
+| 8994944191 m1 Xipto–Team Bored | 61 / Dire | nw R0.60★ ew R0.68★ late **D0.70★** all D0.53 lane R0.70 | win/Dire/now (gt 2270) | Radiant вето Late; Dire — поддержка Late |
+| 8995044002 m1 | 31 / — | nw R0.50 ew R0.55 late D0.57 all D0.52 | — | ни одной ★ |
+| 8995038826 m2 GamerLegion–Pipsqueak | 218 / Dire | nw **R0.81★** ew **R0.77★** late D0.60★ all R0.53 lane R0.61 | win/Dire/now (с драфта, gt −79) | Radiant вето Late ровно на 0.60; Dire — поддержка Late |
+| 8995085405 m2 Xipto–Team Bored | 50 / — | nw **D0.74★** ew R0.55 late D0.57 all D0.54 lane D0.59 | — (26 тиков) | `early_nw` не был в `DEFAULT_WIN_MODELS` |
+| 8995161253 m2 Stariy_Bog–Daxak | 18 / — | nw D0.73★ ew D0.61★ late D0.58 all D0.60★ lane D0.63 | win/Dire/now | пример владельца; не доставлено только из-за `mode=shadow` |
+
+Ни одного `conflict`, ни одного `model_missing` (все пять вердиктов на всех
+тиках). `delivered` пуст на всех тиках — shadow.
+
+**Решение владельца (чат, 16:50 MSK):** «если хоть 1 из Early NW / Early Win /
+All / Late имеет ★ — сигнал посылается; сделай и перезапусти прод».
+Реализация: `DEFAULT_WIN_MODELS = (late, all, early_win, early_nw)`;
+★ в панели и порог `evaluate` — один и тот же `ML_DISPATCH_MIN_CONF=0.60`,
+поэтому «есть ★» ⇔ «есть поддержка». Побочный эффект: `expected_wr` берётся
+как максимум по голосующим, у Early NW он выше (0.73 → `min_odds` 1.37 вместо
+1.64 от Early Win 0.61). Вето Late/All и тайминг 600 с НЕ менялись —
+карты 1 и 3 таблицы показывают, что вето может увести сигнал на сторону,
+ПРОТИВОПОЛОЖНУЮ самым сильным ★ (0.81/0.77 → ставка на Dire по late 0.60);
+это отдельное решение владельца, здесь не принято. `ML_DISPATCH_MAX_GAME_TIME`
+НЕ задан: пример владельца сработал на gt 1597 с и должен доставляться.
+
+**Тесты:** red-before-green — на старом дефолте падают 5
+(`test_owner_example_8995161253_map2_backs_dire_with_all_four_stars`,
+`test_lone_early_nw_star_backs_the_side_under_default_config`,
+`test_any_one_of_four_win_models_confirms_the_{favorite,underdog}`,
+`test_config_from_env_defaults_when_unset`), на новом — 0 (66 passed вместе с
+`test_dispatch_mode_gate.py`). `test_kills_window_absent_without_an_open_window`
+сужен до kills-рынков: Early NW 0.70 за андердога теперь даёт и win-сигнал —
+это и есть правило.
+
+**Прод:** push `main` → serv1 `git pull --ff-only` → `py_compile` + импорт
+`base.ml_dispatch` → drop-in `dispatch.conf` `DISPATCH_MODE=ml` →
+`daemon-reload` → проверка живых карт отдельной командой →
+`scripts/run/restart_cyberscore.sh`. В `ml` STAR-ставки блокируются
+(`_dispatch_mode_reject_for_delivery`), идут только `origin=ml_dispatch`;
+откат — `DISPATCH_MODE=shadow|star` + рестарт.
+
+**Где искать ошибку после включения.** Сигнала нет при ★ → смотреть
+`runtime/ml_dispatch_decisions.jsonl`: `decisions[].timing=="wait_600"` (до
+600 с игрового времени без подтверждения Lane), `delivered[].status=="blocked"`
+(гейты доставки: ценовой пол `🚫 ML-ставка ниже ценового пола` в
+`cyberscore_sourcetv.log`, allowlist лиг, `BOOKMAKER_BLOCK_WITHOUT_ODDS`),
+`skipped[].reason=="veto"` (Late/All за другую сторону), `dedup`
+(`runtime/ml_dispatch_sent.json`).

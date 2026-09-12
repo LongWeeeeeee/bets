@@ -1,0 +1,87 @@
+{
+  "ts": 1789220824.2641494,
+  "match_key": "dltv.org/matches/8995161253.61",
+  "base_url": "dltv.org/matches/8995161253",
+  "map_num": 2,
+  "game_time": 1597.0,
+  "teams": {
+    "radiant": "Stariy_Bog Club",
+    "dire": "Daxak Club"
+  },
+  "heroes": [
+    54,
+    106,
+    36,
+    26,
+    87,
+    114,
+    120,
+    60,
+    121,
+    40
+  ],
+  "elo_r": 1835.155067866569,
+  "elo_d": 1817.2674043497786,
+  "elo_diff": 17.887663516790326,
+  "underdog_side": null,
+  "verdicts": {
+    "early_nw": {
+      "side": "Dire",
+      "confidence": 0.7324
+    },
+    "early_win": {
+      "side": "Dire",
+      "confidence": 0.6086
+    },
+    "late": {
+      "side": "Dire",
+      "confidence": 0.5838
+    },
+    "all": {
+      "side": "Dire",
+      "confidence": 0.6033
+    },
+    "lane": {
+      "side": "Dire",
+      "confidence": 0.6296
+    }
+  },
+  "prematch_index": -7.556,
+  "decisions": [
+    {
+      "market": "win",
+      "target_side": "Dire",
+      "target_team": "Daxak Club",
+      "rule": "win_single_model_confirm",
+      "timing": "now",
+      "expected_wr": 0.60856,
+      "min_odds": 1.64,
+      "models_for": [
+        "all",
+        "early_win"
+      ]
+    }
+  ],
+  "skipped": [
+    {
+      "market": "win",
+      "side": "Radiant",
+      "reason": "below_threshold",
+      "detail": "no configured win model >= 0.6 for Radiant"
+    },
+    {
+      "market": "kills_window",
+      "side": null,
+      "reason": "no_underdog",
+      "detail": "no side is >= underdog diff"
+    },
+    {
+      "market": "kills_total",
+      "side": null,
+      "reason": "no_underdog",
+      "detail": "no side is >= underdog diff"
+    }
+  ],
+  "delivered": [],
+  "mode": "shadow"
+}

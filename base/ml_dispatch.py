@@ -16,7 +16,10 @@ Rules implemented (owner decisions, 12.09.2026 — see
   (default 50). If ``|elo_radiant - elo_dire| < diff`` there is no U/F
   split (``underdog_side is None``).
 - Win market (x1 always): a side ``S`` is backed if at least one of the
-  configured ``ML_DISPATCH_WIN_MODELS`` (default ``late,all,early_win``)
+  configured ``ML_DISPATCH_WIN_MODELS`` (default ``late,all,early_win,early_nw``
+  — owner rule 12.09.2026 16:50: "если хоть одна из Early NW / Early Win /
+  All / Late имеет ★, сигнал посылается"; ★ in the panel is exactly
+  ``confidence >= ML_DISPATCH_MIN_CONF``, so any starred model is support)
   favors ``S`` at >= threshold. ``S`` is vetoed if Late or All (always
   checked, independent of the win-models config) favors the *other*
   side at >= threshold. Vetoes are resolved PER SIDE FIRST, conflict
@@ -94,7 +97,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SIDES = ("Radiant", "Dire")
 VETO_MODELS = ("late", "all")
-DEFAULT_WIN_MODELS = ("late", "all", "early_win")
+DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw")
 ALLOWED_WIN_MODELS = ("late", "all", "early_win", "early_nw")
 KILLS_EARLY_MODELS = ("early_nw", "early_win")
 
