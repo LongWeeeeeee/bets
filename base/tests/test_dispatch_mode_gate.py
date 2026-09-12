@@ -17,6 +17,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import cyberscore_try as C  # noqa: E402
+from base import laning_serving as _laning_serving_module  # noqa: E402
 
 
 STAR_WIN_MESSAGE = "СТАВКА НА Team Synapse x2\nSynapse VS Nemiga"
@@ -154,3 +155,94 @@ def test_late_star_line_still_matches_panel_regex() -> None:
     match = C._LATE_WIN_MODEL_PANEL_RE.search(text)
     assert match is not None
     assert match.group("side") == "Radiant"
+
+
+# --- _ml_dispatch_tick: shadow logs only, ml delivers once with dedup -------
+
+class _FakeLedger:
+    def __init__(self):
+        self._keys: set = set()
+
+    def as_set(self):
+        return set(self._keys)
+
+    def add(self, key):
+        self._keys.add(tuple(key))
+
+    def save(self):
+        pass
+
+
+def _patch_ml_dispatch_tick_deps(monkeypatch, *, delivered_calls, logged, ledger):
+    # Late confirms Radiant at 0.70 (>= 0.60 default threshold); no All/lane
+    # verdict at all, so nothing vetoes Radiant.
+    monkeypatch.setattr(
+        C, "_ml_dispatch_extract_index_details",
+        lambda *blocks: (5.0, {"late": {"side": "Radiant", "confidence": 0.70}}),
+    )
+    monkeypatch.setattr(C.win_model_veto, "_heroes_vector", lambda r, d: tuple(range(10)))
+    monkeypatch.setattr(_laning_serving_module, "verdicts", lambda *a, **k: {"all": None, "lane": None})
+    monkeypatch.setattr(
+        C, "_team_elo_base_rating_for_side",
+        lambda meta, side: 1500.0 if side == "radiant" else 1400.0,
+    )
+    monkeypatch.setattr(C, "_ml_dispatch_sent_ledger", lambda: ledger)
+    monkeypatch.setattr(
+        C, "_ml_dispatch_record_decisions",
+        lambda record, *, dedup_view: logged.append(record),
+    )
+    monkeypatch.setattr(
+        C, "_deliver_and_persist_signal",
+        lambda *a, **k: delivered_calls.append((a, k)) or True,
+    )
+
+
+def _call_ml_dispatch_tick(match_key: str = "dltv.org/matches/ml-dispatch-tick.0") -> None:
+    C._ml_dispatch_tick(
+        match_key=match_key,
+        radiant_team_name="Team A",
+        dire_team_name="Team B",
+        live_league={},
+        top="", mid="", bot="",
+        protracker_payload=None,
+        team_elo_block="",
+        team_elo_meta={"radiant_base_rating": 1500.0, "dire_base_rating": 1400.0},
+        game_time_seconds=650.0,
+        radiant_lead=0,
+        full_message_text="СТАВКА НА Team A x1\nTeam A VS Team B",
+    )
+
+
+def test_ml_dispatch_tick_shadow_mode_logs_without_delivering(monkeypatch) -> None:
+    monkeypatch.setenv("DISPATCH_MODE", "shadow")
+    delivered_calls: list = []
+    logged: list = []
+    _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered_calls, logged=logged, ledger=_FakeLedger())
+
+    _call_ml_dispatch_tick()
+
+    assert delivered_calls == []
+    assert len(logged) == 1
+    assert logged[0]["mode"] == "shadow"
+    win_decisions = [d for d in logged[0]["decisions"] if d["market"] == "win"]
+    assert len(win_decisions) == 1
+    assert win_decisions[0]["target_side"] == "Radiant"
+
+
+def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None:
+    monkeypatch.setenv("DISPATCH_MODE", "ml")
+    delivered_calls: list = []
+    logged: list = []
+    ledger = _FakeLedger()
+    _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered_calls, logged=logged, ledger=ledger)
+
+    _call_ml_dispatch_tick()
+    _call_ml_dispatch_tick()  # same match/map -- ledger now carries the dedup key
+
+    assert len(delivered_calls) == 1
+    call_args, call_kwargs = delivered_calls[0]
+    assert call_kwargs["stake_multiplier_context"]["origin"] == "ml_dispatch"
+    assert call_kwargs["stake_multiplier_context"]["calibration"]["expected_wr"] == 0.70
+    assert len(logged) == 2
+    assert logged[0]["delivered"][0]["status"] == "delivered"
+    assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision
