@@ -6,12 +6,19 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+from scipy.sparse import vstack
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 from threadpoolctl import threadpool_limits
 
 from draft_features import DraftFeatureEncoder, KIND_PAIR
 from kills_transfer_data import atomic_json
+
+
+def public_design(encoder, heroes, batch_size=25000):
+    """Bound dense pair-encoding temporaries while retaining the sparse design."""
+    return vstack([encoder.transform(heroes[start:start+batch_size]).astype(np.float32)
+                   for start in range(0, len(heroes), batch_size)], format="csr")
 
 
 def causal_total_targets(totals, starts, ends, minimum=100):
@@ -71,8 +78,8 @@ def fit_public(data, output_dir, threads=2):
                           "models": {}}
     for name, signed, target in (("total", False, total_y), ("share", True, share_y)):
         encoder = DraftFeatureEncoder.fit(data["heroes"][train], KIND_PAIR, signed=signed)
-        design = encoder.transform(data["heroes"]).astype(np.float32)
-        xtrain, xvalid = design[train], design[valid]
+        xtrain = public_design(encoder, data["heroes"][train])
+        xvalid = public_design(encoder, data["heroes"][valid])
         best = None
         trials = []
         for alpha in (100.0, 1000.0):
@@ -88,8 +95,8 @@ def fit_public(data, output_dir, threads=2):
         # period can train profiles for later pro maps but does not refit here.
         bundle[name] = {"encoder": encoder, "model": best[1]}
         report["models"][name] = {"selected_alpha": best[2], "trials": trials,
-                                   "columns": design.shape[1]}
-        del design, xtrain, xvalid
+                                   "columns": xtrain.shape[1]}
+        del xtrain, xvalid
         gc.collect()
     report["week_means"] = week_means
     temp = out / "public_models.joblib.tmp"

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kills_transfer_features import causal_pro_context, profile_features, public_profiles, swap, temporal_splits
 from train_kills_transfer import collapse, targets
-from kills_public_transfer import causal_total_targets
+from kills_public_transfer import causal_total_targets, public_design
 
 
 def rows(n=4):
@@ -97,6 +97,17 @@ def test_public_normalization_uses_same_past_only_rule_across_periods():
     scaled, _, _ = causal_total_targets(totals*3, starts, ends, minimum=1)
     changed, _, _ = causal_total_targets(totals, starts, ends, minimum=1)
     np.testing.assert_allclose(scaled, changed, equal_nan=True)
+
+
+def test_batched_public_encoding_matches_full_matrix_with_side_signs():
+    from draft_features import DraftFeatureEncoder, KIND_PAIR
+    heroes = np.concatenate([rows(5)["heroes"], swap(rows(5)["heroes"])])
+    for signed in (False, True):
+        encoder = DraftFeatureEncoder.fit(heroes, KIND_PAIR, signed=signed, pair_min_support=1)
+        full = encoder.transform(heroes).astype(np.float32)
+        batch = public_design(encoder, heroes, batch_size=3)
+        assert batch.dtype == np.float32
+        assert (batch != full).nnz == 0
 
 
 def test_training_smoke_saves_reloadable_models_and_two_side_predictions(tmp_path, monkeypatch):
