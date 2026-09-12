@@ -416,3 +416,41 @@ def test_laning_verdicts_returns_none_on_missing_data():
                             win_index_draft=lambda *args: None)
     result = serving.verdicts({}, {}, 12345, draft_model=draft)
     assert result == {"all": None, "lane": None}
+
+
+# --- ML_DISPATCH_MAX_GAME_TIME (default off) ----------------------------
+
+def test_max_game_time_unset_behaves_as_before():
+    ctx = base_ctx(game_time=9999.0, late=ModelVerdict("Radiant", 0.70))
+    result = evaluate(ctx, cfg())
+    win_decisions = [d for d in result.decisions if d.market == "win"]
+    assert len(win_decisions) == 1
+    assert win_decisions[0].target_side == "Radiant"
+    assert not any(s.reason == md.REASON_TOO_LATE for s in result.skipped)
+
+
+def test_max_game_time_950_over_900_cap_skips_too_late():
+    ctx = base_ctx(game_time=950.0, late=ModelVerdict("Radiant", 0.70))
+    result = evaluate(ctx, cfg(max_game_time=900.0))
+    win_decisions = [d for d in result.decisions if d.market == "win"]
+    assert win_decisions == []
+    assert any(
+        s.market == "win" and s.side is None and s.reason == md.REASON_TOO_LATE
+        for s in result.skipped
+    )
+
+
+def test_max_game_time_650_under_900_cap_still_decides():
+    ctx = base_ctx(game_time=650.0, late=ModelVerdict("Radiant", 0.70))
+    result = evaluate(ctx, cfg(max_game_time=900.0))
+    win_decisions = [d for d in result.decisions if d.market == "win"]
+    assert len(win_decisions) == 1
+    assert win_decisions[0].target_side == "Radiant"
+    assert not any(s.reason == md.REASON_TOO_LATE for s in result.skipped)
+
+
+def test_config_from_env_max_game_time_empty_or_zero_means_no_cap():
+    assert Config.from_env({}).max_game_time is None
+    assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": ""}).max_game_time is None
+    assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": "0"}).max_game_time is None
+    assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": "900"}).max_game_time == 900.0

@@ -74,6 +74,13 @@ for the stage-2 owner to confirm before wiring into ``cyberscore_try``):
 3. ``prematch_index`` is carried on ``Ctx`` for logging only (per the
    plan, the 35-feature prematch model is explicitly not applied to
    ML-dispatch decisions); ``evaluate`` never reads it.
+
+Optional time cap: ``ML_DISPATCH_MAX_GAME_TIME`` (seconds; unset/empty/<=0 =
+no cap, the historical behavior). When set and ``ctx.game_time`` exceeds it,
+the win market produces no decisions for either side — a single
+``Skipped(market="win", side=None, reason="too_late", ...)`` with the
+game_time and cap in ``detail`` — while ``kills_window``/``kills_total`` are
+unaffected (they have their own deadline logic via ``kills_windows_open``).
 """
 from __future__ import annotations
 
@@ -98,6 +105,7 @@ REASON_NO_UNDERDOG = "no_underdog"
 REASON_TIMING_WAIT = "timing_wait"
 REASON_DEDUP = "dedup"
 REASON_MODEL_MISSING = "model_missing"
+REASON_TOO_LATE = "too_late"
 
 
 def _other_side(side: str) -> str:
@@ -164,6 +172,7 @@ class Config:
     timing_seconds: float = 600.0
     min_odds_margin: float = 0.0
     sent_path: str = "runtime/ml_dispatch_sent.json"
+    max_game_time: Optional[float] = None
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -180,6 +189,14 @@ class Config:
             token.strip() for token in raw_models.split(",")
             if token.strip() in ALLOWED_WIN_MODELS
         ) or DEFAULT_WIN_MODELS
+        raw_max_game_time = env.get("ML_DISPATCH_MAX_GAME_TIME")
+        max_game_time = None
+        if raw_max_game_time not in (None, ""):
+            try:
+                parsed = float(raw_max_game_time)
+            except (TypeError, ValueError):
+                parsed = 0.0
+            max_game_time = parsed if parsed > 0 else None
         return cls(
             min_conf=_float("ML_DISPATCH_MIN_CONF", 0.60),
             underdog_min_diff=_float("ML_DISPATCH_UNDERDOG_MIN_DIFF", 50.0),
@@ -188,6 +205,7 @@ class Config:
             timing_seconds=_float("ML_DISPATCH_TIMING_SECONDS", 600.0),
             min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.0),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
+            max_game_time=max_game_time,
         )
 
     def resolved_sent_path(self) -> Path:
@@ -255,6 +273,17 @@ def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
 def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]:
     decisions: List[Decision] = []
     skipped: List[Skipped] = []
+
+    if (
+        cfg.max_game_time is not None
+        and ctx.game_time is not None
+        and ctx.game_time > cfg.max_game_time
+    ):
+        skipped.append(Skipped(
+            "win", None, REASON_TOO_LATE,
+            f"game_time={ctx.game_time} > max_game_time={cfg.max_game_time}",
+        ))
+        return decisions, skipped
 
     configured = [name for name in cfg.win_models if name in ALLOWED_WIN_MODELS]
     present_any = any(ctx.model(name) is not None for name in configured)

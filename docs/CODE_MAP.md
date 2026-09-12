@@ -1454,6 +1454,7 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_MIN_ODDS_MARGIN` | `0.0` | запас в `min_odds = 1/(expected_wr-margin)`; известный нулевой пол цены, флаг существует, чтобы позже ужесточить |
 | `ML_DISPATCH_SENT_PATH` | `runtime/ml_dispatch_sent.json` | путь дедуп-реестра (относительно ROOT, если не абсолютный) |
 | `ML_DISPATCH_LOG_PATH` (читается в `cyberscore_try.py`) | `runtime/ml_dispatch_decisions.jsonl` | путь лога решений |
+| `ML_DISPATCH_MAX_GAME_TIME` | не задан (без потолка) | если задан и `game_time` > потолка, win-маркет пропускается с `reason=too_late`; kills не затронуты |
 
 **Правила (решения владельца 12.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из
