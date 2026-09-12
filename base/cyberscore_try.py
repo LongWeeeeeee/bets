@@ -11651,6 +11651,9 @@ def _format_signal_header(
         if window_text:
             return f"СТАВКА НА Ранние килы {window_text} {team_name}"
         return f"СТАВКА НА Ранние килы {team_name}"
+    if special_header_mode == "kills_total":
+        # ML-диспатч, market="kills_total" (без линии, без окна) — этап 2 плана.
+        return f"СТАВКА НА Тотал килов {team_name} БОЛЬШЕ"
     return f"СТАВКА НА {team_name} x{_format_stake_multiplier_label(stake_multiplier)}"
 
 
@@ -11798,6 +11801,450 @@ def _log_dispatch_mode_block_once(match_key: str, decision: Dict[str, Any]) -> N
 
 def _dispatch_mode_block_detail(decision: Dict[str, Any]) -> str:
     return "STAR-ставка заблокирована: DISPATCH_MODE=ml, origin != ml_dispatch"
+
+
+# --- ML-диспатч: тик карты (этап 2 плана swirling-giggling-kurzweil.md) -----
+#
+# Живёт РЯДОМ с `_try_dispatch_prematch_model_bet`, не заменяет его: словарные
+# STAR-пути продолжают вычислять свои ставки во всех режимах, гейт
+# `_dispatch_mode_reject_for_delivery` режет их сообщения только в `ml`. Эта
+# функция читает пять модельных вердиктов, прогоняет через
+# `ml_dispatch.evaluate`, пишет строку в лог решений и — только в `ml` —
+# отправляет `Decision`ы с timing=="now" через `_deliver_and_persist_signal`.
+# Любое исключение ловится целиком: тик карты не должен падать из-за нового
+# пути.
+
+_ml_dispatch_sent_ledger_lock = threading.Lock()
+_ml_dispatch_sent_ledger_instance = None
+
+
+def _ml_dispatch_sent_ledger():
+    """Персистентный дедуп-реестр ml_dispatch, один экземпляр на процесс."""
+    global _ml_dispatch_sent_ledger_instance
+    with _ml_dispatch_sent_ledger_lock:
+        if _ml_dispatch_sent_ledger_instance is None:
+            from base import ml_dispatch as _md
+            _ml_dispatch_sent_ledger_instance = _md.SentLedger(
+                _md.Config.from_env().resolved_sent_path()
+            ).load()
+        return _ml_dispatch_sent_ledger_instance
+
+
+def _ml_dispatch_open_kills_windows(game_time: Optional[float]) -> List[str]:
+    """Окна ``KILLS_WINDOW_POLICY``, открытые для kills_window-решения ml_dispatch.
+
+    Дедлайн окна = старт - 120 с (позже уже поздно ставить), lead = 180 с
+    (раньше ещё рано): окно "открыто" на ``[band_start-180, band_start-120)``
+    (план, п.«Тайминг»: «для kills_window дедлайн окна (старт − 120 с, lead
+    180 с) сохраняется»). Первое окно (``band_start=0``) поэтому никогда не
+    открывается для kills_window — у него нет времени на предварительную
+    ставку.
+    """
+    try:
+        gt = float(game_time)
+    except (TypeError, ValueError):
+        return []
+    open_windows = []
+    for candidate in KILLS_WINDOW_POLICY:
+        band_start = float(candidate["band_start"])
+        lead_open = band_start - 180.0
+        deadline = band_start - 120.0
+        if lead_open <= gt < deadline:
+            open_windows.append(str(candidate["window"]))
+    return open_windows
+
+
+def _ml_dispatch_extract_index_details(*blocks) -> Tuple[Optional[float], Dict[str, Any]]:
+    """Тот же приём, что `_format_win_model_line`: первый блок с индексом."""
+    for block in blocks:
+        if isinstance(block, dict):
+            raw = block.get(win_model_veto.INDEX_KEY)
+            if raw is not None:
+                try:
+                    index = float(raw)
+                except (TypeError, ValueError):
+                    index = None
+                if index is not None:
+                    get_details = getattr(win_model_veto, "prediction_details", None)
+                    details = get_details(block) if get_details else {}
+                    return index, (details or {})
+    return None, {}
+
+
+def _ml_dispatch_verdict_from_pair(pair: Any):
+    from base import ml_dispatch as _md
+    if not isinstance(pair, dict):
+        return None
+    side = pair.get("side")
+    if side not in ("Radiant", "Dire"):
+        return None
+    try:
+        confidence = float(pair.get("confidence"))
+    except (TypeError, ValueError):
+        return None
+    return _md.ModelVerdict(side, confidence)
+
+
+def _ml_dispatch_compose_message(header: str, body_text: Any, model_line: str = "") -> str:
+    """Заголовок ml_dispatch поверх ТОГО ЖЕ тела карты — приём из
+    `_build_prematch_model_bet_message`: переписывается только первая строка.
+    """
+    body = str(body_text or "").strip()
+    if not body:
+        return header
+    lines = body.splitlines()
+    if lines and lines[0].startswith("СТАВКА НА "):
+        lines[0] = header
+    else:
+        lines.insert(0, header)
+    text = "\n".join(lines)
+    if model_line and model_line.strip() and model_line.strip() not in text:
+        lines.insert(1, model_line.rstrip("\n"))
+        text = "\n".join(lines)
+    return text
+
+
+_ml_dispatch_decisions_log_lock = threading.Lock()
+_ml_dispatch_decisions_log_last_fingerprint: Dict[str, str] = {}
+
+
+def _ml_dispatch_decisions_log_path() -> Path:
+    raw = os.getenv("ML_DISPATCH_LOG_PATH", "runtime/ml_dispatch_decisions.jsonl")
+    path = Path(raw)
+    return path if path.is_absolute() else Path(__file__).resolve().parents[1] / path
+
+
+def _ml_dispatch_record_decisions(record: Dict[str, Any], *, dedup_view: Dict[str, Any]) -> None:
+    """Строка в runtime/ml_dispatch_decisions.jsonl, новая только при
+    изменении вердиктов/решения/фазы тайминга (дедуп по хешу на карту).
+    """
+    try:
+        scope = f"{record.get('match_key')}|{record.get('map_num')}"
+        digest = hashlib.sha256(
+            json.dumps(dedup_view, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        with _ml_dispatch_decisions_log_lock:
+            if _ml_dispatch_decisions_log_last_fingerprint.get(scope) == digest:
+                return
+            _ml_dispatch_decisions_log_last_fingerprint[scope] = digest
+        path = _ml_dispatch_decisions_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            f.flush()
+    except Exception:
+        logger.exception("_ml_dispatch_record_decisions failed for %s", record.get("match_key"))
+
+
+def _ml_dispatch_deliver_decision(
+    decision,
+    *,
+    match_key: str,
+    base_url: str,
+    ctx_map_num: int,
+    resolved_map_num: Optional[int],
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    early_output: Optional[Dict[str, Any]],
+    mid_output: Optional[Dict[str, Any]],
+    all_output: Optional[Dict[str, Any]],
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    full_message_text: Any,
+    ml_laning_line: str,
+    all_model_line: str,
+    ledger,
+) -> Dict[str, Any]:
+    """Собрать сообщение по одному ``Decision`` и доставить через
+    `_deliver_and_persist_signal`. Возвращает view-запись для лога решений.
+    """
+    target_side_lower = str(decision.target_side or "").strip().lower()
+
+    if decision.market == "win":
+        model_line = _format_win_model_line(early_output, mid_output, all_output, all_model_line=all_model_line)
+        message_text = _build_prematch_model_bet_message(
+            radiant_team_name=str(radiant_team_name or ""),
+            dire_team_name=str(dire_team_name or ""),
+            target_team_name=decision.target_team,
+            live_league=live_league,
+            top=top, mid=mid, bot=bot,
+            protracker_payload=protracker_payload,
+            team_elo_block=team_elo_block or "",
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+            model_line=model_line,
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+            full_message_text=full_message_text,
+            ml_laning_line=ml_laning_line,
+            all_model_line=all_model_line,
+        )
+    elif decision.market == "kills_window":
+        window_label = ""
+        for reason in decision.reasons:
+            if reason.startswith("window="):
+                window_label = reason.split("=", 1)[1]
+                break
+        header = _format_signal_header(
+            stake_team_name=decision.target_team,
+            stake_multiplier=None,
+            special_header_mode="early_kills",
+            kills_window_label=window_label,
+        )
+        message_text = _ml_dispatch_compose_message(header, full_message_text)
+    else:  # kills_total
+        header = _format_signal_header(
+            stake_team_name=decision.target_team,
+            stake_multiplier=None,
+            special_header_mode="kills_total",
+        )
+        message_text = _ml_dispatch_compose_message(header, full_message_text)
+
+    stake_context = {
+        "origin": "ml_dispatch",
+        "target_side": target_side_lower,
+        "stake_team_name": decision.target_team,
+        "radiant_team_name": str(radiant_team_name or ""),
+        "dire_team_name": str(dire_team_name or ""),
+        "late_model_side": _late_model_side_from_blocks(early_output, mid_output, all_output),
+        "calibration": {"expected_wr": decision.expected_wr, "min_odds": decision.min_odds},
+        "ml_rule": decision.rule,
+        "ml_market": decision.market,
+    }
+    dedup_key = (base_url, ctx_map_num, decision.market, decision.target_side)
+    delivered = _deliver_and_persist_signal(
+        match_key,
+        message_text,
+        add_url_reason="ml_dispatch",
+        add_url_details={
+            "ml_rule": decision.rule,
+            "ml_market": decision.market,
+            "target_side": target_side_lower,
+            "expected_wr": decision.expected_wr,
+            "min_odds": decision.min_odds,
+        },
+        map_num=resolved_map_num,
+        selected_side=target_side_lower,
+        stake_multiplier_context=stake_context,
+    )
+    if delivered:
+        try:
+            ledger.add(dedup_key)
+            ledger.save()
+        except Exception:
+            logger.exception("ml_dispatch ledger save failed for %s", match_key)
+    return {
+        "market": decision.market,
+        "target_side": decision.target_side,
+        "rule": decision.rule,
+        "status": "delivered" if delivered else "blocked",
+    }
+
+
+def _ml_dispatch_tick(
+    *,
+    match_key: str,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    team_elo_meta: Optional[Dict[str, Any]],
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    early_output: Optional[Dict[str, Any]] = None,
+    mid_output: Optional[Dict[str, Any]] = None,
+    all_output: Optional[Dict[str, Any]] = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+    full_message_text: Any = None,
+    ml_laning_line: str = "",
+    all_model_line: str = "",
+    laning_timestamp: Any = None,
+) -> None:
+    """Один тик одной карты: оценить пять моделей, залогировать решение,
+    при ``DISPATCH_MODE=ml`` — отправить ``Decision``ы с ``timing=="now"``.
+
+    Ничего не возвращает и не поднимает исключений наружу.
+    """
+    mode = dispatch_mode()
+    if mode == "star":
+        return
+    try:
+        from base import ml_dispatch as _md
+        from base import laning_serving as _laning_serving
+
+        try:
+            game_time_value = float(game_time_seconds)
+        except (TypeError, ValueError):
+            game_time_value = None
+        base_url = _signal_fingerprint_registry_key(match_key)
+        try:
+            map_num_raw = _bookmaker_infer_map_num(
+                live_league if isinstance(live_league, dict) else {}, score_text="",
+            )
+            resolved_map_num = int(map_num_raw) if map_num_raw is not None else None
+        except (TypeError, ValueError):
+            resolved_map_num = None
+        ctx_map_num = resolved_map_num if resolved_map_num is not None else 0
+
+        try:
+            heroes = win_model_veto._heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos)
+        except Exception:
+            heroes = None
+
+        elo_radiant = _team_elo_base_rating_for_side(team_elo_meta, "radiant")
+        elo_dire = _team_elo_base_rating_for_side(team_elo_meta, "dire")
+
+        index, details = _ml_dispatch_extract_index_details(early_output, mid_output, all_output)
+        early_nw_pair = details.get("early_nw") if details else (
+            win_model_veto.last_early_nw(index) if index is not None else None
+        )
+        early_win_pair = details.get("early_win") if details else (
+            win_model_veto.last_early_win(index) if index is not None else None
+        )
+        late_pair = details.get("late") if details else (
+            win_model_veto.last_late(index) if index is not None else None
+        )
+
+        lane_verdicts = {"all": None, "lane": None}
+        if isinstance(radiant_heroes_and_pos, dict) and isinstance(dire_heroes_and_pos, dict):
+            try:
+                lane_verdicts = _laning_serving.verdicts(
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
+                    laning_timestamp if laning_timestamp is not None else time.time(),
+                    draft_model=win_model_veto,
+                ) or lane_verdicts
+            except Exception:
+                pass
+
+        ledger = _ml_dispatch_sent_ledger()
+        cfg = _md.Config.from_env()
+        ctx = _md.Ctx(
+            match_key=match_key,
+            base_url=base_url,
+            map_num=ctx_map_num,
+            game_time=game_time_value,
+            radiant_team=str(radiant_team_name or ""),
+            dire_team=str(dire_team_name or ""),
+            heroes=heroes,
+            elo_radiant=elo_radiant,
+            elo_dire=elo_dire,
+            early_nw=_ml_dispatch_verdict_from_pair(early_nw_pair),
+            early_win=_ml_dispatch_verdict_from_pair(early_win_pair),
+            late=_ml_dispatch_verdict_from_pair(late_pair),
+            all=_ml_dispatch_verdict_from_pair(lane_verdicts.get("all")),
+            lane=_ml_dispatch_verdict_from_pair(lane_verdicts.get("lane")),
+            prematch_index=index,
+            kills_windows_open=_ml_dispatch_open_kills_windows(game_time_value),
+            already_sent=ledger.as_set(),
+        )
+        result = _md.evaluate(ctx, cfg)
+
+        def _verdict_view(v):
+            if v is None:
+                return None
+            return {"side": v.side, "confidence": round(float(v.confidence), 4)}
+
+        verdicts_view = {
+            "early_nw": _verdict_view(ctx.early_nw),
+            "early_win": _verdict_view(ctx.early_win),
+            "late": _verdict_view(ctx.late),
+            "all": _verdict_view(ctx.all),
+            "lane": _verdict_view(ctx.lane),
+        }
+        decisions_view = [
+            {"market": d.market, "target_side": d.target_side, "target_team": d.target_team,
+             "rule": d.rule, "timing": d.timing, "expected_wr": d.expected_wr,
+             "min_odds": d.min_odds, "models_for": d.models_for}
+            for d in result.decisions
+        ]
+        skipped_view = [
+            {"market": s.market, "side": s.side, "reason": s.reason, "detail": s.detail}
+            for s in result.skipped
+        ]
+
+        delivered_view: List[Dict[str, Any]] = []
+        if mode == "ml":
+            for decision in result.decisions:
+                if decision.timing != "now":
+                    continue
+                delivered_view.append(_ml_dispatch_deliver_decision(
+                    decision,
+                    match_key=match_key,
+                    base_url=base_url,
+                    ctx_map_num=ctx_map_num,
+                    resolved_map_num=resolved_map_num,
+                    radiant_team_name=radiant_team_name,
+                    dire_team_name=dire_team_name,
+                    live_league=live_league,
+                    top=top, mid=mid, bot=bot,
+                    protracker_payload=protracker_payload,
+                    team_elo_block=team_elo_block,
+                    game_time_seconds=game_time_seconds,
+                    radiant_lead=radiant_lead,
+                    early_output=early_output,
+                    mid_output=mid_output,
+                    all_output=all_output,
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    full_message_text=full_message_text,
+                    ml_laning_line=ml_laning_line,
+                    all_model_line=all_model_line,
+                    ledger=ledger,
+                ))
+
+        record = {
+            "ts": time.time(),
+            "match_key": match_key,
+            "base_url": base_url,
+            "map_num": resolved_map_num,
+            "game_time": game_time_value,
+            "teams": {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")},
+            "heroes": list(heroes) if heroes is not None else None,
+            "elo_r": elo_radiant,
+            "elo_d": elo_dire,
+            "elo_diff": result.elo_diff,
+            "underdog_side": result.underdog_side,
+            "verdicts": verdicts_view,
+            "prematch_index": index,
+            "decisions": decisions_view,
+            "skipped": skipped_view,
+            "delivered": delivered_view,
+            "mode": mode,
+        }
+        timing_phase = "now" if (game_time_value or 0.0) >= cfg.timing_seconds else "wait"
+        dedup_view = {
+            "verdicts": {
+                name: (v["side"], round(v["confidence"], 2)) if v else None
+                for name, v in verdicts_view.items()
+            },
+            "elo_diff": round(float(result.elo_diff or 0.0)),
+            "decisions": sorted(
+                (d["market"], d["target_side"], d["timing"]) for d in decisions_view
+            ),
+            "skipped": sorted((s["market"], s["side"], s["reason"]) for s in skipped_view),
+            "delivered": sorted(
+                (d.get("market"), d.get("target_side"), d.get("status")) for d in delivered_view
+            ),
+            "timing_phase": timing_phase,
+            "mode": mode,
+        }
+        _ml_dispatch_record_decisions(record, dedup_view=dedup_view)
+    except Exception:
+        logger.exception("_ml_dispatch_tick failed for %s", match_key)
 
 
 def _half_stake_elo_underdog_reject_for_delivery(
@@ -39164,6 +39611,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_local_sign = early_local_diag.get("sign") if has_early_local_star else None
             # Local ELO block (in-memory snapshot lookup, no network).
             early_local_elo_block = ""
+            early_local_elo_meta = None
             try:
                 _early_elo_summary = _build_team_elo_matchup_summary(
                     radiant_team_id=radiant_team_id,
@@ -39175,13 +39623,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     match_tier=star_match_tier,
                     timestamp=team_elo_timestamp,
                 )
-                early_local_elo_block, _ = _format_team_elo_block(
+                # Метаданные (raw ELO) больше не отбрасываются — нужны
+                # ml_dispatch.Ctx.elo_radiant/elo_dire (см. _ml_dispatch_tick ниже).
+                early_local_elo_block, early_local_elo_meta = _format_team_elo_block(
                     _early_elo_summary,
                     radiant_team_name=radiant_team_name_original,
                     dire_team_name=dire_team_name_original,
                 )
             except Exception:
                 early_local_elo_block = ""
+                early_local_elo_meta = None
             target_team_name_local = (
                 str(radiant_team_name_original or radiant_team_name or "").strip()
                 if local_lane_adv_dict_value > 0
@@ -39255,6 +39706,33 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ml_laning_line=ml_laning_line,
                 all_model_line=all_model_line,
             )
+            # ML-диспатч (этап 2 плана): оценивает пять моделей и в shadow/ml
+            # пишет решение в лог; в ml — доставляет timing=="now" решения тем
+            # же _deliver_and_persist_signal. Не влияет на STAR-путь выше —
+            # own try/except внутри, тик карты не падает из-за нового пути.
+            _ml_dispatch_tick(
+                match_key=check_uniq_url,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=local_metrics.get('top'),
+                mid=local_metrics.get('mid'),
+                bot=local_metrics.get('bot'),
+                protracker_payload=early_protracker_payload,
+                team_elo_block=early_local_elo_block,
+                team_elo_meta=early_local_elo_meta,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=local_metrics.get('early_output'),
+                mid_output=local_metrics.get('mid_output'),
+                all_output=local_metrics.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                full_message_text=early_local_body,
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
+                laning_timestamp=team_elo_timestamp,
+            )
             if _kills_blocked:
                 return                              # килы уже ушли или выключены
             sent = _try_dispatch_lane_adv_standalone_kills(
@@ -39320,6 +39798,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             except Exception:
                 pass
             early_local_elo_block = ""
+            early_local_elo_meta = None
             try:
                 _early_elo_summary = _build_team_elo_matchup_summary(
                     radiant_team_id=radiant_team_id,
@@ -39331,13 +39810,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     match_tier=star_match_tier,
                     timestamp=team_elo_timestamp,
                 )
-                early_local_elo_block, _ = _format_team_elo_block(
+                # Метаданные (raw ELO) больше не отбрасываются — нужны
+                # ml_dispatch.Ctx.elo_radiant/elo_dire (см. _ml_dispatch_tick ниже).
+                early_local_elo_block, early_local_elo_meta = _format_team_elo_block(
                     _early_elo_summary,
                     radiant_team_name=radiant_team_name_original,
                     dire_team_name=dire_team_name_original,
                 )
             except Exception:
                 early_local_elo_block = ""
+                early_local_elo_meta = None
             try:
                 winner_sent = _try_dispatch_early_winner_kills_window(
                     match_key=check_uniq_url,
