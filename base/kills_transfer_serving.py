@@ -80,12 +80,36 @@ class KillsServing:
         return values
 
 
-def render(probabilities, history_date):
+STAR_MIN_PROB_ENV = "KILLS_TRANSFER_STAR_MIN_PROB"
+# Порог « ★» у информационных строк: на про-тесте E-281 (687 карт, 23 дня,
+# runtime/artifacts/kills/relative_transfer/calibration_pro_test_2026-09-13.txt)
+# при P >= 0.70 событие сбывается в 80.6% (карта >= 55) и 76.4% (сторона >= 30);
+# при 0.60 — 75.0% / 69.3%, но ★ горела бы на 62% карт по тоталу. Маркер
+# информационный: в диспетчер ставок эти строки не входят.
+DEFAULT_STAR_MIN_PROB = 0.70
+
+
+def star_min_prob():
+    """Читается при каждом вызове: systemd drop-in / monkeypatch применяются без перезагрузки модуля."""
+    raw = os.environ.get(STAR_MIN_PROB_ENV, "")
+    try:
+        value = float(raw) if raw.strip() else DEFAULT_STAR_MIN_PROB
+    except (TypeError, ValueError):
+        value = DEFAULT_STAR_MIN_PROB
+    return value if 0.0 < value <= 1.0 else DEFAULT_STAR_MIN_PROB
+
+
+def render(probabilities, history_date, star_min=None):
     rad, dire, total = probabilities
-    return (f"Килы ML · E-281 (история до {history_date})\n"
-            f"Radiant ≥30 килов: {rad:.1%}\n"
-            f"Dire ≥30 килов: {dire:.1%}\n"
-            f"Карта ≥55 килов: {total:.1%}")
+    threshold = star_min_prob() if star_min is None else float(star_min)
+
+    def line(label, value):
+        return f"{label}: {value:.1%}" + (" ★" if value >= threshold else "")
+
+    return "\n".join((f"Килы ML · E-281 (история до {history_date})",
+                      line("Radiant ≥30 килов", rad),
+                      line("Dire ≥30 килов", dire),
+                      line("Карта ≥55 килов", total)))
 
 
 @lru_cache(maxsize=2)

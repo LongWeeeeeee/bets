@@ -51,6 +51,31 @@ def test_render_preserves_three_independent_probabilities():
     assert "история до 11.09.2026" in text
 
 
+def test_render_stars_only_events_at_or_above_default_threshold(monkeypatch):
+    monkeypatch.delenv("KILLS_TRANSFER_STAR_MIN_PROB", raising=False)
+    lines = render((.72, .63, .81), "11.09.2026").split("\n")
+    assert lines[1] == "Radiant ≥30 килов: 72.0% ★"
+    assert lines[2] == "Dire ≥30 килов: 63.0%"
+    assert lines[3] == "Карта ≥55 килов: 81.0% ★"
+    # ровно на пороге — ★ есть (>=), чуть ниже — нет
+    edge = render((.70, .699, .70), "11.09.2026").split("\n")
+    assert edge[1].endswith(" ★") and edge[3].endswith(" ★")
+    assert not edge[2].endswith("★")
+
+
+def test_render_star_threshold_from_env_and_argument(monkeypatch):
+    monkeypatch.setenv("KILLS_TRANSFER_STAR_MIN_PROB", "0.60")
+    lines = render((.72, .63, .81), "11.09.2026").split("\n")
+    assert lines[2] == "Dire ≥30 килов: 63.0% ★"
+    monkeypatch.setenv("KILLS_TRANSFER_STAR_MIN_PROB", "garbage")
+    assert render((.72, .63, .81), "11.09.2026").split("\n")[2] == "Dire ≥30 килов: 63.0%"
+    monkeypatch.setenv("KILLS_TRANSFER_STAR_MIN_PROB", "0")
+    assert render((.72, .63, .81), "11.09.2026").split("\n")[2] == "Dire ≥30 килов: 63.0%"
+    monkeypatch.delenv("KILLS_TRANSFER_STAR_MIN_PROB", raising=False)
+    explicit = render((.72, .63, .81), "11.09.2026", star_min=0.85).split("\n")
+    assert not any(line.endswith("★") for line in explicit)
+
+
 def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch, capsys):
     import kills_transfer_serving
     tree = ast.parse((Path(__file__).resolve().parents[1] / "win_model_veto.py").read_text())
