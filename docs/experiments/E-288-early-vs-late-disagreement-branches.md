@@ -174,3 +174,19 @@ ssh root@23.26.193.167 'python3 - ' < <(скрипт агрегации: пос�
 ```bash
 venv_catboost/bin/python3 -m pytest base/tests/test_ml_dispatch.py base/tests/test_dispatch_mode_gate.py -q
 ```
+
+## Деплой 13.09.2026 12:34 MSK (владелец: «деплой»)
+
+- `origin/main` = `ad138ed`; serv1 `/root/main` → `ad138ed` (`git pull --ff-only`; грязный `base/id_to_names.py`
+  во входящих файлах не участвовал).
+- Python 3.12 на serv1: `py_compile` OK; import-смоук `Config.from_env()` → `late_conflict_mode=wait`,
+  `late_wait_seconds=1860.0`, `max_game_time=None`; `pytest test_ml_dispatch.py test_dispatch_mode_gate.py` → 84 passed.
+- Живые карты перед рестартом проверены отдельной командой (две серии в эфире, ставок в доставке нет);
+  рестарт — `scripts/run/restart_cyberscore.sh` (systemd, чистит `map_id_check.txt`); после рестарта один
+  процесс (`MainPID` 1925751, `NRestarts=0`), стартовая строка
+  `[dispatch] mode=ml late_conflict_mode=wait late_wait_seconds=1860.0`. `log.txt` не усекался (логическое изменение).
+- Drop-in `dispatch.conf` не менялся: дефолты модуля. Откат — `ML_DISPATCH_LATE_CONFLICT_MODE=veto` в drop-in
+  + `restart_cyberscore.sh`.
+- Что смотреть дальше (24–48 ч): в `runtime/ml_dispatch_decisions.jsonl` причины `late_conflict_wait`, правила
+  `win_late_after_wait` и `kills_late_conflict_early_side`; сверить с панелью (★) и с реальной доставкой
+  (`delivered`), затем addendum с фактами.
