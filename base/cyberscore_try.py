@@ -47372,7 +47372,13 @@ if __name__ == "__main__":
     )
     if PURE_DLTV_MODE:
         print("🔇 Pure DLTV mode: all bookmaker prefetch/presence checks disabled")
-    print(f"[dispatch] mode={dispatch_mode()}")
+    from base import ml_dispatch as _dispatch_startup_md
+    _dispatch_startup_cfg = _dispatch_startup_md.Config.from_env()
+    print(
+        f"[dispatch] mode={dispatch_mode()} "
+        f"late_conflict_mode={_dispatch_startup_cfg.late_conflict_mode} "
+        f"late_wait_seconds={_dispatch_startup_cfg.late_wait_seconds}"
+    )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):
         raise SystemExit(0)
