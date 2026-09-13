@@ -1528,7 +1528,7 @@ cache256 учитывает весь драфт, аккаунты и timestamp. 
 [ml-prediction-contract.md](ml-prediction-contract.md).
 
 
-## `base/ml_dispatch.py` (457 строк) — ML-диспатч, чистый решатель (E-282/E-283, план `swirling-giggling-kurzweil.md`)
+## `base/ml_dispatch.py` (782 строки) — ML-диспатч, чистый решатель (E-282/E-283/E-288, план `swirling-giggling-kurzweil.md`)
 
 Заменяет словарные STAR-пути пятью модельными вердиктами (Early NW, Early Win,
 Late, All, ML Laning). Модуль ничего не импортирует из `cyberscore_try.py`, не
@@ -1550,8 +1550,12 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   timing, expected_wr, min_odds, reasons)` — `market` ∈ `win|kills_window|kills_total`,
   `timing` ∈ `now|wait_600`.
 - `Skipped(market, side, reason, detail)` — причины: `conflict`, `veto`,
-  `model_missing`, `below_threshold`, `dedup`, `no_underdog`.
+  `model_missing`, `below_threshold`, `dedup`, `no_underdog`, `too_late`,
+  `late_conflict_wait`.
 - `SentLedger(path)` — rebuild-then-replace JSON `[[base_url, map_num, market, side], ...]`.
+- `LateConflict(subcase, early_side, late_side, models_for_b, early_models_a)` —
+  результат `_detect_late_conflict(ctx, cfg)`, вызывается один раз в
+  `evaluate()`; `subcase` ∈ `a|b|ambiguous` (см. правила 13.09.2026 ниже).
 
 **Env `ML_DISPATCH_*` (default):**
 
@@ -1565,7 +1569,9 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_MIN_ODDS_MARGIN` | `0.0` | запас в `min_odds = 1/(expected_wr-margin)`; известный нулевой пол цены, флаг существует, чтобы позже ужесточить |
 | `ML_DISPATCH_SENT_PATH` | `runtime/ml_dispatch_sent.json` | путь дедуп-реестра (относительно ROOT, если не абсолютный) |
 | `ML_DISPATCH_LOG_PATH` (читается в `cyberscore_try.py`) | `runtime/ml_dispatch_decisions.jsonl` | путь лога решений |
-| `ML_DISPATCH_MAX_GAME_TIME` | не задан (без потолка) | если задан и `game_time` > потолка, win-маркет пропускается с `reason=too_late`; kills не затронуты |
+| `ML_DISPATCH_MAX_GAME_TIME` | не задан (без потолка) | если задан и `game_time` > потолка, win-маркет пропускается с `reason=too_late`; kills не затронуты; НЕ применяется к веткам ожидания ниже (правило 4.4) |
+| `ML_DISPATCH_LATE_CONFLICT_MODE` | `wait` | `wait` — новые ветки ожидания 13.09.2026 (см. ниже); `veto` — точное поведение до 13.09.2026 (откат без деплоя, systemd drop-in); иное значение → `wait` |
+| `ML_DISPATCH_LATE_WAIT_SECONDS` | `1860.0` | дедлайн ожидания (31-я минута) для веток ниже |
 
 **Правила (решения владельца 12.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из
@@ -1594,6 +1600,41 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 - Дедуп персистентный, ключ `(base_url, map_num, market, side)`; `evaluate()`
   только читает `ctx.already_sent`, запись в `SentLedger` — забота вызывающего
   кода (`_ml_dispatch_deliver_decision` в `cyberscore_try.py`).
+
+**Ветки ожидания при разногласии Late/All vs ранних моделей (решения
+владельца 13.09.2026, `ML_DISPATCH_LATE_CONFLICT_MODE=wait`, дефолт;
+данные — `docs/experiments/E-288-early-vs-late-disagreement-branches.md`):**
+`_detect_late_conflict(ctx, cfg)` вызывается один раз в `evaluate()`. Если
+хотя бы один ранний ★-модель (Early NW/Early Win, ограничено `cfg.win_models`)
+подтверждает сторону `A`, а Late и/или All подтверждают *другую* сторону `B`
+при `>=min_conf` — вместо немедленного вето:
+- Правило 4.1/4.2 (subcase `"a"`, All не звездит за `A`): никаких win-решений
+  ни на одну сторону до `game_time >= ML_DISPATCH_LATE_WAIT_SECONDS` (обе
+  стороны получают `Skipped(reason="late_conflict_wait")`); с дедлайна —
+  один `Decision(market="win", target_side=B, rule="win_late_after_wait")`,
+  `models_for` = какие из `late`/`all` звездят за `B`, `timing="now"`,
+  независимо от `ctx.lane` и `ML_DISPATCH_TIMING_SECONDS` (ожидание дедлайна
+  приоритетнее обоих).
+- Правило 4.3 (subcase `"b"`: All звездит за `A`, Late один звездит за `B`):
+  то же ожидание → ставка на `B` с дедлайна (`reasons` содержит
+  `tiebreak_ignored_all_for_A`), ПЛЮС немедленно (`timing="now"`, с первого
+  тика, независимо от ELO/`underdog_side`) `kills_total` и `kills_window`
+  (если открыто окно) за `A`, `rule="kills_late_conflict_early_side"`,
+  `models_for` = early★[A] + `["all"]`. Если `A` также ELO-андердог, обычный
+  андердог-путь уже создал те же решения — дублей нет (проверка по markets),
+  и устаревший `no_underdog`/`side==A` skip для того же рынка убирается.
+  Офлайн-данные E-288 для этой ветки после 31 мин фаворитят `A` (57.9%,
+  n=38), но решение владельца — ставить на `B`; реализовано как указано,
+  расхождение зафиксировано в E-288 как contrary evidence, не устранено кодом.
+- Потолок `ML_DISPATCH_MAX_GAME_TIME` НЕ применяется к веткам выше (правило
+  4.4) — только к обычному не-конфликтному win-пути.
+- Неоднозначная пара (Late звездит одну сторону, All — другую, у ОБЕИХ сторон
+  есть звёздная ранняя модель): `_detect_late_conflict` возвращает
+  `subcase="ambiguous"`, `evaluate()` откатывается к до-13.09.2026
+  вето/конфликт-логике без изменений, добавляя `late_conflict_ambiguous` в
+  `Skipped.detail` вето/конфликт-записи.
+- `ML_DISPATCH_LATE_CONFLICT_MODE=veto` воспроизводит до-13.09.2026 поведение
+  ТОЧНО для всех случаев выше (откат без деплоя).
 
 Runtime-файлы: `runtime/ml_dispatch_decisions.jsonl` (append-only, ключи `ts,
 match_key, base_url, map_num, game_time, teams, heroes, elo_r, elo_d, elo_diff,

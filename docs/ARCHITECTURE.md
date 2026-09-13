@@ -258,8 +258,13 @@ Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): пор
         ▼
 3. EVALUATE        ml_dispatch.evaluate(ctx, cfg) — чистая функция:
                    underdog U/F по ELO-диффу (порог ML_DISPATCH_UNDERDOG_MIN_DIFF),
-                   win-маркет (поддержка/вето по правилу «правка 0»),
-                   kills-маркеты (только при наличии U), тайминг (lane 00 vs 600с)
+                   _detect_late_conflict(ctx, cfg) (13.09.2026, один раз за тик):
+                   ранний★ A vs Late/All★ B -> win-маркет ждёт до 31-й минуты
+                   (ML_DISPATCH_LATE_WAIT_SECONDS), затем ставка на B; sub-case
+                   "All★ тоже за A" (4.3) добавляет немедленные kills-решения
+                   за A; без конфликта — win-маркет как раньше (поддержка/вето
+                   по правилу «правка 0»), kills-маркеты (только при наличии U),
+                   тайминг (lane 00 vs 600с)
         ▼
 4. ЛОГ             _ml_dispatch_record_decisions → runtime/ml_dispatch_decisions.jsonl
    (ВСЕГДА,        (append, дедуп новой строки по sha256(dedup_view), не на
@@ -292,6 +297,25 @@ Early NW/Early Win (+опционально All); тайминг win-марке�
 подтверждении ML Laning, иначе ждать `ML_DISPATCH_TIMING_SECONDS` (600с);
 предматчевая 35-признаковая модель (`prematch_index`) НЕ применяется к
 ml_dispatch-решениям, несётся в `Ctx` только для лога.
+
+**Ветки ожидания при разногласии (владелец, 13.09.2026, дефолт
+`ML_DISPATCH_LATE_CONFLICT_MODE=wait`, подробности и данные —
+`docs/experiments/E-288-early-vs-late-disagreement-branches.md`):** если
+ранняя ★-модель (Early NW/Early Win) подтверждает сторону `A`, а Late и/или
+All подтверждают *другую* сторону `B`, немедленного вето больше нет — win-
+решение ни на одну сторону не выносится, пока `game_time` не достигнет 31-й
+минуты (`ML_DISPATCH_LATE_WAIT_SECONDS=1860`), затем ставка уходит на `B`
+(`rule="win_late_after_wait"`), приоритетнее `ctx.lane` и
+`ML_DISPATCH_TIMING_SECONDS`. Sub-case 4.3 (All тоже звездит `A`, Late один
+за `B`) дополнительно даёт немедленные `kills_total`/`kills_window` за `A`
+(`rule="kills_late_conflict_early_side"`), независимо от ELO — офлайн-данные
+E-288 после 31 мин фаворитят `A` (57.9%, n=38), но владелец решил ставить win
+на `B`; расхождение зафиксировано как contrary evidence, код не устраняет
+его. `ML_DISPATCH_MAX_GAME_TIME` эти ветки не режет (правило 4.4). Редкая
+неоднозначная пара (Late/All звездят разные стороны, у обеих сторон есть
+звёздная ранняя модель) откатывается к до-13.09.2026 вето/конфликт-логике
+без изменений. `ML_DISPATCH_LATE_CONFLICT_MODE=veto` — точный откат к
+до-13.09.2026 поведению без деплоя (systemd drop-in).
 
 **Сосуществование со STAR:** в `star`/`shadow` ml_dispatch только читает и
 логирует, ничего не отправляет и не блокирует. В `ml` STAR-пути продолжают
