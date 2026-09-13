@@ -51,6 +51,10 @@ try:
 except ImportError:  # Supports both direct-script and package imports.
     from base.sourcetv_bridge import resolve_sourcetv_matches_path
 try:
+    import winline_dom_history as _winline_dom_history
+except ImportError:
+    from base import winline_dom_history as _winline_dom_history
+try:
     import camoufox
     CAMOUFOX_AVAILABLE = True
 except Exception:
@@ -2176,7 +2180,12 @@ class _WinlineFastResult:
 def _winline_fast_snapshot(page: Any) -> Optional[Dict[str, Any]]:
     """Read plain DOM data while on the shared browser thread."""
     try:
-        return page.evaluate(_WINLINE_FAST_CARD_JS, {"maxHtml": WINLINE_FAST_CARD_MAX_HTML})
+        payload = page.evaluate(_WINLINE_FAST_CARD_JS, {"maxHtml": WINLINE_FAST_CARD_MAX_HTML})
+        if isinstance(payload, dict):
+            payload["captured_wall"] = time.time()
+            payload["captured_monotonic"] = time.monotonic()
+            payload["page_instance_id"] = id(page)
+        return payload
     except Exception:
         return None
 
@@ -2629,6 +2638,21 @@ def _winline_map_site_result_to_collector_dict(
     return out
 
 
+def _winline_attach_dom_history(result: Any, payload: Any) -> Any:
+    if (_winline_dom_history.enabled() and isinstance(result, dict)
+            and isinstance(payload, dict)):
+        result["_dom_history_payload"] = {
+            "html": str(payload.get("html") or ""),
+            "body_text": "", "visible_text": "",
+            "url": str(payload.get("url") or ""),
+            "captured_wall": payload.get("captured_wall"),
+            "captured_monotonic": payload.get("captured_monotonic"),
+            "page_instance_id": payload.get("page_instance_id"),
+            "parser_path": "fast_html",
+        }
+    return result
+
+
 def _winline_current_map_poller_collect(
     *,
     acquisition_mode: str = "initial_goto",
@@ -2715,7 +2739,7 @@ def _winline_current_map_poller_collect(
         if batched is not None:
             batched["acquisition_mode_echo"] = "shared_dom_batch"
             batched["reload_attempted"] = False
-            return batched
+            return _winline_attach_dom_history(batched, batch_context["payload"])
 
     def _job(browser, *, full_parse=False, select_pinned=False):
         session = _shared_camoufox_session
@@ -2756,6 +2780,7 @@ def _winline_current_map_poller_collect(
             forced_map_num=resolved_map,
             acquisition_mode=effective_mode,
             series_last_map=_winline_registry_series_last_map(series_s),
+            **({"capture_dom": True} if _winline_dom_history.enabled() else {}),
         )
         if effective_mode == "controlled_reload":
             with _winline_current_map_state_lock:
@@ -2770,6 +2795,9 @@ def _winline_current_map_poller_collect(
             expected_url=urls.get("winline"),
         )
         normalized["reload_attempted"] = effective_mode == "controlled_reload"
+        raw_inputs = getattr(result, "_dom_history_payload", None)
+        if isinstance(raw_inputs, dict):
+            normalized["_dom_history_payload"] = raw_inputs
         if normalized.get("page_valid") is False and normalized.get("acquisition_error"):
             # A navigation timeout is not a market miss.  Do not keep polling a
             # stale named page forever.  Recovery is process-wide because all
@@ -2822,10 +2850,7 @@ def _winline_current_map_poller_collect(
                 and not normalized.get("acquisition_error")
                 and isinstance(batch_context, dict) and batch_context.get("payload") is None):
             with contextlib.suppress(Exception):
-                snapshot = page.evaluate(
-                    _WINLINE_FAST_CARD_JS,
-                    {"maxHtml": WINLINE_FAST_CARD_MAX_HTML},
-                )
+                snapshot = _winline_fast_snapshot(page)
                 if isinstance(snapshot, dict):
                     batch_context["payload"] = snapshot
         return normalized
@@ -2843,10 +2868,11 @@ def _winline_current_map_poller_collect(
         payload = acquired.get("fast_payload")
         if isinstance(batch_context, dict) and isinstance(payload, dict):
             batch_context["payload"] = payload
-        return _winline_fast_collect_from_payload(
+        parsed = _winline_fast_collect_from_payload(
             payload, series=series_s, map_num=resolved_map,
             team1=t1, team2=t2, expected_url=urls["winline"],
         )
+        return _winline_attach_dom_history(parsed, payload)
 
     try:
         acquired = _submit()
@@ -3301,6 +3327,7 @@ def ensure_winline_current_map_polling(
             _winline_current_map_pollers.pop(canonical, None)
 
         kwargs = dict(poller_kwargs or {})
+        kwargs.setdefault("attempt_observer", _winline_dom_history.record_attempt)
         if _winline_continuous_enabled():
             kwargs.setdefault("continuous", True)
         poller = factory(

@@ -402,9 +402,11 @@ class WinlineCurrentMapOddsPoller:
         safety_ceiling_extension_seconds: float = SAFETY_CEILING_EXTENSION_SECONDS,
         safety_ceiling_max_seconds: float = SAFETY_CEILING_MAX_SECONDS,
         continuous: bool = False,
+        attempt_observer: Optional[Callable[..., Any]] = None,
         **_extra: Any,
     ) -> None:
         self._collector = collector
+        self._attempt_observer = attempt_observer
         self._is_map_current = is_map_current
         self._mono = monotonic_fn or time.monotonic
         self._wall = wall_fn or time.time
@@ -1018,6 +1020,16 @@ class WinlineCurrentMapOddsPoller:
         else:
             attempt["selected_side"] = None
 
+        if callable(self._attempt_observer):
+            try:
+                queued_id = self._attempt_observer(attempt, result)
+                if queued_id:
+                    attempt["dom_history_queued_id"] = str(queued_id)
+            except Exception as exc:
+                # Diagnostics must never interrupt polling or quote delivery.
+                attempt["dom_history_error"] = type(exc).__name__
+            finally:
+                result.pop("_dom_history_payload", None)
         self._attempts.append(attempt)
         self._record_history(attempt)
 

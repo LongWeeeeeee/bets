@@ -4294,6 +4294,7 @@ async def parse_site_in_camoufox_page_async(
     forced_map_num: Optional[int] = None,
     acquisition_mode: Optional[str] = None,
     series_last_map: bool = False,
+    capture_dom: bool = False,
 ) -> SiteResult:
     # Acquisition mode is honored only for Winline; other bookmakers keep legacy goto.
     effective_acq = acquisition_mode if site == "winline" else None
@@ -4413,10 +4414,21 @@ async def parse_site_in_camoufox_page_async(
 
     initial_body_text = body_text
     match_fallback_odds: List[float] = []
+    captured_wall = time.time()
+    captured_monotonic = time.monotonic()
 
     def _with_acq(result: SiteResult) -> SiteResult:
         if miss_fingerprint:
             result.miss_fingerprint = miss_fingerprint
+        if capture_dom and site == "winline":
+            # Keep the actual inputs, not a second page read after parsing.
+            result._dom_history_payload = {
+                "html": html or "", "body_text": body_text or "",
+                "visible_text": visible or "", "url": url,
+                "captured_wall": captured_wall,
+                "captured_monotonic": captured_monotonic,
+                "page_instance_id": id(page), "parser_path": "full_parser",
+            }
         return _apply_acquisition_diag(result, acq_diag)
 
     if _is_deeplink(site, url):
