@@ -121,6 +121,27 @@ back to the pre-13.09 veto/conflict behavior unchanged, appending
 Setting ``ML_DISPATCH_LATE_CONFLICT_MODE=veto`` reproduces the pre-13.09
 behavior exactly for every case above (rollback without a deploy, via a
 systemd drop-in env override).
+
+``kills_total`` E-281 gate (owner rule, 13.09.2026 — see
+``docs/experiments/E-289-kills-transfer-calibration-pro-stars.md``): every
+``kills_total`` ``Decision`` (from both the underdog path above and the 4.3
+early-side path) is additionally gated on the E-281 "side >= 30 kills"
+probability for that same ``target_side`` (``ctx.kills30(target_side)`` ->
+``ctx.kills30_radiant``/``ctx.kills30_dire``, populated upstream from
+``win_model_veto.last_kills30``). ``kills_window`` and the ``win`` market are
+untouched. The side is a "favorite" iff ``underdog_side == _other_side(side)``
+(strictly higher ELO by >= ``cfg.underdog_min_diff``); everything else
+(underdog or |elo diff| < diff, i.e. ``underdog_side`` is ``None`` or equals
+``side``) uses the "other" threshold. Thresholds:
+``ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE`` (default 0.60),
+``ML_DISPATCH_KILLS_TOTAL_GATE_OTHER`` (default 0.70). Missing probability
+(bundle not loaded / error / ``None``) fails CLOSED — the decision is
+dropped with ``Skipped(..., reason="kills30_missing")``, never sent on faith;
+below-threshold drops with ``reason="kills30_below_threshold"``. Passing
+decisions get ``"kills30"`` appended to ``models_for`` and a threshold line
+appended to ``reasons``. Whole gate is disabled via
+``ML_DISPATCH_KILLS_TOTAL_GATE=0`` (systemd drop-in, no deploy), which
+restores the pre-13.09.2026 ``kills_total`` behavior exactly.
 """
 from __future__ import annotations
 
@@ -147,6 +168,8 @@ REASON_DEDUP = "dedup"
 REASON_MODEL_MISSING = "model_missing"
 REASON_TOO_LATE = "too_late"
 REASON_LATE_CONFLICT_WAIT = "late_conflict_wait"
+REASON_KILLS30_MISSING = "kills30_missing"
+REASON_KILLS30_BELOW = "kills30_below_threshold"
 
 RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
@@ -198,6 +221,8 @@ class Ctx:
     lane: Optional[ModelVerdict] = None
     prematch_index: Optional[float] = None
     kills_windows_open: List[str] = field(default_factory=list)
+    kills30_radiant: Optional[float] = None
+    kills30_dire: Optional[float] = None
     already_sent: Optional[Set[Tuple]] = None
 
     def team_name(self, side: str) -> str:
@@ -205,6 +230,10 @@ class Ctx:
 
     def model(self, name: str) -> Optional[ModelVerdict]:
         return getattr(self, name)
+
+    def kills30(self, side: str) -> Optional[float]:
+        """E-281 P(``side`` >= 30 kills), or ``None`` if unavailable."""
+        return self.kills30_radiant if side == "Radiant" else self.kills30_dire
 
 
 @dataclass(frozen=True)
@@ -221,6 +250,9 @@ class Config:
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
     late_wait_seconds: float = 1860.0
+    kills_total_gate_enabled: bool = True
+    kills_total_gate_favorite: float = 0.60
+    kills_total_gate_other: float = 0.70
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -262,6 +294,9 @@ class Config:
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
             late_wait_seconds=_float("ML_DISPATCH_LATE_WAIT_SECONDS", 1860.0),
+            kills_total_gate_enabled=str(env.get("ML_DISPATCH_KILLS_TOTAL_GATE", "1")) == "1",
+            kills_total_gate_favorite=_float("ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE", 0.60),
+            kills_total_gate_other=_float("ML_DISPATCH_KILLS_TOTAL_GATE_OTHER", 0.70),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -731,6 +766,59 @@ def _evaluate_kills(
     return decisions, skipped
 
 
+def _apply_kills_total_gate(
+    ctx: Ctx, cfg: Config, underdog_side: Optional[str],
+    decisions: List[Decision], skipped: List[Skipped],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """E-281 side>=30-kills gate on ``kills_total`` only (owner rule, 13.09.2026).
+
+    ``kills_window`` and ``win`` decisions pass through untouched. Fails
+    CLOSED: a missing probability drops the decision (``kills30_missing``),
+    it never ships on faith. Favorite/other threshold split per
+    ``_other_side``/``underdog_side`` (see module docstring).
+    """
+    if not cfg.kills_total_gate_enabled:
+        return decisions, skipped
+
+    kept: List[Decision] = []
+    extra_skipped: List[Skipped] = list(skipped)
+    for decision in decisions:
+        if decision.market != "kills_total":
+            kept.append(decision)
+            continue
+
+        side = decision.target_side
+        if underdog_side is None:
+            label, favorite = "even", False
+        elif underdog_side == side:
+            label, favorite = "underdog", False
+        else:
+            label, favorite = "favorite", True
+        threshold = cfg.kills_total_gate_favorite if favorite else cfg.kills_total_gate_other
+        p = ctx.kills30(side)
+
+        if p is None:
+            extra_skipped.append(Skipped(
+                "kills_total", side, REASON_KILLS30_MISSING,
+                f"kills30 probability unavailable for {side} ({label})",
+            ))
+            continue
+        if p < threshold:
+            extra_skipped.append(Skipped(
+                "kills_total", side, REASON_KILLS30_BELOW,
+                f"kills30 p={p:.3f} < t={threshold} ({label})",
+            ))
+            continue
+
+        decision.models_for = list(decision.models_for) + ["kills30"]
+        decision.reasons = list(decision.reasons) + [
+            f"kills30 p={p:.3f} >= {threshold} ({label})",
+        ]
+        kept.append(decision)
+
+    return kept, extra_skipped
+
+
 def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     """Idempotent on every tick: same ``ctx``/``cfg`` -> same result.
 
@@ -742,6 +830,9 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     late_conflict = _detect_late_conflict(ctx, cfg)
     win_decisions, win_skipped = _evaluate_win(ctx, cfg, late_conflict)
     kills_decisions, kills_skipped = _evaluate_kills(ctx, cfg, underdog_side, late_conflict)
+    kills_decisions, kills_skipped = _apply_kills_total_gate(
+        ctx, cfg, underdog_side, kills_decisions, kills_skipped
+    )
     return EvalResult(
         decisions=win_decisions + kills_decisions,
         skipped=win_skipped + kills_skipped,

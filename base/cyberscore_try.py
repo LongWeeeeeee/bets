@@ -12500,6 +12500,9 @@ def _ml_dispatch_tick(
         late_pair = details.get("late") if details else (
             win_model_veto.last_late(index) if index is not None else None
         )
+        kills30_pair = win_model_veto.last_kills30(index) if index is not None else None
+        kills30_radiant = kills30_pair.get("radiant") if isinstance(kills30_pair, dict) else None
+        kills30_dire = kills30_pair.get("dire") if isinstance(kills30_pair, dict) else None
 
         lane_verdicts = {"all": None, "lane": None}
         if isinstance(radiant_heroes_and_pos, dict) and isinstance(dire_heroes_and_pos, dict):
@@ -12532,6 +12535,8 @@ def _ml_dispatch_tick(
             lane=_ml_dispatch_verdict_from_pair(lane_verdicts.get("lane")),
             prematch_index=index,
             kills_windows_open=_ml_dispatch_open_kills_windows(game_time_value),
+            kills30_radiant=kills30_radiant,
+            kills30_dire=kills30_dire,
             already_sent=ledger.as_set(),
         )
         result = _md.evaluate(ctx, cfg)
@@ -12547,6 +12552,7 @@ def _ml_dispatch_tick(
             "late": _verdict_view(ctx.late),
             "all": _verdict_view(ctx.all),
             "lane": _verdict_view(ctx.lane),
+            "kills30": kills30_pair if isinstance(kills30_pair, dict) else None,
         }
         decisions_view = [
             {"market": d.market, "target_side": d.target_side, "target_team": d.target_team,
@@ -47377,7 +47383,10 @@ if __name__ == "__main__":
     print(
         f"[dispatch] mode={dispatch_mode()} "
         f"late_conflict_mode={_dispatch_startup_cfg.late_conflict_mode} "
-        f"late_wait_seconds={_dispatch_startup_cfg.late_wait_seconds}"
+        f"late_wait_seconds={_dispatch_startup_cfg.late_wait_seconds} "
+        f"kills_total_gate={'on' if _dispatch_startup_cfg.kills_total_gate_enabled else 'off'}"
+        f"/{_dispatch_startup_cfg.kills_total_gate_favorite}"
+        f"/{_dispatch_startup_cfg.kills_total_gate_other}"
     )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):

@@ -240,7 +240,8 @@ def test_kills_require_an_underdog():
 def test_kills_both_markets_when_underdog_and_early_model_confirm():
     ctx = base_ctx(elo_radiant=1400.0, elo_dire=1500.0,
                     early_nw=ModelVerdict("Radiant", 0.70),
-                    kills_windows_open=["0-10"])
+                    kills_windows_open=["0-10"],
+                    kills30_radiant=0.99)  # clears the E-281 kills_total gate
     result = evaluate(ctx, cfg())
     kills = {d.market: d for d in result.decisions if d.market.startswith("kills")}
     assert set(kills) == {"kills_window", "kills_total"}
@@ -252,7 +253,8 @@ def test_kills_both_markets_when_underdog_and_early_model_confirm():
 def test_kills_window_absent_without_an_open_window():
     ctx = base_ctx(elo_radiant=1400.0, elo_dire=1500.0,
                     early_nw=ModelVerdict("Radiant", 0.70),
-                    kills_windows_open=[])
+                    kills_windows_open=[],
+                    kills30_radiant=0.99)  # clears the E-281 kills_total gate
     result = evaluate(ctx, cfg())
     # early_nw >= 0.60 is also win-market support since 12.09.2026 (owner
     # rule "any starred model"), so restrict the assertion to kills markets.
@@ -273,7 +275,8 @@ def test_kills_require_all_passes_with_all_confirmation():
     ctx = base_ctx(elo_radiant=1400.0, elo_dire=1500.0,
                     early_nw=ModelVerdict("Radiant", 0.70),
                     all=ModelVerdict("Radiant", 0.65),
-                    kills_windows_open=["0-10"])
+                    kills_windows_open=["0-10"],
+                    kills30_radiant=0.99)  # clears the E-281 kills_total gate
     result = evaluate(ctx, cfg(kills_require_all=True))
     kills = {d.market: d for d in result.decisions if d.market.startswith("kills")}
     assert set(kills) == {"kills_window", "kills_total"}
@@ -586,6 +589,7 @@ def test_late_conflict_4_3_kills_fire_immediately_for_early_side():
         all=ModelVerdict("Radiant", 0.65),
         late=ModelVerdict("Dire", 0.70),
         kills_windows_open=["0-10"],
+        kills30_radiant=0.99,  # clears the E-281 kills_total gate
     )
     result_early = evaluate(ctx_early, cfg())
     assert not [d for d in result_early.decisions if d.market == "win"]
@@ -593,7 +597,9 @@ def test_late_conflict_4_3_kills_fire_immediately_for_early_side():
     assert set(kills) == {"kills_window", "kills_total"}
     assert kills["kills_total"].target_side == "Radiant"
     assert kills["kills_total"].rule == md.RULE_KILLS_LATE_CONFLICT_EARLY_SIDE
-    assert sorted(kills["kills_total"].models_for) == ["all", "early_win"]
+    # "kills30" is the E-281 gate's own addition (owner rule 13.09.2026),
+    # appended on top of the original early/all support.
+    assert sorted(kills["kills_total"].models_for) == ["all", "early_win", "kills30"]
 
     ctx_late = base_ctx(
         game_time=1860.0,
@@ -616,6 +622,7 @@ def test_late_conflict_4_3_kills_fire_even_when_early_side_is_favorite():
         early_win=ModelVerdict("Radiant", 0.65),
         all=ModelVerdict("Radiant", 0.65),
         late=ModelVerdict("Dire", 0.70),
+        kills30_radiant=0.99,  # clears the E-281 kills_total gate
     )
     result = evaluate(ctx, cfg())
     kills_total = [d for d in result.decisions if d.market == "kills_total"]
@@ -632,6 +639,7 @@ def test_late_conflict_4_3_no_duplicate_when_early_side_is_also_underdog():
         all=ModelVerdict("Radiant", 0.65),
         late=ModelVerdict("Dire", 0.70),
         kills_windows_open=["0-10"],
+        kills30_radiant=0.99,  # clears the E-281 kills_total gate
     )
     result = evaluate(ctx, cfg())
     kills_total = [d for d in result.decisions if d.market == "kills_total"]
@@ -652,6 +660,7 @@ def test_late_conflict_4_3_no_underdog_skip_left_for_resolved_kills_markets():
         all=ModelVerdict("Radiant", 0.65),
         late=ModelVerdict("Dire", 0.70),
         kills_windows_open=["0-10"],
+        kills30_radiant=0.99,  # clears the E-281 kills_total gate
     )
     result = evaluate(ctx, cfg())
     kills_markets_resolved = {d.market for d in result.decisions if d.market.startswith("kills")}
@@ -806,3 +815,157 @@ def test_late_conflict_evaluate_is_idempotent():
     result2 = evaluate(ctx, cfg())
     assert result1.decisions == result2.decisions
     assert result1.skipped == result2.skipped
+
+
+# --- kills_total E-281 gate (owner rule, 13.09.2026) ------------------------
+
+def test_kills_total_gate_favorite_060_passes_059_fails():
+    # 4.3 late-conflict path is the only one where target_side can be the
+    # ELO favorite: the underdog path always targets the underdog itself.
+    ctx_pass = base_ctx(
+        game_time=700.0,
+        elo_radiant=1700.0, elo_dire=1500.0,  # Radiant (A) favorite, Dire underdog
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.60,
+    )
+    result_pass = evaluate(ctx_pass, cfg())
+    kills_total = [d for d in result_pass.decisions if d.market == "kills_total"]
+    assert len(kills_total) == 1 and kills_total[0].target_side == "Radiant"
+    assert "kills30" in kills_total[0].models_for
+    assert any(r.startswith("kills30 p=0.600") and "favorite" in r for r in kills_total[0].reasons)
+    assert any(d.market == "kills_window" for d in result_pass.decisions)
+
+    ctx_fail = base_ctx(
+        game_time=700.0,
+        elo_radiant=1700.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.59,
+    )
+    result_fail = evaluate(ctx_fail, cfg())
+    assert not [d for d in result_fail.decisions if d.market == "kills_total"]
+    assert any(d.market == "kills_window" for d in result_fail.decisions)
+    below = [s for s in result_fail.skipped
+             if s.market == "kills_total" and s.reason == md.REASON_KILLS30_BELOW]
+    assert len(below) == 1 and below[0].side == "Radiant" and "favorite" in below[0].detail
+
+
+def test_kills_total_gate_underdog_070_passes_069_fails():
+    ctx_pass = base_ctx(
+        elo_radiant=1400.0, elo_dire=1500.0,  # Radiant underdog
+        early_nw=ModelVerdict("Radiant", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.70,
+    )
+    result_pass = evaluate(ctx_pass, cfg())
+    kills_total = [d for d in result_pass.decisions if d.market == "kills_total"]
+    assert len(kills_total) == 1 and kills_total[0].target_side == "Radiant"
+    assert "kills30" in kills_total[0].models_for
+
+    ctx_fail = base_ctx(
+        elo_radiant=1400.0, elo_dire=1500.0,
+        early_nw=ModelVerdict("Radiant", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.69,
+    )
+    result_fail = evaluate(ctx_fail, cfg())
+    assert not [d for d in result_fail.decisions if d.market == "kills_total"]
+    assert any(d.market == "kills_window" for d in result_fail.decisions)
+    below = [s for s in result_fail.skipped
+             if s.market == "kills_total" and s.reason == md.REASON_KILLS30_BELOW]
+    assert len(below) == 1 and "underdog" in below[0].detail
+
+
+def test_kills_total_gate_4_3_even_070_passes_069_fails():
+    ctx_pass = base_ctx(
+        game_time=700.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.70,
+    )
+    result_pass = evaluate(ctx_pass, cfg())
+    kills_total = [d for d in result_pass.decisions if d.market == "kills_total"]
+    assert len(kills_total) == 1 and kills_total[0].target_side == "Radiant"
+
+    ctx_fail = base_ctx(
+        game_time=700.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.69,
+    )
+    result_fail = evaluate(ctx_fail, cfg())
+    assert not [d for d in result_fail.decisions if d.market == "kills_total"]
+    assert any(d.market == "kills_window" for d in result_fail.decisions)
+    below = [s for s in result_fail.skipped
+             if s.market == "kills_total" and s.reason == md.REASON_KILLS30_BELOW]
+    assert len(below) == 1 and "even" in below[0].detail
+
+
+def test_kills_total_gate_missing_probability_is_fail_closed():
+    ctx = base_ctx(
+        elo_radiant=1400.0, elo_dire=1500.0,
+        early_nw=ModelVerdict("Radiant", 0.70),
+        kills_windows_open=["0-10"],
+        # kills30_radiant left at Ctx default (None)
+    )
+    result = evaluate(ctx, cfg())
+    assert not [d for d in result.decisions if d.market == "kills_total"]
+    assert any(d.market == "kills_window" for d in result.decisions)
+    missing = [s for s in result.skipped
+               if s.market == "kills_total" and s.reason == md.REASON_KILLS30_MISSING]
+    assert len(missing) == 1 and missing[0].side == "Radiant"
+
+
+def test_kills_total_gate_disabled_restores_old_behavior():
+    ctx = base_ctx(
+        elo_radiant=1400.0, elo_dire=1500.0,
+        early_nw=ModelVerdict("Radiant", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.01,  # would fail every threshold if the gate were on
+    )
+    result = evaluate(ctx, cfg(kills_total_gate_enabled=False))
+    kills_total = [d for d in result.decisions if d.market == "kills_total"]
+    assert len(kills_total) == 1
+    assert "kills30" not in kills_total[0].models_for
+    assert not any(s.reason in (md.REASON_KILLS30_MISSING, md.REASON_KILLS30_BELOW)
+                   for s in result.skipped)
+
+
+def test_kills_total_gate_evaluate_is_idempotent():
+    ctx = base_ctx(
+        elo_radiant=1400.0, elo_dire=1500.0,
+        early_nw=ModelVerdict("Radiant", 0.70),
+        kills_windows_open=["0-10"],
+        kills30_radiant=0.70,
+    )
+    result1 = evaluate(ctx, cfg())
+    result2 = evaluate(ctx, cfg())
+    assert result1.decisions == result2.decisions
+    assert result1.skipped == result2.skipped
+
+
+def test_config_from_env_kills_total_gate_reads_knobs_and_defaults():
+    result = Config.from_env({
+        "ML_DISPATCH_KILLS_TOTAL_GATE": "0",
+        "ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE": "0.55",
+        "ML_DISPATCH_KILLS_TOTAL_GATE_OTHER": "0.75",
+    })
+    assert result.kills_total_gate_enabled is False
+    assert result.kills_total_gate_favorite == 0.55
+    assert result.kills_total_gate_other == 0.75
+
+    defaults = Config.from_env({})
+    assert defaults.kills_total_gate_enabled is True
+    assert defaults.kills_total_gate_favorite == 0.60
+    assert defaults.kills_total_gate_other == 0.70
