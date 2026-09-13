@@ -317,6 +317,16 @@ E-288 после 31 мин фаворитят `A` (57.9%, n=38), но владе
 без изменений. `ML_DISPATCH_LATE_CONFLICT_MODE=veto` — точный откат к
 до-13.09.2026 поведению без деплоя (systemd drop-in).
 
+**Гейт `kills_total` по E-281 (владелец, 13.09.2026, E-289):** каждое решение
+`kills_total` (из андердог-пути и из ветки 4.3) после `_evaluate_kills` проходит
+`_apply_kills_total_gate`: вероятность E-281 «сторона ≥30 килов» для целевой
+стороны (`Ctx.kills30_radiant/kills30_dire` ← `win_model_veto.last_kills30(index)`
+← `kills_transfer_serving.forecast_probabilities`) должна быть ≥ 0.60, если цель —
+фаворит по ELO (`underdog_side == other(side)`), иначе ≥ 0.70 (андердог или
+равные). Ниже порога — `Skipped(kills30_below_threshold)`; числа нет —
+fail-closed, `Skipped(kills30_missing)`. `kills_window` и `win` не затронуты;
+`ML_DISPATCH_KILLS_TOTAL_GATE=0` выключает гейт без деплоя.
+
 **Сосуществование со STAR:** в `star`/`shadow` ml_dispatch только читает и
 логирует, ничего не отправляет и не блокирует. В `ml` STAR-пути продолжают
 СЧИТАТЬ (панельные ★-строки Early NW/Early Win/Late/All/ML Laning остаются

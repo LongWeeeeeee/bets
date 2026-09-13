@@ -5,7 +5,7 @@ date: "2026-09-13"
 area: kills
 status: full
 corpus: "E-281 out-of-time про-тест: 687 карт / 1374 наблюдения стороны, 23 дня; сохранённые калиброванные предсказания варианта absolute (прод)"
-verdict: "Обе модели откалиброваны честно: карта ≥55 — ECE 0.027, log loss 0.579, AUC 0.730; сторона ≥30 — ECE 0.025, log loss 0.630, AUC 0.687; все бины в 95% CI, лёгкая переуверенность 2–4 пп в середине шкалы. Перекалибровка out-of-fold (Platt/isotonic, 5-fold по дням) не улучшает log loss (0.5818/0.6047 против 0.5793; 0.6292/0.6339 против 0.6299) — не нужна. При P ≥ 0.70 событие сбывается в 80.6% (карта, n=299) и 76.4% (сторона, n=335); при 0.80 — 86.4%/84.2%. В панель добавлен « ★» при P ≥ KILLS_TRANSFER_STAR_MIN_PROB (дефолт 0.70). Боевой журнал E-281-строк ещё сутки — калибровка в бою не измерена."
+verdict: "Обе модели откалиброваны честно: карта ≥55 — ECE 0.027, log loss 0.579, AUC 0.730; сторона ≥30 — ECE 0.025, log loss 0.630, AUC 0.687; все бины в 95% CI, лёгкая переуверенность 2–4 пп в середине шкалы. Перекалибровка out-of-fold (Platt/isotonic, 5-fold по дням) не улучшает log loss (0.5818/0.6047 против 0.5793; 0.6292/0.6339 против 0.6299) — не нужна. При P ≥ 0.70 событие сбывается в 80.6% (карта, n=299) и 76.4% (сторона, n=335); при 0.80 — 86.4%/84.2%. В панель добавлен « ★» при P ≥ KILLS_TRANSFER_STAR_MIN_PROB (дефолт 0.70). Боевой журнал E-281-строк ещё сутки — калибровка в бою не измерена. Правило владельца 13.09: гейт kills_total по E-281 — ≥0.60 для фаворита (ELO ≥50), ≥0.70 иначе, fail-closed без числа, откат ML_DISPATCH_KILLS_TOTAL_GATE=0; разрез фаворит/андердог на тесте NOT_CHECKED (нет ELO as-of на окно теста, join 0/687)."
 harness: "runtime/experiments/kills/kills_transfer_calibration_pro.py -> runtime/artifacts/kills/relative_transfer/calibration_pro_test_2026-09-13.{txt,json}"
 ---
 
@@ -103,6 +103,32 @@ venv_catboost/bin/python3 runtime/experiments/kills/kills_transfer_calibration_p
     > runtime/artifacts/kills/relative_transfer/calibration_pro_test_2026-09-13.txt
 venv_catboost/bin/python3 -m pytest base/tests/test_kills_transfer_serving.py -q
 ```
+
+## Правило владельца 13.09 и реализация: гейт `kills_total` по E-281
+
+Владелец: «ставка на килы (не kills_window) только если ≥ 0.6 для фаворита (ELO diff ≥ 50) и 0.7 для
+андердога»; уточнено — это **гейт на существующий путь** `kills_total` (андердог по Early NW/Early Win ≥ 0.60 и
+ветка 4.3 late-конфликта за A), при равных командах (|diff| < 50) порог 0.70.
+
+- `base/ml_dispatch.py`: `Ctx.kills30_radiant/kills30_dire` (E-281 P(сторона ≥30)), `_apply_kills_total_gate`
+  после `_evaluate_kills`: фаворит ⇔ `underdog_side == other(side)` → порог `ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE`
+  (0.60), иначе `ML_DISPATCH_KILLS_TOTAL_GATE_OTHER` (0.70). Ниже порога → `Skipped(kills30_below_threshold)`;
+  нет числа (бандл не загружен / ошибка) → **fail-closed**, `Skipped(kills30_missing)`. Прошедшие решения получают
+  `models_for += ["kills30"]`. `kills_window` и `win` не затронуты. Откат: `ML_DISPATCH_KILLS_TOTAL_GATE=0`.
+- Числа в диспетчер: `kills_transfer_serving.forecast_probabilities` → адаптер `win_model_veto` кладёт
+  `_LAST_PANEL["kills30"]`, обёртка читает `win_model_veto.last_kills30(index)`; в лог решений добавлен
+  `verdicts.kills30`; стартовая строка печатает `kills_total_gate=on/0.6/0.7`.
+- Тесты: `base/tests/test_ml_dispatch.py` (фаворит 0.60/0.59, андердог 0.70/0.69, равные, ветка 4.3, отсутствие
+  числа, гейт выключен, env), `base/tests/test_kills_transfer_serving.py` (адаптер сохраняет числа и обнуляет при
+  ошибке).
+
+Оговорки: (1) модель E-281 предсказывает фиксированный порог **30 килов**, а линия букмекера на тотал команды
+может быть иной — сигнал «БОЛЬШЕ» без линии, как и раньше; (2) `expected_wr`/`min_odds` kills-решений по-прежнему
+берутся из ранних моделей (P(NW-лид)), а не из E-281 — не менялось по просьбе владельца; (3) разрез
+фаворит/андердог для порогов 0.60/0.70 на про-тесте **NOT_CHECKED**: ни один источник ELO as-of не покрывает
+окно теста 20.08–13.09 (`win_model_base_matrix.npz` заканчивается 11.08; `pro_elo_7_41.jsonl` — 31.07), join
+0/687 — `runtime/artifacts/kills/relative_transfer/calibration_pro_test_by_elo_2026-09-13.txt`; пороги —
+решение владельца, не измеренная граница.
 
 ## Где искать ошибку
 

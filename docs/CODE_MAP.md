@@ -665,19 +665,36 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 `base/kills_transfer_serving.py` добавляет в снимок `panel_text` три информационные
 вероятности E-281: Radiant ≥30, Dire ≥30, карта ≥55. Модель стороны считается
 в двух ориентациях; Dire не равен `1 − Radiant`. Тотал усредняется по ориентациям
-до калибровки. Блок не участвует в verdicts, подсветке, порогах или dispatch.
-Суффикс « ★» у строки — вероятность ≥ `KILLS_TRANSFER_STAR_MIN_PROB` (дефолт 0.70,
-читается при каждом рендере; E-289: на про-тесте при P ≥ 0.70 событие сбывается
-в 80.6% для карты ≥55 и 76.4% для стороны ≥30). Маркер информационный.
+до калибровки. `forecast_probabilities(rh, dh, ra, da, teams, start, mid) ->
+(rad, dire, total)` — числовое ядро (E-289, 13.09.2026), вынесенное из
+`forecast_text` специально для гейта `kills_total` в `ml_dispatch.py` (ниже);
+`manifest_history_date(directory=None)` — дешёвый (без CatBoost/joblib) читатель
+даты истории из `manifest.json`, нужен адаптеру `win_model_veto.py`, чтобы не
+грузить бандл второй раз только за строкой даты. `forecast_text` = `render(
+forecast_probabilities(...), manifest_history_date())`. Суффикс « ★» у строки
+в панели — вероятность ≥ `KILLS_TRANSFER_STAR_MIN_PROB` (дефолт 0.70, читается
+при каждом рендере; E-289: на про-тесте при P ≥ 0.70 событие сбывается в 80.6%
+для карты ≥55 и 76.4% для стороны ≥30) — этот маркер по-прежнему чисто
+информационный и НЕ связан с гейтом `kills_total` ниже.
 Источник — SHA-256-проверенный `data/kills_transfer_serving` (override:
 `KILLS_TRANSFER_BUNDLE`); загрузка кэшируется до рестарта. История игроков и
 команд заморожена в bundle, её дата показана в тексте; автоматического обновления
 нет. При расчёте используются только карты с `end < start` запрашиваемой карты,
 её собственный ID исключается. Ошибка оставляет основной прогноз рабочим и
-пишется как `[kills_transfer] E281 kills` при изменении ошибки. Сборка нового каталога:
+пишется как `[kills_transfer] E281 kills` при изменении ошибки (`_LAST_PANEL["kills30"]`
+и, следом, `last_kills30(index)` становятся `None`). Сборка нового каталога:
 `base/build_kills_serving.py --candidate <E281-output> --pro-rows <extraction-dir>
 --output <new-directory>`; активация артефакта и рестарт выполняются отдельно.
 Преимущество E-281 по точности пока не подтверждено: [E-281](experiments/E-281-kills-relative-public-transfer.md).
+
+С 13.09.2026 (owner rule, E-289 addendum) сырые вероятности из
+`forecast_probabilities` ТАКЖЕ участвуют в диспетчере: адаптер выше кладёт их
+в `_LAST_PANEL["kills30"] = {"radiant", "dire", "total"}`, затем — в тот же
+момент, что и `late`/`early_nw`/`early_win` (см. `_LAST_FILL["kills30"] = ...`
+прямо перед `_remember_fill()`) — в per-index историю; читает их
+`last_kills30(index)` ниже. `ml_dispatch.py`'s `kills_total` gate consumes
+exactly these two numbers (`ctx.kills30_radiant`/`ctx.kills30_dire`) — see
+below.
 
 Индекс = `(P(radiant) − 0.5) × 100`. Кладётся в блоки `synergy_and_counterpick` под `INDEX_KEY = "ml_win_index"`, источник — рядом под `SOURCE_KEY = "ml_win_index_src"` (`"prematch"` / `"draft"`). Источник обязателен: шкалы двух моделей разные, и порог вето выбирается по нему.
 
@@ -692,6 +709,8 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 **Отказ всегда в сторону РАЗРЕШЕНИЯ:** нет модели, незнакомый игрок, любая ошибка → None, вето не срабатывает.
 
 `last_late(index) -> dict | None` — вердикт late-модели `{side, probability, confidence}` для ЭТОГО индекса, из того же мемо `_LAST_FILL`/`_FILL_HISTORY`, что и `last_parts`/`last_fill`. Сам вердикт считается в `_prematch_index` (там ещё есть герои) и уходит в журнал оценок полями `late_side`, `late_confidence`, `late_error`.
+
+`last_kills30(index) -> {"radiant","dire","total"} | None` (E-289, 13.09.2026) — тот же per-index контракт, что у `last_late`/`last_early_nw` выше, но источник другой: `_LAST_PANEL` (единственный глобальный "последний тик") копируется в `_LAST_FILL["kills30"]` прямо перед `_remember_fill()`, так что число архивируется под ТЕМ ЖЕ `_idx`, что и late/early_*. Читает `cyberscore_try.py`'s `_ml_dispatch_tick` для сборки `Ctx.kills30_radiant`/`Ctx.kills30_dire`.
 
 Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`, `WIN_MODEL_VETO_PREMATCH_BRANCHES` (`full,no_org` — какие ветки предматчевой модели имеют право на ставку), `WIN_MODEL_SNAPSHOT_MAX_AGE_DAYS` (`30` — жёсткий порог «снимок мёртв»; добавлен 02.09.2026, дефолт сознательно НЕ снижен до 3, см. E-248; за качество на 3 сутках отвечает отдельное предупреждение `_SNAPSHOT_WARN_DAYS`).
 
