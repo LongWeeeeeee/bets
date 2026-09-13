@@ -91,22 +91,28 @@ def test_late_veto_blocks_a_lone_early_win_candidate():
     # win_models excludes late/all from *supporting* a side, but veto
     # always checks late/all regardless of that config (see module
     # docstring, design decision 1): this isolates "veto" from "conflict".
+    # early_win vs late on opposite sides is now a late-conflict wait
+    # candidate under the 13.09.2026 default -> pin the pre-13.09 veto
+    # mode explicitly (see the "late conflict wait" section below for the
+    # wait-mode analog of this exact scenario).
     ctx = base_ctx(
         early_win=ModelVerdict("Dire", 0.65),
         late=ModelVerdict("Radiant", 0.70),
     )
-    result = evaluate(ctx, cfg(win_models=("early_win",)))
+    result = evaluate(ctx, cfg(win_models=("early_win",), late_conflict_mode="veto"))
     assert result.decisions == []
     dire_skip = next(s for s in result.skipped if s.market == "win" and s.side == "Dire")
     assert dire_skip.reason == md.REASON_VETO
 
 
 def test_all_veto_blocks_a_lone_early_win_candidate():
+    # early_win vs all on opposite sides is also a late-conflict wait
+    # candidate under the 13.09.2026 default -> pin veto mode explicitly.
     ctx = base_ctx(
         early_win=ModelVerdict("Radiant", 0.65),
         all=ModelVerdict("Dire", 0.70),
     )
-    result = evaluate(ctx, cfg(win_models=("early_win",)))
+    result = evaluate(ctx, cfg(win_models=("early_win",), late_conflict_mode="veto"))
     assert result.decisions == []
     radiant_skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
     assert radiant_skip.reason == md.REASON_VETO
@@ -118,12 +124,14 @@ def test_veto_wins_over_conflict_when_one_side_is_vetoed():
     # (which counts Late as support for Radiant too) this used to be a
     # conflict, but veto is now resolved PER SIDE FIRST: Late (a veto
     # model) vetoes Dire, only Radiant survives -> bet on Radiant, not a
-    # conflict (see module docstring design decision 2).
+    # conflict (see module docstring design decision 2). This is also a
+    # late-conflict wait candidate under the 13.09.2026 default (Early Win
+    # stars Dire, Late stars the other side) -> pin veto mode explicitly.
     ctx = base_ctx(
         late=ModelVerdict("Radiant", 0.62),
         early_win=ModelVerdict("Dire", 0.65),
     )
-    result = evaluate(ctx, cfg())
+    result = evaluate(ctx, cfg(late_conflict_mode="veto"))
     win = [d for d in result.decisions if d.market == "win"]
     assert len(win) == 1
     assert win[0].target_side == "Radiant"
@@ -507,3 +515,294 @@ def test_config_from_env_max_game_time_empty_or_zero_means_no_cap():
     assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": ""}).max_game_time is None
     assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": "0"}).max_game_time is None
     assert Config.from_env({"ML_DISPATCH_MAX_GAME_TIME": "900"}).max_game_time == 900.0
+
+
+# --- Late-conflict wait branches (owner decisions, 13.09.2026) -------------
+# See docs/experiments/E-288-early-vs-late-disagreement-branches.md,
+# addendum "Решение владельца 13.09 и реализация", for the data behind
+# these rules.
+
+def test_late_conflict_4_1_waits_then_bets_the_late_side():
+    ctx_early = base_ctx(
+        game_time=700.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result_early = evaluate(ctx_early, cfg())
+    assert not [d for d in result_early.decisions if d.market == "win"]
+    waits = [s for s in result_early.skipped
+             if s.market == "win" and s.reason == md.REASON_LATE_CONFLICT_WAIT]
+    assert {s.side for s in waits} == {"Radiant", "Dire"}
+
+    ctx_late = base_ctx(
+        game_time=1860.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result_late = evaluate(ctx_late, cfg())
+    win = [d for d in result_late.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert win[0].rule == md.RULE_WIN_LATE_AFTER_WAIT
+    assert win[0].models_for == ["late"]
+    assert win[0].models_against == ["early_win"]
+
+
+def test_late_conflict_4_2_late_and_all_agree_on_b():
+    ctx = base_ctx(
+        game_time=1860.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        all=ModelVerdict("Dire", 0.65),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert sorted(win[0].models_for) == ["all", "late"]
+    assert win[0].expected_wr == 0.70
+
+
+def test_late_conflict_all_alone_backs_b_without_late_star():
+    # E-288 corpus has n=0 for this exact pairing (All stars B, Late does
+    # not) -- implemented per the owner's rule, unverified in production.
+    ctx = base_ctx(
+        game_time=1860.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Dire", 0.65),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert win[0].models_for == ["all"]
+
+
+def test_late_conflict_4_3_kills_fire_immediately_for_early_side():
+    ctx_early = base_ctx(
+        game_time=700.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+    )
+    result_early = evaluate(ctx_early, cfg())
+    assert not [d for d in result_early.decisions if d.market == "win"]
+    kills = {d.market: d for d in result_early.decisions if d.market.startswith("kills")}
+    assert set(kills) == {"kills_window", "kills_total"}
+    assert kills["kills_total"].target_side == "Radiant"
+    assert kills["kills_total"].rule == md.RULE_KILLS_LATE_CONFLICT_EARLY_SIDE
+    assert sorted(kills["kills_total"].models_for) == ["all", "early_win"]
+
+    ctx_late = base_ctx(
+        game_time=1860.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result_late = evaluate(ctx_late, cfg())
+    win = [d for d in result_late.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert "tiebreak_ignored_all_for_A" in win[0].reasons
+
+
+def test_late_conflict_4_3_kills_fire_even_when_early_side_is_favorite():
+    ctx = base_ctx(
+        game_time=700.0,
+        elo_radiant=1700.0, elo_dire=1500.0,  # Radiant (A) favorite, Dire underdog
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result = evaluate(ctx, cfg())
+    kills_total = [d for d in result.decisions if d.market == "kills_total"]
+    assert len(kills_total) == 1
+    assert kills_total[0].target_side == "Radiant"
+    assert not any(s.reason == md.REASON_NO_UNDERDOG for s in result.skipped)
+
+
+def test_late_conflict_4_3_no_duplicate_when_early_side_is_also_underdog():
+    ctx = base_ctx(
+        game_time=700.0,
+        elo_radiant=1300.0, elo_dire=1500.0,  # Radiant (A) is the underdog
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+    )
+    result = evaluate(ctx, cfg())
+    kills_total = [d for d in result.decisions if d.market == "kills_total"]
+    kills_window = [d for d in result.decisions if d.market == "kills_window"]
+    assert len(kills_total) == 1 and kills_total[0].target_side == "Radiant"
+    assert len(kills_window) == 1 and kills_window[0].target_side == "Radiant"
+    assert kills_total[0].rule == "kills_underdog_total"
+
+
+def test_late_conflict_4_3_no_underdog_skip_left_for_resolved_kills_markets():
+    # Equal ELO (underdog_side=None) would normally leave a REASON_NO_UNDERDOG
+    # skip on both kills markets; once the 4.3 early-side path resolves both
+    # markets for A, that stale skip must not remain alongside the decision.
+    ctx = base_ctx(
+        game_time=700.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        kills_windows_open=["0-10"],
+    )
+    result = evaluate(ctx, cfg())
+    kills_markets_resolved = {d.market for d in result.decisions if d.market.startswith("kills")}
+    assert kills_markets_resolved == {"kills_window", "kills_total"}
+    assert not any(
+        s.market.startswith("kills") and s.reason == md.REASON_NO_UNDERDOG
+        for s in result.skipped
+    )
+
+
+def test_late_conflict_max_game_time_cap_does_not_block_wait_branch():
+    ctx = base_ctx(
+        game_time=1900.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result = evaluate(ctx, cfg(max_game_time=900.0))
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert not any(s.reason == md.REASON_TOO_LATE for s in result.skipped)
+
+
+def test_late_conflict_max_game_time_cap_still_applies_without_conflict():
+    ctx = base_ctx(game_time=1000.0, late=ModelVerdict("Radiant", 0.70))
+    result = evaluate(ctx, cfg(max_game_time=900.0))
+    assert not [d for d in result.decisions if d.market == "win"]
+    assert any(s.market == "win" and s.reason == md.REASON_TOO_LATE for s in result.skipped)
+
+
+def test_late_conflict_lane_star_does_not_skip_the_wait():
+    ctx = base_ctx(
+        game_time=700.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        lane=ModelVerdict("Dire", 0.70),
+    )
+    result = evaluate(ctx, cfg())
+    assert not [d for d in result.decisions if d.market == "win"]
+    assert any(s.market == "win" and s.reason == md.REASON_LATE_CONFLICT_WAIT
+               for s in result.skipped)
+
+
+def test_late_conflict_veto_mode_reproduces_pre_13_09_behavior():
+    # (1) 4.1 scenario: pre-13.09 veto -> immediate bet on the late side.
+    ctx1 = base_ctx(game_time=700.0,
+                     early_win=ModelVerdict("Radiant", 0.65),
+                     late=ModelVerdict("Dire", 0.70))
+    result1 = evaluate(ctx1, cfg(late_conflict_mode="veto"))
+    win1 = [d for d in result1.decisions if d.market == "win"]
+    assert len(win1) == 1 and win1[0].target_side == "Dire"
+    assert win1[0].rule == "win_single_model_confirm"
+
+    # (2) 4.2 scenario: pre-13.09 veto -> immediate bet on late+all side.
+    ctx2 = base_ctx(game_time=700.0,
+                     early_win=ModelVerdict("Radiant", 0.65),
+                     late=ModelVerdict("Dire", 0.70),
+                     all=ModelVerdict("Dire", 0.65))
+    result2 = evaluate(ctx2, cfg(late_conflict_mode="veto"))
+    win2 = [d for d in result2.decisions if d.market == "win"]
+    assert len(win2) == 1 and win2[0].target_side == "Dire"
+
+    # (4) 4.3 scenario: mutual veto -> no bet on either side, no kills --
+    # matches the documented E-288 prod behavior ("код не ставит").
+    ctx4 = base_ctx(game_time=700.0,
+                     elo_radiant=1500.0, elo_dire=1500.0,
+                     early_win=ModelVerdict("Radiant", 0.65),
+                     all=ModelVerdict("Radiant", 0.65),
+                     late=ModelVerdict("Dire", 0.70))
+    result4 = evaluate(ctx4, cfg(late_conflict_mode="veto"))
+    assert result4.decisions == []
+
+
+def test_config_from_env_late_conflict_defaults_and_overrides():
+    default = Config.from_env({})
+    assert default.late_conflict_mode == "wait"
+    assert default.late_wait_seconds == 1860.0
+
+    overridden = Config.from_env({
+        "ML_DISPATCH_LATE_CONFLICT_MODE": "veto",
+        "ML_DISPATCH_LATE_WAIT_SECONDS": "1200",
+    })
+    assert overridden.late_conflict_mode == "veto"
+    assert overridden.late_wait_seconds == 1200.0
+
+    invalid = Config.from_env({"ML_DISPATCH_LATE_CONFLICT_MODE": "bogus"})
+    assert invalid.late_conflict_mode == "wait"
+
+
+def test_late_conflict_game_time_none_waits():
+    ctx = base_ctx(
+        game_time=None,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result = evaluate(ctx, cfg())
+    assert not [d for d in result.decisions if d.market == "win"]
+    assert any(s.reason == md.REASON_LATE_CONFLICT_WAIT for s in result.skipped)
+
+
+def test_late_conflict_dedup_after_bet_on_late_side_is_sent():
+    ctx = base_ctx(
+        game_time=1900.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        already_sent={("https://example.test/m1", 1, "win", "Dire")},
+    )
+    result = evaluate(ctx, cfg())
+    assert not [d for d in result.decisions if d.market == "win"]
+    dire_dedup = [s for s in result.skipped
+                  if s.market == "win" and s.side == "Dire" and s.reason == md.REASON_DEDUP]
+    assert len(dire_dedup) == 1
+
+
+def test_late_conflict_mixed_early_models_resolves_unambiguously():
+    ctx = base_ctx(
+        game_time=1860.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        early_nw=ModelVerdict("Dire", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert win[0].models_for == ["late"]
+
+
+def test_late_conflict_ambiguous_pairing_falls_back_to_old_veto():
+    ctx = base_ctx(
+        game_time=700.0,
+        elo_radiant=1500.0, elo_dire=1500.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        early_nw=ModelVerdict("Dire", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+        all=ModelVerdict("Radiant", 0.65),
+    )
+    result = evaluate(ctx, cfg())
+    assert result.decisions == []
+    ambiguous_skips = [s for s in result.skipped
+                       if s.market == "win" and "late_conflict_ambiguous" in s.detail]
+    assert len(ambiguous_skips) >= 1
+
+
+def test_late_conflict_evaluate_is_idempotent():
+    ctx = base_ctx(
+        game_time=1860.0,
+        early_win=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Dire", 0.70),
+    )
+    result1 = evaluate(ctx, cfg())
+    result2 = evaluate(ctx, cfg())
+    assert result1.decisions == result2.decisions
+    assert result1.skipped == result2.skipped

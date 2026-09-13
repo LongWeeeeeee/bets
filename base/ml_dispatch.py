@@ -84,6 +84,43 @@ the win market produces no decisions for either side — a single
 ``Skipped(market="win", side=None, reason="too_late", ...)`` with the
 game_time and cap in ``detail`` — while ``kills_window``/``kills_total`` are
 unaffected (they have their own deadline logic via ``kills_windows_open``).
+
+Late/All-vs-early disagreement wait branches (owner decisions, 13.09.2026 —
+see ``docs/experiments/E-288-early-vs-late-disagreement-branches.md``):
+when at least one starred early model (Early NW and/or Early Win, restricted
+to ``cfg.win_models``) backs a side ``A`` and Late and/or All backs the
+*other* side ``B`` at >= threshold, the old immediate-veto behavior is
+replaced — in the default ``ML_DISPATCH_LATE_CONFLICT_MODE=wait`` — by: no
+win decision at all for either side until ``ctx.game_time >=
+ML_DISPATCH_LATE_WAIT_SECONDS`` (default 1860s, the 31st minute; both sides
+report ``Skipped(..., reason="late_conflict_wait")`` until then), then a
+single ``win`` decision on ``B`` (``rule="win_late_after_wait"``),
+independent of ``ctx.lane`` and ``cfg.timing_seconds`` — the wait deadline
+takes priority over both. ``ML_DISPATCH_MAX_GAME_TIME`` never gates this
+branch (owner rule 4.4): the bet on ``B`` must still fire once the wait
+deadline is reached even under a configured cap; the cap only ever applies
+to the plain (non-conflict) win path.
+
+Sub-case 4.3 (``all`` also stars ``A``, i.e. early+All agree against a lone
+starred Late for ``B``): additionally fires ``kills_total``/``kills_window``
+decisions for ``A`` immediately (``timing="now"``, independent of ELO or
+``underdog_side``), rule ``kills_late_conflict_early_side``, with
+``models_for`` = early★[A] + ``["all"]``; if the normal underdog kills path
+already produced a decision for the same market/side (``A`` happens to be
+the ELO underdog too), no duplicate is created. The E-288 offline data for
+this sub-case favors ``A`` after 31 minutes (57.9%, n=38), but the owner's
+decision is still to back ``B`` — implemented as specified; the disagreement
+is flagged as contrary evidence in the E-288 doc addendum, not resolved here.
+
+When both sides independently qualify as an "early ``A`` vs opposing Late/
+All" pairing (rare: Late stars one side, All stars the other, and early
+models are starred on both), the pairing is ambiguous and this module falls
+back to the pre-13.09 veto/conflict behavior unchanged, appending
+``late_conflict_ambiguous`` to the relevant ``Skipped.detail``.
+
+Setting ``ML_DISPATCH_LATE_CONFLICT_MODE=veto`` reproduces the pre-13.09
+behavior exactly for every case above (rollback without a deploy, via a
+systemd drop-in env override).
 """
 from __future__ import annotations
 
@@ -109,6 +146,12 @@ REASON_TIMING_WAIT = "timing_wait"
 REASON_DEDUP = "dedup"
 REASON_MODEL_MISSING = "model_missing"
 REASON_TOO_LATE = "too_late"
+REASON_LATE_CONFLICT_WAIT = "late_conflict_wait"
+
+RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
+RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
+
+LATE_CONFLICT_MODES = ("wait", "veto")
 
 
 def _other_side(side: str) -> str:
@@ -176,6 +219,8 @@ class Config:
     min_odds_margin: float = 0.0
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
+    late_conflict_mode: str = "wait"
+    late_wait_seconds: float = 1860.0
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -200,6 +245,12 @@ class Config:
             except (TypeError, ValueError):
                 parsed = 0.0
             max_game_time = parsed if parsed > 0 else None
+        raw_late_conflict_mode = str(
+            env.get("ML_DISPATCH_LATE_CONFLICT_MODE", "wait") or "wait"
+        ).strip().lower()
+        late_conflict_mode = (
+            raw_late_conflict_mode if raw_late_conflict_mode in LATE_CONFLICT_MODES else "wait"
+        )
         return cls(
             min_conf=_float("ML_DISPATCH_MIN_CONF", 0.60),
             underdog_min_diff=_float("ML_DISPATCH_UNDERDOG_MIN_DIFF", 50.0),
@@ -209,6 +260,8 @@ class Config:
             min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.0),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
+            late_conflict_mode=late_conflict_mode,
+            late_wait_seconds=_float("ML_DISPATCH_LATE_WAIT_SECONDS", 1860.0),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -247,6 +300,87 @@ class EvalResult:
     mode_hint: str
 
 
+@dataclass(frozen=True)
+class LateConflict:
+    """One late-vs-early disagreement pairing, as detected by
+    :func:`_detect_late_conflict` (owner decisions, 13.09.2026).
+
+    ``subcase in ("a", "b")`` means a resolvable A/B pairing was found:
+    ``early_side`` (A) and ``late_side`` (B, always ``_other_side(early_side)``)
+    are set, ``models_for_b`` lists which of ``("late", "all")`` star B, and
+    ``early_models_a`` lists which early models (from ``cfg.win_models``)
+    star A. ``subcase == "b"`` is the 4.3 owner sub-case (``all`` stars A
+    while Late alone stars B) and additionally triggers the kills-for-A
+    path in :func:`_evaluate_kills`; ``subcase == "a"`` covers 4.1/4.2
+    (Late and/or All both star B, All does not star A).
+
+    ``subcase == "ambiguous"`` means BOTH sides independently qualified as
+    an "early A vs opposing Late/All" pairing (Late stars one side, All
+    stars the other, both sides have a starred early model) — the caller
+    falls back to the pre-13.09 veto/conflict resolution unchanged; the
+    other fields are left at their defaults and unused in that case.
+    """
+
+    subcase: str  # "a" | "b" | "ambiguous"
+    early_side: Optional[str] = None
+    late_side: Optional[str] = None
+    models_for_b: Tuple[str, ...] = ()
+    early_models_a: Tuple[str, ...] = ()
+
+
+def _detect_late_conflict(ctx: Ctx, cfg: Config) -> Optional[LateConflict]:
+    """Detect a late/all-vs-early star disagreement (owner decisions, 13.09.2026).
+
+    Returns ``None`` when ``cfg.late_conflict_mode != "wait"`` (i.e. the
+    ``veto`` rollback mode, where callers must reproduce the pre-13.09
+    behavior exactly) or when no side qualifies as an "early A" candidate.
+    """
+    if cfg.late_conflict_mode != "wait":
+        return None
+
+    early_star = {}
+    for side in SIDES:
+        early_star[side] = tuple(
+            name for name in KILLS_EARLY_MODELS
+            if name in cfg.win_models
+            and ctx.model(name) is not None
+            and ctx.model(name).side == side
+            and ctx.model(name).confidence >= cfg.min_conf
+        )
+
+    late_side = None
+    if ctx.late is not None and ctx.late.confidence >= cfg.min_conf:
+        late_side = ctx.late.side
+    all_side = None
+    if ctx.all is not None and ctx.all.confidence >= cfg.min_conf:
+        all_side = ctx.all.side
+
+    candidates = [
+        side for side in SIDES
+        if early_star[side] and (late_side == _other_side(side) or all_side == _other_side(side))
+    ]
+
+    if len(candidates) == 2:
+        return LateConflict(subcase="ambiguous")
+    if not candidates:
+        return None
+
+    early_side = candidates[0]
+    late_target_side = _other_side(early_side)
+    models_for_b = tuple(
+        name for name, side in (("late", late_side), ("all", all_side))
+        if side == late_target_side
+    )
+    subcase = "b" if all_side == early_side else "a"
+    return LateConflict(
+        subcase=subcase,
+        early_side=early_side,
+        late_side=late_target_side,
+        models_for_b=models_for_b,
+        early_models_a=early_star[early_side],
+    )
+
+
 def _min_odds(expected_wr: float, cfg: Config) -> float:
     denom = max(expected_wr - cfg.min_odds_margin, 1e-6)
     return round(1.0 / denom, 2)
@@ -273,9 +407,74 @@ def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
     return ("Dire" if diff > 0 else "Radiant"), diff
 
 
-def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]:
+def _evaluate_win_late_conflict(
+    ctx: Ctx, cfg: Config, late_conflict: LateConflict,
+) -> Tuple[List[Decision], List[Skipped]]:
+    """Wait-until-31st-minute branches (owner decisions, 13.09.2026; subcases
+    4.1/4.2 = ``"a"``, 4.3 = ``"b"``).
+
+    ``ML_DISPATCH_MAX_GAME_TIME`` deliberately never gates this branch (owner
+    rule 4.4): the bet on ``late_conflict.late_side`` must still fire once
+    ``cfg.late_wait_seconds`` is reached, even under a configured cap that
+    would have blocked a plain single-model decision.
+    """
     decisions: List[Decision] = []
     skipped: List[Skipped] = []
+
+    side_a = late_conflict.early_side
+    side_b = late_conflict.late_side
+    game_time = ctx.game_time
+    deadline = cfg.late_wait_seconds
+    detail = (
+        f"early{list(late_conflict.early_models_a)}->{side_a} vs "
+        f"{list(late_conflict.models_for_b)}->{side_b}; "
+        f"game_time={game_time} deadline={deadline}"
+    )
+
+    if game_time is None or game_time < deadline:
+        skipped.append(Skipped("win", side_a, REASON_LATE_CONFLICT_WAIT, detail))
+        skipped.append(Skipped("win", side_b, REASON_LATE_CONFLICT_WAIT, detail))
+        return decisions, skipped
+
+    models_against = list(late_conflict.early_models_a)
+    reasons = [f"{name}>= {cfg.min_conf} for {side_b}" for name in late_conflict.models_for_b]
+    if late_conflict.subcase == "b":
+        models_against = models_against + ["all"]
+        reasons = reasons + ["tiebreak_ignored_all_for_A"]
+
+    key = _dedup_key(ctx, "win", side_b)
+    if ctx.already_sent is not None and key in ctx.already_sent:
+        skipped.append(Skipped("win", side_b, REASON_DEDUP, f"key={key} already sent"))
+    else:
+        expected_wr = max(ctx.model(name).confidence for name in late_conflict.models_for_b)
+        decisions.append(Decision(
+            market="win",
+            target_side=side_b,
+            target_team=ctx.team_name(side_b),
+            rule=RULE_WIN_LATE_AFTER_WAIT,
+            models_for=list(late_conflict.models_for_b),
+            models_against=models_against,
+            timing="now",
+            expected_wr=expected_wr,
+            min_odds=_min_odds(expected_wr, cfg),
+            reasons=reasons,
+        ))
+    skipped.append(Skipped("win", side_a, REASON_VETO, f"resolved for {side_b} after wait; {detail}"))
+    return decisions, skipped
+
+
+def _evaluate_win(
+    ctx: Ctx, cfg: Config, late_conflict: Optional[LateConflict] = None,
+) -> Tuple[List[Decision], List[Skipped]]:
+    decisions: List[Decision] = []
+    skipped: List[Skipped] = []
+
+    if late_conflict is not None and late_conflict.subcase in ("a", "b"):
+        return _evaluate_win_late_conflict(ctx, cfg, late_conflict)
+
+    ambiguous_note = ""
+    if late_conflict is not None and late_conflict.subcase == "ambiguous":
+        ambiguous_note = " late_conflict_ambiguous"
 
     if (
         cfg.max_game_time is not None
@@ -314,7 +513,7 @@ def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]
 
     if survives["Radiant"] and survives["Dire"]:
         detail = (
-            f"Radiant<-{support['Radiant']} Dire<-{support['Dire']}"
+            f"Radiant<-{support['Radiant']} Dire<-{support['Dire']}{ambiguous_note}"
         )
         skipped.append(Skipped("win", None, REASON_CONFLICT, detail))
         return decisions, skipped
@@ -329,7 +528,7 @@ def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]
 
         if vetoers[side]:
             skipped.append(Skipped("win", side, REASON_VETO,
-                                    f"vetoed by {vetoers[side]} favoring {_other_side(side)}"))
+                                    f"vetoed by {vetoers[side]} favoring {_other_side(side)}{ambiguous_note}"))
             continue
 
         key = _dedup_key(ctx, "win", side)
@@ -354,7 +553,9 @@ def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]
     return decisions, skipped
 
 
-def _evaluate_kills(ctx: Ctx, cfg: Config, underdog_side: Optional[str]) -> Tuple[List[Decision], List[Skipped]]:
+def _evaluate_kills_underdog(
+    ctx: Ctx, cfg: Config, underdog_side: Optional[str],
+) -> Tuple[List[Decision], List[Skipped]]:
     decisions: List[Decision] = []
     skipped: List[Skipped] = []
 
@@ -439,6 +640,97 @@ def _evaluate_kills(ctx: Ctx, cfg: Config, underdog_side: Optional[str]) -> Tupl
     return decisions, skipped
 
 
+def _evaluate_kills_late_conflict_a(
+    ctx: Ctx, cfg: Config, late_conflict: LateConflict, existing_decisions: List[Decision],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """Sub-case 4.3 (owner decision, 13.09.2026): early★+All★ agree on ``A``
+    against a lone starred Late for ``B`` -> kills bets fire on ``A``
+    immediately, independent of ELO/``underdog_side``.
+
+    Skips markets already decided for ``A`` by :func:`_evaluate_kills_underdog`
+    (which happens exactly when ``A`` is also the ELO underdog) to avoid a
+    duplicate ``Decision`` on the same ``(market, side)`` dedup key.
+    """
+    decisions: List[Decision] = []
+    skipped: List[Skipped] = []
+
+    side_a = late_conflict.early_side
+    models_for = list(late_conflict.early_models_a) + ["all"]
+    expected_wr = max(ctx.model(name).confidence for name in models_for)
+    min_odds = _min_odds(expected_wr, cfg)
+    target_team = ctx.team_name(side_a)
+    reasons = [f"{name}>= {cfg.min_conf} for {side_a} (late_conflict early side)" for name in models_for]
+    already_markets = {d.market for d in existing_decisions if d.target_side == side_a}
+
+    if ctx.kills_windows_open and "kills_window" not in already_markets:
+        key = _dedup_key(ctx, "kills_window", side_a)
+        if ctx.already_sent is not None and key in ctx.already_sent:
+            skipped.append(Skipped("kills_window", side_a, REASON_DEDUP, f"key={key} already sent"))
+        else:
+            decisions.append(Decision(
+                market="kills_window",
+                target_side=side_a,
+                target_team=target_team,
+                rule=RULE_KILLS_LATE_CONFLICT_EARLY_SIDE,
+                models_for=list(models_for),
+                models_against=[],
+                timing="now",
+                expected_wr=expected_wr,
+                min_odds=min_odds,
+                reasons=reasons + [f"window={ctx.kills_windows_open[0]}"],
+            ))
+
+    if "kills_total" not in already_markets:
+        key_total = _dedup_key(ctx, "kills_total", side_a)
+        if ctx.already_sent is not None and key_total in ctx.already_sent:
+            skipped.append(Skipped("kills_total", side_a, REASON_DEDUP, f"key={key_total} already sent"))
+        else:
+            decisions.append(Decision(
+                market="kills_total",
+                target_side=side_a,
+                target_team=target_team,
+                rule=RULE_KILLS_LATE_CONFLICT_EARLY_SIDE,
+                models_for=list(models_for),
+                models_against=[],
+                timing="now",
+                expected_wr=expected_wr,
+                min_odds=min_odds,
+                reasons=list(reasons),
+            ))
+
+    return decisions, skipped
+
+
+def _evaluate_kills(
+    ctx: Ctx,
+    cfg: Config,
+    underdog_side: Optional[str],
+    late_conflict: Optional[LateConflict] = None,
+) -> Tuple[List[Decision], List[Skipped]]:
+    decisions, skipped = _evaluate_kills_underdog(ctx, cfg, underdog_side)
+    if late_conflict is not None and late_conflict.subcase == "b":
+        extra_decisions, extra_skipped = _evaluate_kills_late_conflict_a(
+            ctx, cfg, late_conflict, decisions
+        )
+        if extra_decisions:
+            # A market just got resolved for side_a by the 4.3 early-side
+            # path -- drop the underdog-path's stale skip for that same
+            # market (either "no_underdog", side=None, when underdog_side
+            # was None, or a side_a skip in the underdog_side==side_a case
+            # that _evaluate_kills_late_conflict_a's dedup already avoided
+            # duplicating). Without this, the log would show a decision
+            # AND a skip for the same market.
+            resolved_markets = {d.market for d in extra_decisions}
+            side_a = late_conflict.early_side
+            skipped = [
+                s for s in skipped
+                if not (s.market in resolved_markets and (s.side is None or s.side == side_a))
+            ]
+        decisions = decisions + extra_decisions
+        skipped = skipped + extra_skipped
+    return decisions, skipped
+
+
 def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     """Idempotent on every tick: same ``ctx``/``cfg`` -> same result.
 
@@ -447,8 +739,9 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     same decisions until the caller records them as sent.
     """
     underdog_side, elo_diff = _underdog(ctx, cfg)
-    win_decisions, win_skipped = _evaluate_win(ctx, cfg)
-    kills_decisions, kills_skipped = _evaluate_kills(ctx, cfg, underdog_side)
+    late_conflict = _detect_late_conflict(ctx, cfg)
+    win_decisions, win_skipped = _evaluate_win(ctx, cfg, late_conflict)
+    kills_decisions, kills_skipped = _evaluate_kills(ctx, cfg, underdog_side, late_conflict)
     return EvalResult(
         decisions=win_decisions + kills_decisions,
         skipped=win_skipped + kills_skipped,
