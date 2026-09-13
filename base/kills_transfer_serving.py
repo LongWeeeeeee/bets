@@ -1,4 +1,12 @@
-"""Informational E281 probabilities; never participates in dispatch gates."""
+"""E281 side/total >=X kills probabilities.
+
+Star-panel rendering (:func:`forecast_text`/:func:`render`) remains purely
+informational. Since the owner rule of 13.09.2026 (E-289 addendum), the raw
+:func:`forecast_probabilities` numbers are ALSO read by ``win_model_veto``'s
+adapter and stashed for ``ml_dispatch``'s ``kills_total`` gate
+(``ML_DISPATCH_KILLS_TOTAL_GATE``, see ``base/ml_dispatch.py``); the star
+threshold here (``KILLS_TRANSFER_STAR_MIN_PROB``) is independent of that gate.
+"""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -117,9 +125,31 @@ def _bundle(directory):
     return KillsServing(directory)
 
 
-def forecast_text(rh, dh, ra, da, teams, start, mid):
+def forecast_probabilities(rh, dh, ra, da, teams, start, mid):
+    """Numeric core of :func:`forecast_text`: (P(Radiant>=30), P(Dire>=30), P(map>=55)).
+
+    Split out (E-281 kills_total gate, owner rule 13.09.2026) so
+    ``win_model_veto``'s adapter can stash the raw numbers for
+    ``ml_dispatch`` without re-deriving them from rendered text.
+    """
     directory = os.environ.get("KILLS_TRANSFER_BUNDLE", str(DEFAULT_BUNDLE))
     serving = _bundle(directory)
-    probabilities = serving.predict(tuple(rh) + tuple(dh), tuple(ra) + tuple(da),
-                                    tuple(teams), int(start), int(mid))
-    return render(probabilities, serving.manifest["history_date"])
+    return serving.predict(tuple(rh) + tuple(dh), tuple(ra) + tuple(da),
+                           tuple(teams), int(start), int(mid))
+
+
+def manifest_history_date(directory=None):
+    """Cheap manifest-only history-date lookup (no CatBoost/joblib load).
+
+    Used by the ``win_model_veto`` adapter to build :func:`render`'s text
+    from :func:`forecast_probabilities` without instantiating the full
+    :class:`KillsServing` bundle a second time just for one date string.
+    """
+    root = Path(directory) if directory else Path(
+        os.environ.get("KILLS_TRANSFER_BUNDLE", str(DEFAULT_BUNDLE)))
+    return json.loads((root / "manifest.json").read_text())["history_date"]
+
+
+def forecast_text(rh, dh, ra, da, teams, start, mid):
+    probabilities = forecast_probabilities(rh, dh, ra, da, teams, start, mid)
+    return render(probabilities, manifest_history_date())

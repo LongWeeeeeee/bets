@@ -476,6 +476,29 @@ def last_early_win(index):
         return None
 
 
+def last_kills30(index):
+    """E-281 side/total >=30(55) kill probabilities for THIS index, or None.
+
+    Same ``index``-keyed contract as ``last_late``/``last_early_nw`` above:
+    {"radiant": float, "dire": float, "total": float}. Unlike
+    ``last_panel_text``/``last_panel_verdicts`` (which always answer for the
+    single most-recent tick, with no index argument at all), these numbers
+    are copied into the per-index ``_LAST_FILL``/``_FILL_HISTORY`` record
+    right where late/early_nw/early_win already are (see the E-281 adapter
+    around line ~935 and the ``_LAST_FILL["kills30"] = ...`` hookup just
+    before ``_remember_fill()``) — owner rule 13.09.2026, ml_dispatch
+    ``kills_total`` gate (E-289 addendum).
+    """
+    try:
+        _rec = _fill_for(index)
+        if _rec:
+            _value = _rec.get("kills30")
+            return dict(_value) if isinstance(_value, dict) else None
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def last_draft_rank(index):
     """Место драфта среди признаков, тянущих в сторону ставки, и его вклад."""
     try:
@@ -929,14 +952,24 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             # «блок просто не появился» — самый неудобный вид поломки.
             _LAST_PANEL["error"] = f"{type(_exc).__name__}: {_exc}"
             _report_panel_silence(_LAST_PANEL["error"])
-        # Full-threshold E281 forecasts are informational and independent of
-        # panel verdicts, highlights and win/dispatch thresholds.
+        # Full-threshold E281 forecasts are informational (star panel text)
+        # AND, since the owner rule of 13.09.2026 (E-289 addendum), the raw
+        # numbers are stashed for ml_dispatch's kills_total gate — see
+        # `last_kills30` above and `ML_DISPATCH_KILLS_TOTAL_GATE`.
         try:
-            from kills_transfer_serving import forecast_text as _kills_text
+            from kills_transfer_serving import (
+                forecast_probabilities as _kills_probs,
+                manifest_history_date as _kills_history_date,
+                render as _kills_render,
+            )
             _kills_mid = next((match.get(k) for k in ("id", "match_id", "map_id", "matchId")
                                if isinstance(match, dict) and match.get(k)), 0)
-            _kills_block = _kills_text(rh, dh, ra, da, (_rt_id, _dt_id),
-                                       elo_evaluation_timestamp(match), _kills_mid)
+            _kills_probabilities = _kills_probs(rh, dh, ra, da, (_rt_id, _dt_id),
+                                                elo_evaluation_timestamp(match), _kills_mid)
+            _LAST_PANEL["kills30"] = {"radiant": _kills_probabilities[0],
+                                      "dire": _kills_probabilities[1],
+                                      "total": _kills_probabilities[2]}
+            _kills_block = _kills_render(_kills_probabilities, _kills_history_date())
             _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], _kills_block)))
             _LAST_PANEL["kills_error"] = None
         except Exception as _exc:                    # noqa: BLE001
@@ -944,6 +977,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             if _LAST_PANEL.get("kills_error") != _kills_error:
                 print(f"[kills_transfer] {_kills_error}", flush=True)
             _LAST_PANEL["kills_error"] = _kills_error
+            _LAST_PANEL["kills30"] = None
         _cov = getattr(res, "coverage", None) or {}
         if _cov:
             global _COV_N, _COV_SUM
@@ -1096,6 +1130,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         # Разложение собрано целиком — кладём его в историю по индексу. Карточка
         # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
         _LAST_FILL["panel_text"] = str(_LAST_PANEL.get("text") or "")
+        # E-281 kills30: `_LAST_PANEL` (the adapter above) is a single global
+        # for "last tick only", unlike late/early_nw/early_win which are
+        # already per-index. Copying it here, right before `_remember_fill()`
+        # archives `_LAST_FILL` under THIS tick's `_idx`, gives `last_kills30`
+        # the same index-keyed contract (owner rule 13.09.2026).
+        _LAST_FILL["kills30"] = _LAST_PANEL.get("kills30")
         _remember_fill()
         # Оценка late-модели идёт В ЖУРНАЛ: без этого её молчаливый отказ
         # (нет артефакта, незнакомый герой) неотличим от работы — строка в

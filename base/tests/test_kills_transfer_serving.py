@@ -88,9 +88,12 @@ def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch, ca
 
     def forecast(*args):
         calls.append(args)
-        return render((.72, .63, .81), "11.09.2026")
+        return (.72, .63, .81)
 
-    monkeypatch.setattr(kills_transfer_serving, "forecast_text", forecast)
+    monkeypatch.setattr(kills_transfer_serving, "forecast_probabilities", forecast)
+    # Hermetic: history-date lookup would otherwise read the real bundle's
+    # manifest.json (present locally but not guaranteed in every test env).
+    monkeypatch.setattr(kills_transfer_serving, "manifest_history_date", lambda: "11.09.2026")
     scope = dict(_LAST_PANEL=panel, rh=(1,2,3,4,5), dh=(6,7,8,9,10), ra=(1,)*5, da=(2,)*5,
                  _rt_id=11, _dt_id=22, match={"id": 999}, elo_evaluation_timestamp=lambda _: 123,
                  _report_panel_silence=errors.append)
@@ -99,14 +102,16 @@ def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch, ca
     assert panel["text"].startswith("EXISTING WINDOWS\nКилы ML")
     assert "Dire ≥30 килов: 63.0%" in panel["text"]
     assert panel["verdicts"] == ["unchanged"] and not errors
+    assert panel["kills30"] == {"radiant": .72, "dire": .63, "total": .81}
     before = panel["text"]
 
     def fail(*_args):
         raise ValueError("bad bundle")
 
-    monkeypatch.setattr(kills_transfer_serving, "forecast_text", fail)
+    monkeypatch.setattr(kills_transfer_serving, "forecast_probabilities", fail)
     exec(code, scope)
     assert panel["text"] == before and panel["verdicts"] == ["unchanged"]
+    assert panel["kills30"] is None
     assert "E281 kills" in panel["kills_error"]
     assert "[kills_transfer] E281 kills" in capsys.readouterr().out
     exec(code, scope)
