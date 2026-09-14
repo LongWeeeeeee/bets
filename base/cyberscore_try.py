@@ -55,6 +55,10 @@ try:
 except ImportError:
     from base import winline_dom_history as _winline_dom_history
 try:
+    from team_name_aliases import canonical_team_key as _canonical_team_key
+except ImportError:  # Supports both direct-script and package imports.
+    from base.team_name_aliases import canonical_team_key as _canonical_team_key
+try:
     import camoufox
     CAMOUFOX_AVAILABLE = True
 except Exception:
@@ -19308,12 +19312,23 @@ def _winline_card_series_key(league: Any, team1: Any, team2: Any) -> str:
         return ""
 
 
+def _winline_ownership_team_identity(value: Any) -> str:
+    """Identity for bridge/card ownership checks, including confirmed aliases."""
+    normalized = _winline_normalized_team_identity(value)
+    if not normalized:
+        return ""
+    try:
+        return _canonical_team_key(str(value)) or normalized
+    except Exception:
+        return normalized
+
+
 def _winline_bridge_owns_card_pair(team1: Any, team2: Any, map_num: Any) -> bool:
     """Пара+карта уже опрашивается живым мостовым опросом — не дублируем."""
     try:
         want = {
-            _winline_normalized_team_identity(team1),
-            _winline_normalized_team_identity(team2),
+            _winline_ownership_team_identity(team1),
+            _winline_ownership_team_identity(team2),
         } - {""}
         want_map = int(map_num)
     except (TypeError, ValueError):
@@ -19340,8 +19355,8 @@ def _winline_bridge_owns_card_pair(team1: Any, team2: Any, map_num: Any) -> bool
         if not match or int(match.group(2)) != want_map:
             continue
         have = {
-            _winline_normalized_team_identity(match.group(3)),
-            _winline_normalized_team_identity(match.group(4)),
+            _winline_ownership_team_identity(match.group(3)),
+            _winline_ownership_team_identity(match.group(4)),
         } - {""}
         if have == want:
             return True
@@ -19352,8 +19367,8 @@ def _winline_owned_slot_key(team1: Any, team2: Any, map_num: Any) -> Any:
     """Слот (пара, карта) для трекинга владения. None — пару не опознать."""
     try:
         want = {
-            _winline_normalized_team_identity(team1),
-            _winline_normalized_team_identity(team2),
+            _winline_ownership_team_identity(team1),
+            _winline_ownership_team_identity(team2),
         } - {""}
         want_map = int(map_num)
     except (TypeError, ValueError):
@@ -19395,8 +19410,8 @@ def _winline_live_bridge_pollers_for_pair(team1: Any, team2: Any, map_num: Any) 
         if not match or int(match.group(2)) != want_map:
             continue
         have = {
-            _winline_normalized_team_identity(match.group(3)),
-            _winline_normalized_team_identity(match.group(4)),
+            _winline_ownership_team_identity(match.group(3)),
+            _winline_ownership_team_identity(match.group(4)),
         } - {""}
         if have == want:
             return True
@@ -19441,8 +19456,8 @@ def _winline_retire_shadow_card_pollers(
                 if not match or int(match.group(2)) != want_map:
                     continue
                 have = {
-                    _winline_normalized_team_identity(match.group(3)),
-                    _winline_normalized_team_identity(match.group(4)),
+                    _winline_ownership_team_identity(match.group(3)),
+                    _winline_ownership_team_identity(match.group(4)),
                 } - {""}
                 if have != want:
                     continue
@@ -20347,8 +20362,8 @@ def _winline_bridge_live_pairs(
             if _is_placeholder_team_name(radiant) or _is_placeholder_team_name(dire):
                 continue
             names = {
-                _winline_normalized_team_identity(radiant),
-                _winline_normalized_team_identity(dire),
+                _winline_ownership_team_identity(radiant),
+                _winline_ownership_team_identity(dire),
             } - {""}
             if len(names) == 2:
                 out.add(frozenset(names))
@@ -20459,8 +20474,8 @@ def _winline_bridge_series_for_pair(team1: Any, team2: Any,
         if not match or int(match.group(2)) != want_map:
             continue
         have = {
-            _winline_normalized_team_identity(match.group(3)),
-            _winline_normalized_team_identity(match.group(4)),
+            _winline_ownership_team_identity(match.group(3)),
+            _winline_ownership_team_identity(match.group(4)),
         } - {""}
         if have == want:
             series = str(match.group(1)).strip()
@@ -20609,8 +20624,8 @@ def _winline_card_dltv_draft_notify(
             pairs = (bridge_live_pairs if bridge_live_pairs is not None
                      else _winline_bridge_live_pairs())
             pair = {
-                _winline_normalized_team_identity(team1),
-                _winline_normalized_team_identity(team2),
+                _winline_ownership_team_identity(team1),
+                _winline_ownership_team_identity(team2),
             } - {""}
             if len(pair) == 2 and frozenset(pair) in set(pairs or set()):
                 print(f"📡 DLTv-live: bridge sees {team1} vs {team2} live — "

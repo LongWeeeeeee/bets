@@ -859,3 +859,99 @@ class TestMapOrderGate:
         summary = runtime._winline_sweep_cards_from_snapshot()
         assert summary.get("retired_early", 0) >= 1
         assert card not in runtime._winline_current_map_pollers
+
+
+class TestWinlineOwnershipAliases:
+    class _Active:
+        def is_active(self):
+            return True
+
+    def test_inner_circle_alias_matches_reversed_card_and_preserves_boundaries(
+        self, monkeypatch
+    ):
+        bridge = ("sourcetv:league:18866|id:10019843|id:10136133|map1|"
+                  "Inner Circle x Insanity|Two Move")
+        card = ("winline:league:european pro league|inner circle|two move|"
+                "map1|TWO MOVE|INNER CIRCLE")
+        map_two = ("winline:league:european pro league|inner circle|two move|"
+                   "map2|INNER CIRCLE|TWO MOVE")
+        academy = ("winline:league:european pro league|inner circle academy|"
+                   "two move|map1|INNER CIRCLE ACADEMY|TWO MOVE")
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers",
+                            {bridge: self._Active(), map_two: self._Active()},
+                            raising=False)
+
+        assert runtime._winline_bridge_owns_card_pair(
+            "two move", "INNER CIRCLE", 1
+        ) is True
+        assert runtime._winline_live_bridge_pollers_for_pair(
+            "INNER CIRCLE", "TWO MOVE", 1
+        ) is True
+        assert runtime._winline_bridge_owns_card_pair(
+            "INNER CIRCLE", "TWO MOVE", 2
+        ) is True
+        assert runtime._winline_live_bridge_pollers_for_pair(
+            "INNER CIRCLE", "TWO MOVE", 2
+        ) is False
+        assert runtime._winline_bridge_owns_card_pair(
+            "INNER CIRCLE ACADEMY", "TWO MOVE", 1
+        ) is False
+        assert runtime._winline_bridge_series_for_pair(
+            "INNER CIRCLE", "TWO MOVE", 1
+        ) == ["sourcetv:league:18866|id:10019843|id:10136133"]
+        assert runtime._winline_owned_slot_key(
+            "Inner Circle x Insanity", "Two Move", 1
+        ) == runtime._winline_owned_slot_key("two move", "inner circle", 1)
+        assert runtime._winline_card_series_key(
+            "European Pro League", "Inner Circle x Insanity", "Two Move"
+        ) == ("winline:league:european pro league|inner circle x insanity|"
+              "two move")
+        monkeypatch.setitem(runtime._winline_current_map_pollers, academy,
+                            self._Active())
+        monkeypatch.setitem(runtime._winline_current_map_pollers, card,
+                            self._Active())
+        assert runtime._winline_retire_shadow_card_pollers(
+            "Inner Circle x Insanity", "Two Move", 1
+        ) == 1
+        assert card not in runtime._winline_current_map_pollers
+        assert map_two in runtime._winline_current_map_pollers
+        assert academy in runtime._winline_current_map_pollers
+
+    def test_two_sweeps_retire_real_alias_card_only_on_second_sight(self, monkeypatch):
+        bridge = ("sourcetv:league:18866|id:10019843|id:10136133|map1|"
+                  "Inner Circle x Insanity|Two Move")
+        card_key = ("winline:league:european pro league|inner circle|two move|"
+                    "map1|TWO MOVE|INNER CIRCLE")
+        cards = [{"live": True, "league": "European Pro League",
+                  "team1": "INNER CIRCLE", "team2": "TWO MOVE",
+                  "rows": [{"kind": "map", "map_num": 1,
+                            "has_prices": True}]}]
+        monkeypatch.setattr(runtime, "WINLINE_CARD_SWEEP_ENABLED", True,
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_first_active",
+                            lambda: True, raising=False)
+        monkeypatch.setattr(runtime, "_league_matches_allowlist",
+                            lambda *_args: True, raising=False)
+        monkeypatch.setattr(runtime, "_winline_bridge_live_pairs",
+                            lambda: {frozenset({"inner circle x insanity",
+                                                "two move"})}, raising=False)
+        monkeypatch.setattr(runtime, "_dltv_live_series_snapshot",
+                            lambda: None, raising=False)
+        monkeypatch.setattr(odds_parser, "winline_enumerate_live_cards",
+                            lambda _html: cards, raising=False)
+        runtime._winline_overview_inject_for_tests("card", html="<html>")
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers",
+                            {bridge: self._Active(), card_key: self._Active()},
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned", set(),
+                            raising=False)
+
+        first = runtime._winline_sweep_cards_from_snapshot()
+        assert first["skipped_owned"] == 1
+        assert first.get("retired_shadow", 0) == 0
+        assert card_key in runtime._winline_current_map_pollers
+        second = runtime._winline_sweep_cards_from_snapshot()
+        assert second["skipped_owned"] == 1
+        assert second["retired_shadow"] == 1
+        assert card_key not in runtime._winline_current_map_pollers
+        assert bridge in runtime._winline_current_map_pollers

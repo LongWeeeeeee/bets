@@ -102,6 +102,9 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # кэфы по карте не шли ни разу (`promotion=no_card_scope`, `match_found=false`).
     # Строка редкая, склеить ею чужую команду нельзя.
     "RE.Arise": ("4IKIBAMBONI",),
+    # Подтверждено логами Winline/SourceTV 14.09.2026: SourceTV пишет
+    # `Inner Circle x Insanity`, а карточка Winline — `INNER CIRCLE`.
+    "Inner Circle x Insanity": ("Inner Circle",),
 }
 
 
