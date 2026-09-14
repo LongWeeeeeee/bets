@@ -5,7 +5,7 @@ date: "2026-09-14"
 area: dispatch
 status: full
 corpus: "28 241 pro maps; discovery24 292 до17.07.2026, confirmation3941 17.07–04.09; 8 purged; frozen live nw_mean"
-verdict: "Ретроспективно: dict>=20 при ML47–53 123/202=60.89%, но confirmation16/30=53.33%, добавочный logloss CI включает0 — не подтверждено для узкой группы. NW-кандидат: с4мин +1000 на pending-стороне, первое пересечение, confirmation440/470=93.62%, coverage33.26%, средний выход6:18; +500 даёт82.53%, +1500 98.13%. Allowlist+1000 55/58, мало. 14.09 владелец разрешил внедрение постоянного4:00/+1000. Поминутный кандидат3:1200..9:700 даёт489/534=91.57%, coverage37.79%; доказанного улучшения нет."
+verdict: "Ретроспективно: dict>=20 при ML47–53 123/202=60.89%, но confirmation16/30=53.33%, добавочный logloss CI включает0 — не подтверждено для узкой группы. NW-кандидат: с4мин +1000 на pending-стороне, первое пересечение, confirmation440/470=93.62%, coverage33.26%, средний выход6:18; +500 даёт82.53%, +1500 98.13%. Allowlist+1000 55/58, мало. 14.09 постоянный4:00/+1000 внедрён по разрешению владельца, restart13:32MSK. Поминутный кандидат3:1200..9:700 даёт489/534=91.57%, coverage37.79%; доказанного улучшения нет."
 harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; research_lane_residual_check.py; research_lane_minute_schedule.py; runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json"
 ---
 
@@ -16,8 +16,8 @@ harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; resear
 DONE
 
 Офлайн-расчёты завершены. После них владелец явно поручил внедрить простой
-выход с 4:00 при +1000 и перезапустить прод. Изменение подготовлено и проверено;
-приёмка деплоя фиксируется отдельным checkpoint ниже. Модели не менялись.
+выход с 4:00 при +1000 и перезапустить прод. Изменение932e5ef выложено наserv1 и перезапущено14.09.2026 13:32:34MSK;
+приёмка ниже. Модели не менялись.
 
 ## SUMMARY
 
@@ -194,6 +194,20 @@ startup печатает фактически прочитанные значе�
 10 research; первоначальный wrapper test поймал отсутствие reasons в audit,
 после исправления повторная проверка прошла. Старый failed log сохранён.
 
+Приёмка: serv1 `/root/main` на `932e5ef`; штатный
+`scripts/run/restart_cyberscore.sh` очистил map_id_check и перезапустил service
+14.09.2026 13:32:34MSK. Один PID676356, active, NRestarts0. Startup:
+`early_nw=on/240.0/1000.0`, `mode=ml`; wait600/late1860 сохранены.
+Хеши обоих runtime-модулей совпали с локальными. На Python3.12 py_compile +
+78 pure-dispatch tests passed; отдельный smoke с actual process env проверил
+Dire при240с/-1000 → now. После живых циклов:0Tracebacks,0tick errors;3 новых audit rows
+на2 картах содержат time/NW (532с/+3825,357с/+236,608с/+4430).
+Ранее отправленные сигналы остановлены persistent dedup, дублей нет.
+У обеих карт был Lane hit; реальная новая отправка по early-NW не наблюдалась. Это техническая приёмка, не доказательство будущей точности.
+`minute_schedule/{prod_before.json,prod_acceptance.json,gate_checks.json,
+deploy_preflight.log,restart.log,prod_cycle_acceptance.json,prod_audit_details.jsonl}`. Откат: EARLY_NW=0 + restart; чужой dirty
+`base/id_to_names.py` сохранён, sent-ledger и log.txt не чистились.
+
 ## CHANGED
 
 - `scripts/ops/research_lane_wait.py`: joins, replay dispatch, slices и first crossing.
@@ -339,6 +353,16 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
       "id": "SCHEDULE_VERIFY",
       "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/verification.json",
       "sha256": "b305b917fa80d9e22b374d9c1f2e4f77c14a579c7fe9564b3df4f20135ee052c"
+    },
+    {
+      "id": "DEPLOY",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/prod_acceptance.json",
+      "sha256": "14fd7a55ea528111c3fb8d3a2c7c31b48bed28d5c814bfc087826c91e074efe1"
+    },
+    {
+      "id": "LIVE_CYCLE",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/prod_cycle_acceptance.json",
+      "sha256": "29afe15b06ba9a2c59fe9e848d60894933576421ef609920833de8e1329c8b19"
     }
   ],
   "claims": [
@@ -385,6 +409,24 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "CLOCK_ALT"
       ],
       "scope": "Reused chronological confirmation; observed tradeoff, not prospective or causal efficacy."
+    },
+    {
+      "id": "F5",
+      "kind": "OBSERVED",
+      "claim": "User-authorized constant240s/1000 gate deployed932e5ef, restarted13:32:34MSK; active onePID676356 NRestarts0; startup enables gate and code hashes match.",
+      "sources": [
+        "DEPLOY"
+      ],
+      "scope": "Technical startup acceptance. No qualifying live early delivery observed at initial check."
+    },
+    {
+      "id": "F6",
+      "kind": "OBSERVED",
+      "claim": "Postrestart normal cycles yielded3 new audit rows on2 live maps with signedNW; no tracebacks/tick errors; existing sent signals deduplicated.",
+      "sources": [
+        "LIVE_CYCLE"
+      ],
+      "scope": "Live dataflow and dedup; neither map exercises a new early-NW delivery."
     }
   ],
   "checks": [
