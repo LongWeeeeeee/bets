@@ -54,6 +54,21 @@ def target_hit(d, target_min_lead=None):
     return signed > 0 if target_min_lead is None else signed >= target_min_lead
 
 
+def minute_slices(d, nw, population, hit):
+    """Independent descriptive slices; earlier crossings are NOT removed."""
+    rows = []
+    for minute in range(1, 11):
+        for threshold in (500, 1000, 1500, 2000, 2500, 3000):
+            row = {"minute": minute, "entry_min_lead": threshold,
+                   "is_forecast": minute < 10}
+            for split in ("discover", "confirm"):
+                universe = population & d[split]
+                selected = universe & eligible_at(nw, minute, threshold, None)
+                row[split] = summary(hit, selected, universe)
+            rows.append(row)
+    return rows
+
+
 def evaluate(d, nw, population, schedule, growth, target_min_lead=None):
     take, when = replay(nw, population, schedule, growth)
     hit = target_hit(d, target_min_lead)
@@ -106,6 +121,10 @@ def analyze(d, target_min_lead=None):
     # Fixed policy from the prior >0 study; rescore without refitting it.
     old = {3: 1200, 4: 1000, 5: 1000, 6: 900, 7: 1100, 8: 700, 9: 700}
     out["previous_variable_schedule"] = evaluate(d, nw, base, old, None, target_min_lead)
+    out["minute_slices"] = {
+        "method": "P(target | signed NW at minute >= threshold); independent slices, not a stopping policy; minute10 is contemporaneous",
+        "all_wait": minute_slices(d, nw, base, hit),
+        "allowlist_wait": minute_slices(d, nw, base & d["allowlist"], hit)}
     # Match on current NW bands to avoid comparing big current leads to small
     # ones when describing whether an early lead has been maintained.
     for minute in (3, 4):

@@ -5,7 +5,7 @@ date: "2026-09-14"
 area: dispatch
 status: full
 corpus: "28 241 pro maps; discovery24 292 до17.07.2026, confirmation3941 17.07–04.09; 8 purged; frozen live nw_mean"
-verdict: "Новая цель NW10>=1000: действующий4:00/+1000 даёт347/470=73.83% (старые93.62% относились к NW10>0). Новый conditional-unsent5:1500,6/7:1600,8:1800,9:1500 даёт268/296=90.54%, coverage20.95%; строгий7/9:1700 даёт224/236=94.92%. Ретроспектива, reused confirmation и clock sensitivity; новые пороги не внедрены. Узкий ML47–53+dict20 остаётся неподтверждённым для исходной цели."
+verdict: "Цель NW10>=1500: поминутные срезы1–10; current>=2000 на6–9 даёт92–96%. Текущее4/+1000:275/470=58.51%; first-cross2000:170/186=91.40%; conditional90:168/183=91.80%. Reused confirmation, clock sensitivity; прод не менялся."
 harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; research_lane_residual_check.py; research_lane_minute_schedule.py; runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json"
 ---
 
@@ -21,10 +21,10 @@ DONE
 
 ## SUMMARY
 
-**Последнее изменение цели владельцем: итоговый командный NW на10:00 >=1000.**
-Действующее правило4:00/+1000 по новой цели даёт347/470=73.83%. Новый расчёт
-и пороги приведены в дополнении «Цель NW10>=1000» ниже. Прод не менялся
-после этой смены исследовательского маркера; прежние93.62% относятся только к >0.
+**Последняя цель владельца: командный NW на10:00 >=1500.**
+Поминутная таблица1–10 и отдельные first-crossing результаты приведены ниже.
+Текущее4:00/+1000 даёт275/470=58.51% по этой цели. Прод не менялся.
+Предыдущие расчёты для>=1000 и>0 сохранены с явными маркерами.
 
 **Исходный вывод для NW10>0:** для дальнейшей проверки досрочного выхода разумный простой кандидат —
 с 4-й минуты `team_NW_lead >= 1000` **на стороне уже ожидающего win-сигнала**.
@@ -295,6 +295,80 @@ venv_catboost/bin/python3 scripts/ops/research_lane_minute_schedule.py --paired 
 обычный10-минутный fallback за100% прогноз. Остальные clock/as-of/многократные
 проверки и ограничения командного NW из RISKS сохраняются.
 
+### Дополнение: поминутный NW и цель NW10>=1500
+
+**OBSERVED.** Общий командный NW на стороне ожидающего win-сигнала.
+Confirmation:1413 ordinary wait600 карт из3941 поздних карт,17.07–04.09.2026.
+Порог означает не меньше указанного NW. Ячейка: частота и hits/n.
+Это независимые срезы, ранее пересёкшие порог карты здесь не удаляются.
+
+| Минута | >=500 | >=1000 | >=1500 | >=2000 | >=2500 | >=3000 |
+|---|---|---|---|---|---|---|
+| 1 | 37.0% (10/27)* | 25.0% (1/4)* | — (0) | — (0) | — (0) | — (0) |
+| 2 | 50.0% (62/124) | 78.6% (11/14)* | 50.0% (1/2)* | — (0) | — (0) | — (0) |
+| 3 | 53.2% (108/203) | 66.7% (30/45) | 80.0% (4/5)* | 100.0% (1/1)* | — (0) | — (0) |
+| 4 | 56.4% (162/287) | 76.5% (62/81) | 84.2% (16/19)* | 100.0% (4/4)* | 100.0% (1/1)* | — (0) |
+| 5 | 57.2% (198/346) | 71.3% (107/150) | 84.4% (38/45) | 90.9% (10/11)* | 66.7% (2/3)* | 0.0% (0/1)* |
+| 6 | 55.9% (232/415) | 69.6% (156/224) | 85.1% (74/87) | 92.1% (35/38) | 100.0% (12/12)* | 100.0% (2/2)* |
+| 7 | 58.4% (255/437) | 70.8% (199/281) | 82.9% (121/146) | 93.6% (73/78) | 97.1% (34/35) | 100.0% (10/10)* |
+| 8 | 56.9% (269/473) | 73.5% (241/328) | 82.5% (174/211) | 94.8% (110/116) | 98.3% (57/58) | 100.0% (28/28)* |
+| 9 | 57.3% (282/492) | 73.3% (264/360) | 89.3% (233/261) | 96.3% (158/164) | 97.8% (87/89) | 98.0% (50/51) |
+| 10 | 54.9% (293/534) | 72.3% (293/405) | 100.0% (293/293) | 100.0% (212/212) | 100.0% (154/154) | 100.0% (92/92) |
+
+*n<30: крайне нестабильная оценка. На10:00 это уже наблюдаемый факт;
+100% при>=1500 следует из определения цели и не является прогнозом.
+Полные Wilson95CI, discovery и отдельная allowlist-популяция сохранены в JSON.
+
+**Первое пересечение, отдельно от срезов.** Подбор на остающихся discovery-картах,
+минимум100, нижняя Wilson-граница>=90%/95%. Точность только ранних отправок.
+
+| Правило | hits/n | Частота | Wilson95CI | Охват wait600 | Средняя минута |
+|---|---:|---:|---|---:|---:|
+| 4–9:1000 (прод) | 275/470 | 58.51% | 54.00–62.88% | 33.26% | 6.29 |
+| 4–9:1500 | 247/321 | 76.95% | 72.04–81.22% | 22.72% | 7.22 |
+| 4–9:2000 | 170/186 | 91.40% | 86.48–94.64% | 13.16% | 7.56 |
+| 4–9:2500 | 98/101 | 97.03% | 91.63–98.98% | 7.15% | 7.84 |
+| 5:1800;7:1900;8:2300;9:2000 | 168/183 | 91.80% | 86.92–94.97% | 12.95% | 7.66 |
+| 7:2500;8:2400;9:2500 | 102/105 | 97.14% | 91.93–99.02% | 7.43% | 7.96 |
+
+Пропущенная минута в fitted-расписании означает отсутствие нового разрешения
+в этой дискретной проверке. Автоматическое удержание порога до следующей строки
+и непрерывный live replay здесь не тестировались.
+
+Clock sensitivity: raw index=minute−1 даёт237/420=56.43% для текущего правила;
+LCB90:6/7:1900,8/9:2000 —117/130=90%; LCB95:6:2000,8:2200,9:2300 —88/91=96.70%.
+Меняются и наблюдение, и target. Явных timestamp для элементов массива нет.
+
+**DERIVED/INFERRED.** Current>=2000 на6–9 связан с частотой92–96% достижения>=1500;
+первое пересечение2000 на4–9 даёт91.40%. Срез нельзя подменять целым правилом.
+Большие перевесы на первых минутах слишком малочисленны для уверенного вывода.
+
+**NOT_CHECKED.** Свежая будущая выборка, доходность, полная live odds/roster
+доступность, точный source clock. Confirmation использован многократно, интервалы
+не корректируют множественный подбор. Командный NW не измеряет фарм крипов
+или победу конкретного героя на линии. Прод при смене цели не менялся.
+
+Харнесс: `scripts/ops/research_lane_minute_schedule.py`; воспроизводимый запуск:
+
+```sh
+venv_catboost/bin/python3 scripts/ops/research_lane_minute_schedule.py --paired PAIRED_NPZ --output-dir TARGET1500_OUTPUT --target-min-lead 1500 --source-index-offset 0
+# Repeat with --source-index-offset -1 and a distinct output directory.
+```
+
+Артефакты: `runtime/artifacts/star-dispatch/lane_wait_20260914/target1500/`:
+`inputs.json`, `commands.json`, `run.log`, `exit.json`, `verification.json`,
+`{primary,offset_minus1}/minute_schedule.json`. Один nice19 процесс PID91983
+завершил обе версии exit[0,0]. Frozen hashes проверены после расчёта.
+Независимо проверены480 наборов slice counts и192 scalar policy replays.
+12 research tests passed, включая inclusive1500 и инверсию Dire. Первый
+верификатор остановлен exit130 из-за повторной распаковки NPZ; после однократной
+загрузки массивов проверка завершилась exit0. Основной расчёт не повторялся.
+
+Где искать ошибку: current>=g не равно точному NW=g; одна карта встречается
+в разных минутах; срез не равен первому пересечению;10-минутные100% не прогноз;
+знак берётся от pending-сигнала. Нельзя приписывать результаты всех wait600
+узкой группе ML47–53 или всем Dota-матчам. Fallback10 не включён в раннюю точность.
+
 ## CHANGED
 
 - `scripts/ops/research_lane_wait.py`: joins, replay dispatch, slices и first crossing.
@@ -303,7 +377,7 @@ venv_catboost/bin/python3 scripts/ops/research_lane_minute_schedule.py --paired 
 - `scripts/ops/research_lane_residual_check.py`: контроль калибровки, более поздняя
   проверка, paired day bootstrap. Явные reductions для матриц из2–3 колонок.
 - `scripts/ops/research_lane_minute_schedule.py`: conditional-unsent schedules, growth и clock sensitivity.
-- `base/tests/test_research_lane_wait.py`:11 регрессионных тестов (после смены цели).
+- `base/tests/test_research_lane_wait.py`:12 регрессионных тестов (цели1000 и1500).
 - `base/ml_dispatch.py`, `base/cyberscore_try.py` и их тесты: разрешённый владельцем live early-NW gate.
 - Исследовательский код/отчёт/индекс и отдельно разрешённое изменение обычного wait600.
 
@@ -465,6 +539,21 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
       "id": "TARGET1000_VERIFY",
       "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1000/verification.json",
       "sha256": "ccf93cf885d962083170e2eb67d302b19d9acd343430ae538e0d925e29821011"
+    },
+    {
+      "id": "TARGET1500",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1500/primary/minute_schedule.json",
+      "sha256": "2c7126a92e58e492c2e816f8c0eb2e6a5e39d7d1614be78d56db4128e5948891"
+    },
+    {
+      "id": "TARGET1500_ALT",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1500/offset_minus1/minute_schedule.json",
+      "sha256": "8a06f74898f1ec5c6f0d79983dd9c6c1945b2248d66dc54beb3d3cb73e267761"
+    },
+    {
+      "id": "TARGET1500_VERIFY",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1500/verification.json",
+      "sha256": "7a4963935e3f3445f6327998554e3f7f1dd283e6eeecf512e5030b8fbe582c59"
     }
   ],
   "claims": [
@@ -539,6 +628,16 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "TARGET1000_ALT"
       ],
       "scope": "Frozen pending population, reused chronological confirmation; clock sensitivity retained."
+    },
+    {
+      "id": "F8",
+      "kind": "OBSERVED",
+      "claim": "Target signed teamNW10>=1500: minute1..10 slices; current4/1000 policy275/470; conditionalLCB90 168/183; conditionalLCB95 102/105. Production unchanged.",
+      "sources": [
+        "TARGET1500",
+        "TARGET1500_ALT"
+      ],
+      "scope": "Independent per-minute slices differ from first-crossing policies; reused retrospective confirmation and uncertain source clocks."
     }
   ],
   "checks": [
@@ -565,6 +664,14 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "TARGET1000_VERIFY"
       ],
       "observed": "Workers exit0; frozen hashes unchanged; independent replay4policies; current outcome buckets347/93/30;11tests pass."
+    },
+    {
+      "id": "T4",
+      "status": "PASS",
+      "sources": [
+        "TARGET1500_VERIFY"
+      ],
+      "observed": "Both jobs exit0; frozen hashes unchanged; 480 independent slice counts and 192 scalar policy replays; 12 tests passed."
     }
   ],
   "limitations": [
