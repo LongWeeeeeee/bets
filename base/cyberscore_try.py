@@ -12617,7 +12617,11 @@ def _ml_dispatch_tick(
         timing_phase = "now" if (game_time_value or 0.0) >= cfg.timing_seconds else "wait"
         dedup_view = {
             "verdicts": {
-                name: (v["side"], round(v["confidence"], 2)) if v else None
+                name: (
+                    {target: round(probability, 2) for target, probability in v.items()}
+                    if name == "kills30"
+                    else (v["side"], round(v["confidence"], 2))
+                ) if v else None
                 for name, v in verdicts_view.items()
             },
             "elo_diff": round(float(result.elo_diff or 0.0)),

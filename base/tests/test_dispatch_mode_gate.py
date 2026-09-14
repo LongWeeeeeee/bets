@@ -181,6 +181,12 @@ def _patch_ml_dispatch_tick_deps(monkeypatch, *, delivered_calls, logged, ledger
         lambda *blocks: (5.0, {"late": {"side": "Radiant", "confidence": 0.70}}),
     )
     monkeypatch.setattr(C.win_model_veto, "_heroes_vector", lambda r, d: tuple(range(10)))
+    # E-281 adds probabilities, not a side/confidence model verdict. Keep
+    # this populated so the complete tick exercises audit fingerprinting.
+    monkeypatch.setattr(
+        C.win_model_veto, "last_kills30",
+        lambda index: {"radiant": 0.395, "dire": 0.407, "total": 0.396},
+    )
     monkeypatch.setattr(_laning_serving_module, "verdicts", lambda *a, **k: {"all": None, "lane": None})
     monkeypatch.setattr(
         C, "_team_elo_base_rating_for_side",
@@ -224,6 +230,9 @@ def test_ml_dispatch_tick_shadow_mode_logs_without_delivering(monkeypatch) -> No
     assert delivered_calls == []
     assert len(logged) == 1
     assert logged[0]["mode"] == "shadow"
+    assert logged[0]["verdicts"]["kills30"] == {
+        "radiant": 0.395, "dire": 0.407, "total": 0.396,
+    }
     win_decisions = [d for d in logged[0]["decisions"] if d["market"] == "win"]
     assert len(win_decisions) == 1
     assert win_decisions[0]["target_side"] == "Radiant"
