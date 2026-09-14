@@ -65,3 +65,14 @@ def test_isolated_dictionary_source_matches_real_cascade():
     actual = isolated["calculate_lanes"](r, d, isolated["structure_lane_dict"](flat), core_support_side_lanes=True)
     assert actual == expected
     assert "win 79%" in actual[2]
+
+
+def test_residual_fit_recovers_group_rates_without_floating_errors():
+    sys.path.insert(0, str(study.ROOT / "scripts/ops"))
+    from research_lane_residual_check import fit, linear, sigmoid
+    x = np.column_stack([np.ones(20), np.repeat([-1., 1.], 10)])
+    y = np.array([1.] * 3 + [0.] * 7 + [1.] * 8 + [0.] * 2)
+    with np.errstate(all="raise"):
+        fitted = sigmoid(linear(x, fit(x, y)))
+    assert np.allclose(fitted[:10], .3, atol=1e-4)
+    assert np.allclose(fitted[10:], .8, atol=1e-4)

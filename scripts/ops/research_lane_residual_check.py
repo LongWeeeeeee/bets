@@ -15,14 +15,21 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-np.clip(x, -35, 35)))
 
 
+def linear(x, beta):
+    # Small (2-3 column) models: explicit reductions avoid Accelerate/BLAS
+    # floating-status warnings observed on finite macOS NumPy 2.0.2 inputs.
+    return np.einsum("ni,i->n", x, beta, optimize=False)
+
+
 def fit(x, y):
     beta = np.zeros(x.shape[1])
     penalty = np.eye(x.shape[1]) * 1e-4
     penalty[0, 0] = 0
     for _ in range(100):
-        p = sigmoid(x @ beta)
-        step = np.linalg.solve((x.T * (p * (1 - p))) @ x + penalty,
-                               x.T @ (y - p) - penalty @ beta)
+        p = sigmoid(linear(x, beta))
+        hessian = np.einsum("ni,n,nj->ij", x, p * (1 - p), x, optimize=False)
+        score = np.einsum("ni,n->i", x, y - p, optimize=False)
+        step = np.linalg.solve(hessian + penalty, score - linear(penalty, beta))
         beta += step
         if np.max(np.abs(step)) < 1e-8:
             return beta
@@ -78,7 +85,7 @@ def analyze(d, dictionary):
         train = valid & d["discover"] & (d["nw10"] != 0)
         test = valid & d["confirm"] & (d["nw10"] != 0)
         b0, b1 = fit(base[train], y[train]), fit(augmented[train], y[train])
-        p0, p1 = sigmoid(base[test] @ b0), sigmoid(augmented[test] @ b1)
+        p0, p1 = sigmoid(linear(base[test], b0)), sigmoid(linear(augmented[test], b1))
         l0, l1 = loss(y[test], p0), loss(y[test], p1)
         report["calibration_comparison"] = {
             "train_n": int(train.sum()), "confirm_n": int(test.sum()),
