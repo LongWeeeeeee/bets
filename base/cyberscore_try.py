@@ -46653,7 +46653,19 @@ def _load_stats_dicts():
 
     _load_small_supporting_dicts()
 
-    if not STATS_SEQUENTIAL_WARMUP_ENABLED:
+    # Existing SQLite handles are lazy point lookups, not heavy JSON loads.
+    # Pacing them by 45s skips live-map processing for minutes after restart.
+    # Keep staged warmup if any pending source still needs loading/building.
+    sqlite_ready = all(
+        payload is not None or _stats_sqlite_db_path(Path(path)).exists()
+        for payload, path in (
+            (early_dict, early_path),
+            (early_end_dict, early_end_path),
+            (late_dict, late_path),
+            (post_lane_dict, post_lane_path),
+        )
+    )
+    if not STATS_SEQUENTIAL_WARMUP_ENABLED or sqlite_ready:
         if early_dict is None:
             if _stats_should_use_indexed_lookup(early_path, "early"):
                 early_dict = _prepare_indexed_stats_lookup(early_path, "early")

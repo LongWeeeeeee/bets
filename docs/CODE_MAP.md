@@ -303,7 +303,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `STATS_LOOKUP_BACKEND` | `auto` |
 | `STATS_SHARDED_LOOKUP_MODE` | `auto` |
 | `STATS_SHARDED_LOOKUP_MAX_RAM_GB` | `8.0` |
-| `STATS_WARMUP_STEP_DELAY_SECONDS` | `45.0` |
+| `STATS_WARMUP_STEP_DELAY_SECONDS` | `45.0`; staged warmup for loading/building stats; skipped when every pending early/early_end/late/post_lane source already has SQLite |
 | `STATS_SQLITE_BUILD_BATCH_SIZE` | `50000` |
 | `STATS_SQLITE_QUERY_CHUNK_SIZE` | `800` |
 

@@ -479,26 +479,32 @@ def test_auto_mode_prefers_existing_sqlite_when_json_monolith_missing(tmp_path, 
         lookup.close()
 
 
-def test_load_stats_dicts_sequential_warmup_uses_sqlite_without_json(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("sqlite_sources", [4, 0, 3])
+def test_load_stats_dicts_sequential_warmup_respects_backend_cost(
+    tmp_path, monkeypatch, sqlite_sources
 ) -> None:
     monkeypatch.delenv("STATS_EARLY_LOOKUP_BACKEND", raising=False)
     monkeypatch.delenv("STATS_EARLY_SHARDED_LOOKUP_MODE", raising=False)
     monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
     monkeypatch.setattr(runtime, "STATS_SHARDED_LOOKUP_MODE", "never", raising=False)
     monkeypatch.setattr(runtime, "STATS_SEQUENTIAL_WARMUP_ENABLED", True, raising=False)
-    monkeypatch.setattr(runtime, "STATS_WARMUP_STEP_DELAY_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(runtime, "STATS_WARMUP_STEP_DELAY_SECONDS", 45.0, raising=False)
     monkeypatch.setattr(runtime, "STATS_SQLITE_AUTOBUILD", False, raising=False)
     monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 5, raising=False)
     monkeypatch.setattr(runtime, "LIVE_LANE_ANALYSIS_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "stats_warmup_last_heavy_load_ts", 0.0, raising=False)
+    clock = [1000.0]
+    monkeypatch.setattr(runtime.time, "time", lambda: clock[0])
 
     early_json = tmp_path / "early_dict_raw.json"
     early_end_json = tmp_path / "early_end_dict_raw.json"
     late_json = tmp_path / "late_dict_raw.json"
     post_lane_json = tmp_path / "post_lane_dict_raw.json"
     stats = {"1pos1": {"wins": 3, "games": 5}}
-    for path in (early_json, early_end_json, late_json, post_lane_json):
+    for index, path in enumerate((early_json, early_end_json, late_json, post_lane_json)):
+        if index >= sqlite_sources:
+            path.write_text(json.dumps(stats), encoding="utf-8")
+            continue
         _write_complete_sharded_stats(path, stats)
         runtime._prepare_sqlite_stats_lookup(str(path), path.stem.replace("_dict_raw", "")).close()
         path.unlink()
@@ -541,24 +547,28 @@ def test_load_stats_dicts_sequential_warmup_uses_sqlite_without_json(
     monkeypatch.setattr(runtime, "late_pre27_watcher_data", None, raising=False)
     monkeypatch.setattr(runtime, "all_only_watcher_data", {}, raising=False)
 
-    # first heavy step arms the delay gate
-    assert runtime._load_stats_dicts() is False
-    # subsequent steps load early/early_end/late/post_lane from sqlite only
-    for _ in range(4):
-        ready = runtime._load_stats_dicts()
-    assert ready is True
-    assert isinstance(runtime.early_dict, runtime._SqliteStatsLookup)
-    assert isinstance(runtime.early_end_dict, runtime._SqliteStatsLookup)
-    assert isinstance(runtime.late_dict, runtime._SqliteStatsLookup)
-    assert isinstance(runtime.post_lane_dict, runtime._SqliteStatsLookup)
+    if sqlite_sources == 4:
+        # Nemesis map 8998181660: restart at ~7m must not spend four
+        # 45s intervals waiting to open existing SQLite handles.
+        assert runtime._load_stats_dicts() is True
+        assert runtime.stats_warmup_last_heavy_load_ts == 0.0
+    else:
+        assert runtime._load_stats_dicts() is False
+        for step in range(4):
+            assert runtime._load_stats_dicts() is False
+            clock[0] += 45.0
+            assert runtime._load_stats_dicts() is (step == 3)
     assert runtime.early_dict.get("1pos1") == stats["1pos1"]
-    for lookup in (
+    for index, lookup in enumerate((
         runtime.early_dict,
         runtime.early_end_dict,
         runtime.late_dict,
         runtime.post_lane_dict,
-    ):
-        lookup.close()
+    )):
+        assert lookup.get("1pos1") == stats["1pos1"]
+        if index < sqlite_sources:
+            assert isinstance(lookup, runtime._SqliteStatsLookup)
+            lookup.close()
 
 
 def test_draft_stats_lookup_keys_cover_synergy_accesses() -> None:
