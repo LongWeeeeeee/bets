@@ -5,7 +5,7 @@ date: "2026-09-14"
 area: dispatch
 status: full
 corpus: "28 241 pro maps; discovery24 292 до17.07.2026, confirmation3941 17.07–04.09; 8 purged; frozen live nw_mean"
-verdict: "Ретроспективно: dict>=20 при ML47–53 123/202=60.89%, но confirmation16/30=53.33%, добавочный logloss CI включает0 — не подтверждено для узкой группы. NW-кандидат: с4мин +1000 на pending-стороне, первое пересечение, confirmation440/470=93.62%, coverage33.26%, средний выход6:18; +500 даёт82.53%, +1500 98.13%. Allowlist+1000 55/58, мало. 14.09 постоянный4:00/+1000 внедрён по разрешению владельца, restart13:32MSK. Поминутный кандидат3:1200..9:700 даёт489/534=91.57%, coverage37.79%; доказанного улучшения нет."
+verdict: "Новая цель NW10>=1000: действующий4:00/+1000 даёт347/470=73.83% (старые93.62% относились к NW10>0). Новый conditional-unsent5:1500,6/7:1600,8:1800,9:1500 даёт268/296=90.54%, coverage20.95%; строгий7/9:1700 даёт224/236=94.92%. Ретроспектива, reused confirmation и clock sensitivity; новые пороги не внедрены. Узкий ML47–53+dict20 остаётся неподтверждённым для исходной цели."
 harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; research_lane_residual_check.py; research_lane_minute_schedule.py; runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json"
 ---
 
@@ -21,7 +21,12 @@ DONE
 
 ## SUMMARY
 
-**Вывод:** для дальнейшей проверки досрочного выхода разумный простой кандидат —
+**Последнее изменение цели владельцем: итоговый командный NW на10:00 >=1000.**
+Действующее правило4:00/+1000 по новой цели даёт347/470=73.83%. Новый расчёт
+и пороги приведены в дополнении «Цель NW10>=1000» ниже. Прод не менялся
+после этой смены исследовательского маркера; прежние93.62% относятся только к >0.
+
+**Исходный вывод для NW10>0:** для дальнейшей проверки досрочного выхода разумный простой кандидат —
 с 4-й минуты `team_NW_lead >= 1000` **на стороне уже ожидающего win-сигнала**.
 Первое пересечение выпускает сигнал; без пересечения сохраняется выход на10:00.
 Это исследовательский кандидат, не доказательство будущей точности или доходности.
@@ -208,6 +213,88 @@ Dire при240с/-1000 → now. После живых циклов:0Tracebacks,0
 deploy_preflight.log,restart.log,prod_cycle_acceptance.json,prod_audit_details.jsonl}`. Откат: EARLY_NW=0 + restart; чужой dirty
 `base/id_to_names.py` сохранён, sent-ledger и log.txt не чистились.
 
+### Дополнение: цель NW10>=1000, включительно
+
+**OBSERVED.** Владелец заменил исследовательский исход: успех —
+`radiantNetworthLeads[10] * pending_side >= 1000`. Ровно+1000 — успех;
++999,+1,0 и отрицательный NW — ошибка. Входной порог ранней отправки и итоговый
+порог на10:00 независимы. Сторона — та же фиксированная pending-сторона.
+Словарная часть выше не пересчитывалась: её исходным вопросом был знак Lane ML
+и победитель командного NW; смена маркера здесь относится к раннему NW-выходу.
+
+Пересчитаны прежние правила без смены trigger-масок и заново подобраны
+поминутные thresholds на том же discovery. На поздней части1413 pending-карт:
+
+| Политика | Итоговый NW>=1000, hits/n | Доля успеха (Wilson95CI) | Доля ранних выходов | Средняя минута |
+|---|---:|---:|---:|---:|
+| Действующее+1000 с4 | 347/470 | 73.83% (69.67–77.60) | 33.26% | 6.29 |
+| Прежнее переменное расписание с3 | 371/534 | 69.48% (65.44–73.23) | 37.79% | 6.45 |
+| +1500 с4 | 284/321 | 88.47% (84.52–91.52) | 22.72% | 7.22 |
+| +2000 с4 | 180/186 | 96.77% (93.14–98.51) | 13.16% | 7.56 |
+| +2500 с4 | 99/101 | 98.02% (93.07–99.46) | 7.15% | 7.84 |
+| +3000 с4 | 53/55 | 96.36% (87.68–99.00) | 3.89% | 8.20 |
+| Новое поминутное LCB90 | 268/296 | 90.54% (86.67–93.37) | 20.95% | 7.47 |
+| Новое поминутное LCB95 | 224/236 | 94.92% (91.32–97.07) | 16.70% | 8.04 |
+
+Декомпозиция470 выходов текущего правила:347 достигли>=1000,93 остались
+в диапазоне(0,1000),30 закончили с NW<=0. Сумма347+93=440 восстанавливает
+предыдущие93.62% по старому маркеру. На текущем allowlist:43/58=74.14%
+у действующего правила; новое LCB90 —34/38, LCB95 —28/31, +2000 —20/22.
+Малые выборки не доказывают заданную надёжность боевого отбора.
+
+Новая сетка, первая отправка только по ещё не сработавшим картам:
+
+| Минута | LCB90: порог отправки | Confirmation hits/n на этой минуте | LCB95: порог отправки |
+|---|---:|---:|---:|
+| 1–4 | ждать | — | ждать |
+| 5 | +1500 | 39/45 | ждать |
+| 6 | +1600 | 32/36 | ждать |
+| 7 | +1600 | 59/63 | +1700 |
+| 8 | +1800 | 35/39 | ждать |
+| 9 | +1500 | 103/113 | +1700 |
+| 10 | исход уже наблюдаем | не ранний прогноз | исход уже наблюдаем |
+
+На10:00 новый исследовательский критерий проверяет факт>=1000. В production
+по-прежнему обычный time fallback600; новый критерий не добавлен в live gate.
+Все старты1/2/3/4 дали одинаковые обученные расписания; до5-й минуты не нашлось
+порога, одновременно удовлетворяющего discovery Wilson lower>=90% и n>=100
+в заданной сетке100..3000 шаг100. Это не доказательство отсутствия редких
+ранних ситуаций. LCB90 discovery2184/2340=93.33%; LCB95 discovery1840/1897=97.00%.
+LCB90 day-block CI86.08–94.44%; LCB95 —91.67–97.65%. Ни один из этих CI не
+является гарантией будущей точности/одновременной надёжности всех минут.
+
+Growth0/250 к NW1 не изменил новые расписания и confirmation-результаты.
+При альтернативном N−1 clock mapping текущий+1000 с4 даёт305/420=72.62%;
+LCB90 выбирает `6:1500,7:1600,8:1600,9:1500` и даёт210/231=90.91%; LCB95
+`6:2000,8:1700,9:1900` —142/150=94.67%. Смена clock сдвигает как наблюдения,
+так и итоговыйtarget; точные минуты остаются чувствительны к конвенции.
+
+**DERIVED/INFERRED.** Для удержания>=1000 действующий entry+1000 существенно
+слабее, чем для простого сохранения знака. Более высокий entry или более
+поздний выход дают иной компромисс охвата/точности. Нельзя назвать найденное
+расписание победителем на основании сравнения разных n или reused confirmation.
+Новые пороги — только результаты исследования, не разрешение на новый деплой.
+
+Харнесс: `scripts/ops/research_lane_minute_schedule.py --target-min-lead 1000`.
+Без аргумента сохраняется прежний маркер>0. Запуск полностью сохранён в
+`runtime/artifacts/star-dispatch/lane_wait_20260914/target1000/commands.json`;
+один nice19 процесс, обе clock версии последовательно, exit codes[0,0].
+`inputs.json` фиксирует исходники/paired.npz; `verification.json` подтверждает
+все snapshot hashes, независимый scalar replay четырёх ключевых политик и
+декомпозицию текущего правила.11 research tests passed, включая точную границу
+1000, инверсию Dire, NaN, различение entry/outcome и сохранение старого>0.
+
+```sh
+venv_catboost/bin/python3 scripts/ops/research_lane_minute_schedule.py --paired PAIRED_NPZ --output-dir TARGET1000_OUTPUT --target-min-lead 1000 --source-index-offset 0
+# Repeat with --source-index-offset -1 and a distinct output directory.
+```
+
+Где искать ошибку: перепутать>=1000 с>1000; применять abs к pending target;
+подменить entry threshold итоговым исходом; прочитать старые93.62% как новый
+результат; менять trigger masks при рескоринге старого правила; принимать
+обычный10-минутный fallback за100% прогноз. Остальные clock/as-of/многократные
+проверки и ограничения командного NW из RISKS сохраняются.
+
 ## CHANGED
 
 - `scripts/ops/research_lane_wait.py`: joins, replay dispatch, slices и first crossing.
@@ -216,7 +303,7 @@ deploy_preflight.log,restart.log,prod_cycle_acceptance.json,prod_audit_details.j
 - `scripts/ops/research_lane_residual_check.py`: контроль калибровки, более поздняя
   проверка, paired day bootstrap. Явные reductions для матриц из2–3 колонок.
 - `scripts/ops/research_lane_minute_schedule.py`: conditional-unsent schedules, growth и clock sensitivity.
-- `base/tests/test_research_lane_wait.py`:10 регрессионных тестов.
+- `base/tests/test_research_lane_wait.py`:11 регрессионных тестов (после смены цели).
 - `base/ml_dispatch.py`, `base/cyberscore_try.py` и их тесты: разрешённый владельцем live early-NW gate.
 - Исследовательский код/отчёт/индекс и отдельно разрешённое изменение обычного wait600.
 
@@ -363,6 +450,21 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
       "id": "LIVE_CYCLE",
       "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/prod_cycle_acceptance.json",
       "sha256": "29afe15b06ba9a2c59fe9e848d60894933576421ef609920833de8e1329c8b19"
+    },
+    {
+      "id": "TARGET1000",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1000/primary/minute_schedule.json",
+      "sha256": "371e7a3aea53b53e8f1738ba5f9447146b8de65ad54ce235cd9f151bbf3e0e22"
+    },
+    {
+      "id": "TARGET1000_ALT",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1000/offset_minus1/minute_schedule.json",
+      "sha256": "996e7939f86d12907be1c00c200603a9fb33b17296937b18d7b65b23080ed785"
+    },
+    {
+      "id": "TARGET1000_VERIFY",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/target1000/verification.json",
+      "sha256": "ccf93cf885d962083170e2eb67d302b19d9acd343430ae538e0d925e29821011"
     }
   ],
   "claims": [
@@ -427,6 +529,16 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "LIVE_CYCLE"
       ],
       "scope": "Live dataflow and dedup; neither map exercises a new early-NW delivery."
+    },
+    {
+      "id": "F7",
+      "kind": "OBSERVED",
+      "claim": "With inclusive signed team NW10>=1000, current4/1000 policy347/470; newLCB90 schedule268/296; newLCB95 schedule224/236. Production unchanged during this target revision.",
+      "sources": [
+        "TARGET1000",
+        "TARGET1000_ALT"
+      ],
+      "scope": "Frozen pending population, reused chronological confirmation; clock sensitivity retained."
     }
   ],
   "checks": [
@@ -445,6 +557,14 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "SCHEDULE_VERIFY"
       ],
       "observed": "Both schedule jobs exit0, unchanged frozen inputs, independent489/534 replay;119 research/gate/wrapper/ledger tests passed."
+    },
+    {
+      "id": "T3",
+      "status": "PASS",
+      "sources": [
+        "TARGET1000_VERIFY"
+      ],
+      "observed": "Workers exit0; frozen hashes unchanged; independent replay4policies; current outcome buckets347/93/30;11tests pass."
     }
   ],
   "limitations": [

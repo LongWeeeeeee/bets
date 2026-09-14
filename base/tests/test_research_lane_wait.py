@@ -112,3 +112,17 @@ def test_clock_sensitivity_shifts_observations_and_target_together():
     assert primary["nw"][0, 1] == 1 and primary["nw10"][0] == 10
     assert shifted["nw"][0, 1] == 0 and shifted["nw10"][0] == 9
     assert raw["nw10"][0] == 10 and np.isnan(shifted["nw"][0, 0])
+
+
+def test_target_minimum_is_inclusive_directional_and_separate_from_entry():
+    sys.path.insert(0, str(study.ROOT / "scripts/ops"))
+    from research_lane_minute_schedule import target_hit, replay
+    data = {"nw10": np.array([999, 1000, -1000, -999, 0, np.nan]),
+            "dispatch_target": np.array([1, 1, -1, -1, 1, 1])}
+    assert target_hit(data, 1000).tolist() == [False, True, True, False, False, False]
+    assert target_hit(data).tolist() == [True, True, True, True, False, False]
+    nw = np.zeros((6, 11)); nw[:, 4] = 1000
+    take, _ = replay(nw, np.ones(6, dtype=bool), {4: 1000})
+    assert take.all() and target_hit(data, 1000)[take].sum() == 2
+    with pytest.raises(ValueError):
+        target_hit(data, 0)

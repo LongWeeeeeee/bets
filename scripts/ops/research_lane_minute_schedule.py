@@ -47,9 +47,16 @@ def replay(nw, population, schedule, growth=None):
     return take, when
 
 
-def evaluate(d, nw, population, schedule, growth):
+def target_hit(d, target_min_lead=None):
+    signed = d["nw10"] * d["dispatch_target"]
+    if target_min_lead is not None and (not np.isfinite(target_min_lead) or target_min_lead <= 0):
+        raise ValueError("Target minimum must be finite and positive")
+    return signed > 0 if target_min_lead is None else signed >= target_min_lead
+
+
+def evaluate(d, nw, population, schedule, growth, target_min_lead=None):
     take, when = replay(nw, population, schedule, growth)
-    hit = d["nw10"] * d["dispatch_target"] > 0
+    hit = target_hit(d, target_min_lead)
     win = np.where(d["dispatch_target"] > 0, d["wins"] == 1, d["wins"] == 0)
     out = {}
     for split in ("discover", "confirm"):
@@ -68,13 +75,15 @@ def evaluate(d, nw, population, schedule, growth):
     return out
 
 
-def analyze(d):
+def analyze(d, target_min_lead=None):
     unique_index(d["mid"])
     assert not np.any(d["discover"] & d["confirm"])
     base = (d["dispatch_target"] != 0) & d["valid"]
     nw = d["nw"].astype(float) * d["dispatch_target"][:, None]
-    hit = d["nw10"] * d["dispatch_target"] > 0
+    hit = target_hit(d, target_min_lead)
     out = {"policies": {}, "minute1_spike": {},
+           "target": {"operator": ">" if target_min_lead is None else ">=",
+                      "signed_team_nw_at10": 0 if target_min_lead is None else target_min_lead},
            "method": "Minimum100 per conditional unsent discovery cohort; ascending100..3000 gold grid; LCB90/95; first crossing only; unconditional release10",
            "limitation": "Retrospective reused confirmation, not fresh OOS. NW growth is not creep-farm attribution."}
     for start in (1, 2, 3, 4):
@@ -85,14 +94,18 @@ def analyze(d):
                 out["policies"][name] = {
                     "start": start, "growth_since_minute1": growth, "requested_lcb": reliability,
                     "schedule": schedule, "conditional_discovery_cohorts": cohorts,
-                    "all_wait": evaluate(d, nw, base, schedule, growth),
+                    "all_wait": evaluate(d, nw, base, schedule, growth, target_min_lead),
                     # Same schedule, never fit a second one using the smaller allowlist.
-                    "allowlist_wait": evaluate(d, nw, base & d["allowlist"], schedule, growth)}
-        schedule = dict.fromkeys(range(start, 10), 1000)
-        out["policies"][f"constant1000_start{start}"] = {
-            "start": start, "growth_since_minute1": None, "schedule": schedule,
-            "all_wait": evaluate(d, nw, base, schedule, None),
-            "allowlist_wait": evaluate(d, nw, base & d["allowlist"], schedule, None)}
+                    "allowlist_wait": evaluate(d, nw, base & d["allowlist"], schedule, growth, target_min_lead)}
+        for threshold in ([1000] if start != 4 else [1000, 1500, 2000, 2500, 3000]):
+            schedule = dict.fromkeys(range(start, 10), threshold)
+            out["policies"][f"constant{threshold}_start{start}"] = {
+                "start": start, "growth_since_minute1": None, "schedule": schedule,
+                "all_wait": evaluate(d, nw, base, schedule, None, target_min_lead),
+                "allowlist_wait": evaluate(d, nw, base & d["allowlist"], schedule, None, target_min_lead)}
+    # Fixed policy from the prior >0 study; rescore without refitting it.
+    old = {3: 1200, 4: 1000, 5: 1000, 6: 900, 7: 1100, 8: 700, 9: 700}
+    out["previous_variable_schedule"] = evaluate(d, nw, base, old, None, target_min_lead)
     # Match on current NW bands to avoid comparing big current leads to small
     # ones when describing whether an early lead has been maintained.
     for minute in (3, 4):
@@ -129,8 +142,10 @@ def main():
     ap.add_argument("--paired", type=Path, required=True)
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--source-index-offset", type=int, choices=(0, -1), default=0)
+    ap.add_argument("--target-min-lead", type=float,
+                    help="Inclusive positive signed NW@10 target; omitted keeps legacy >0")
     args = ap.parse_args()
-    result = analyze(clock_view(np.load(args.paired), args.source_index_offset))
+    result = analyze(clock_view(np.load(args.paired), args.source_index_offset), args.target_min_lead)
     result["source_index_offset"] = args.source_index_offset
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tmp = args.output_dir / "minute_schedule.json.tmp"
