@@ -12472,6 +12472,12 @@ def _ml_dispatch_tick(
             game_time_value = float(game_time_seconds)
         except (TypeError, ValueError):
             game_time_value = None
+        try:
+            networth_lead_value = float(radiant_lead)
+            if not math.isfinite(networth_lead_value):
+                networth_lead_value = None
+        except (TypeError, ValueError):
+            networth_lead_value = None
         base_url = _signal_fingerprint_registry_key(match_key)
         try:
             map_num_raw = _bookmaker_infer_map_num(
@@ -12538,6 +12544,7 @@ def _ml_dispatch_tick(
             kills30_radiant=kills30_radiant,
             kills30_dire=kills30_dire,
             already_sent=ledger.as_set(),
+            radiant_networth_lead=networth_lead_value,
         )
         result = _md.evaluate(ctx, cfg)
 
@@ -12557,7 +12564,7 @@ def _ml_dispatch_tick(
         decisions_view = [
             {"market": d.market, "target_side": d.target_side, "target_team": d.target_team,
              "rule": d.rule, "timing": d.timing, "expected_wr": d.expected_wr,
-             "min_odds": d.min_odds, "models_for": d.models_for}
+             "min_odds": d.min_odds, "models_for": d.models_for, "reasons": d.reasons}
             for d in result.decisions
         ]
         skipped_view = [
@@ -12601,6 +12608,7 @@ def _ml_dispatch_tick(
             "base_url": base_url,
             "map_num": resolved_map_num,
             "game_time": game_time_value,
+            "radiant_networth_lead": ctx.radiant_networth_lead,
             "teams": {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")},
             "heroes": list(heroes) if heroes is not None else None,
             "elo_r": elo_radiant,
@@ -47403,6 +47411,9 @@ if __name__ == "__main__":
         f"kills_total_gate={'on' if _dispatch_startup_cfg.kills_total_gate_enabled else 'off'}"
         f"/{_dispatch_startup_cfg.kills_total_gate_favorite}"
         f"/{_dispatch_startup_cfg.kills_total_gate_other}"
+        f" early_nw={'on' if _dispatch_startup_cfg.early_nw_enabled else 'off'}"
+        f"/{_dispatch_startup_cfg.early_nw_start_seconds}"
+        f"/{_dispatch_startup_cfg.early_nw_min_lead}"
     )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):

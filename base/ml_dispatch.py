@@ -38,7 +38,10 @@ Rules implemented (owner decisions, 12.09.2026 — see
 - Timing: only the win market consults ``ctx.lane`` — if ML Laning backs
   the *target* side at >= threshold, ``timing="now"`` (bet at "00");
   otherwise ``timing="now"`` once ``ctx.game_time >= ML_DISPATCH_TIMING_SECONDS``
-  (default 600s), else ``timing="wait_600"``. Kills decisions are always
+  (default 600s). E-290 additionally releases this ordinary wait from 240s
+  when observed team net worth leads by >=1000 for the target side (configurable
+  with ``ML_DISPATCH_EARLY_NW*``). Missing/nonfinite NW keeps the wait.
+  Otherwise ``timing="wait_600"``. Kills decisions are always
   ``timing="now"`` — the open-window filtering/deadline logic that gates
   ``kills_windows_open`` happens upstream (stage 2), not here.
 - ``expected_wr`` = max confidence among the models voting *for* the
@@ -147,6 +150,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 import os
 from pathlib import Path
 from typing import List, Optional, Sequence, Set, Tuple
@@ -224,6 +228,7 @@ class Ctx:
     kills30_radiant: Optional[float] = None
     kills30_dire: Optional[float] = None
     already_sent: Optional[Set[Tuple]] = None
+    radiant_networth_lead: Optional[float] = None
 
     def team_name(self, side: str) -> str:
         return self.radiant_team if side == "Radiant" else self.dire_team
@@ -253,6 +258,9 @@ class Config:
     kills_total_gate_enabled: bool = True
     kills_total_gate_favorite: float = 0.60
     kills_total_gate_other: float = 0.70
+    early_nw_enabled: bool = True
+    early_nw_start_seconds: float = 240.0
+    early_nw_min_lead: float = 1000.0
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -297,6 +305,9 @@ class Config:
             kills_total_gate_enabled=str(env.get("ML_DISPATCH_KILLS_TOTAL_GATE", "1")) == "1",
             kills_total_gate_favorite=_float("ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE", 0.60),
             kills_total_gate_other=_float("ML_DISPATCH_KILLS_TOTAL_GATE_OTHER", 0.70),
+            early_nw_enabled=str(env.get("ML_DISPATCH_EARLY_NW", "1")) == "1",
+            early_nw_start_seconds=_float("ML_DISPATCH_EARLY_NW_START_SECONDS", 240.0),
+            early_nw_min_lead=_float("ML_DISPATCH_EARLY_NW_MIN_LEAD", 1000.0),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -425,10 +436,28 @@ def _dedup_key(ctx: Ctx, market: str, side: str) -> Tuple:
     return (ctx.base_url, ctx.map_num, market, side)
 
 
+def _early_nw_release(ctx: Ctx, cfg: Config, target_side: str) -> bool:
+    """E-290: observed team economy can release only the ordinary lane wait."""
+    if not cfg.early_nw_enabled or target_side not in SIDES:
+        return False
+    try:
+        time, lead = float(ctx.game_time), float(ctx.radiant_networth_lead)
+        start, threshold = float(cfg.early_nw_start_seconds), float(cfg.early_nw_min_lead)
+    except (TypeError, ValueError):
+        return False
+    if not all(math.isfinite(v) for v in (time, lead, start, threshold)):
+        return False
+    signed_lead = lead if target_side == "Radiant" else -lead
+    return (0 <= start <= time < cfg.timing_seconds and threshold > 0
+            and signed_lead >= threshold)
+
+
 def _timing_for_win(ctx: Ctx, cfg: Config, target_side: str) -> str:
     if ctx.lane is not None and ctx.lane.side == target_side and ctx.lane.confidence >= cfg.min_conf:
         return "now"
     if ctx.game_time is not None and ctx.game_time >= cfg.timing_seconds:
+        return "now"
+    if _early_nw_release(ctx, cfg, target_side):
         return "now"
     return "wait_600"
 
@@ -572,6 +601,12 @@ def _evaluate_win(
             continue
 
         expected_wr = max(ctx.model(name).confidence for name in models_for)
+        reasons = [f"{name}>= {cfg.min_conf} for {side}" for name in models_for]
+        lane_hit = (ctx.lane is not None and ctx.lane.side == side
+                    and ctx.lane.confidence >= cfg.min_conf)
+        if not lane_hit and _early_nw_release(ctx, cfg, side):
+            reasons.append(f"early_nw_release: game_time={ctx.game_time} "
+                           f"radiant_networth_lead={ctx.radiant_networth_lead}")
         decisions.append(Decision(
             market="win",
             target_side=side,
@@ -582,7 +617,7 @@ def _evaluate_win(
             timing=_timing_for_win(ctx, cfg, side),
             expected_wr=expected_wr,
             min_odds=_min_odds(expected_wr, cfg),
-            reasons=[f"{name}>= {cfg.min_conf} for {side}" for name in models_for],
+            reasons=reasons,
         ))
 
     return decisions, skipped

@@ -295,6 +295,14 @@ ELO ниже на `>=ML_DISPATCH_UNDERDOG_MIN_DIFF` (50); win-ставка ид�
 пережили свою вето-проверку); kills-маркеты только при наличии U, через
 Early NW/Early Win (+опционально All); тайминг win-маркета — "00" при
 подтверждении ML Laning, иначе ждать `ML_DISPATCH_TIMING_SECONDS` (600с);
+E-290 (решение владельца 14.09.2026): обычное ожидание win-сигнала снимается
+с 4:00 при общем net worth >=1000 в пользу его стороны. `_ml_dispatch_tick`
+передаёт live `radiant_lead` в `Ctx.radiant_networth_lead`; Dire использует
+обратный знак. Missing/nonfinite NW сохраняет ожидание. Настройки:
+`ML_DISPATCH_EARLY_NW=1`, `ML_DISPATCH_EARLY_NW_START_SECONDS=240`,
+`ML_DISPATCH_EARLY_NW_MIN_LEAD=1000`; отключение первого флага возвращает
+обычное ожидание. Audit содержит `radiant_networth_lead`, а причина досрочного
+выхода — `early_nw_release`. Ветки ожидания1860с ниже и kills не затрагиваются.
 предматчевая 35-признаковая модель (`prematch_index`) НЕ применяется к
 ml_dispatch-решениям, несётся в `Ctx` только для лога.
 

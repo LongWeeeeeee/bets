@@ -76,3 +76,39 @@ def test_residual_fit_recovers_group_rates_without_floating_errors():
         fitted = sigmoid(linear(x, fit(x, y)))
     assert np.allclose(fitted[:10], .3, atol=1e-4)
     assert np.allclose(fitted[10:], .8, atol=1e-4)
+
+
+def test_minute_schedule_fits_only_still_unsent_discovery_maps():
+    sys.path.insert(0, str(study.ROOT / "scripts/ops"))
+    from research_lane_minute_schedule import fit_schedule, replay
+    # Previously sent winners must not make a later 50/50 cohort look reliable.
+    nw = np.zeros((1200, 11))
+    nw[:1000, 1] = 100
+    nw[:, 2] = 100
+    hit = np.array([True] * 1100 + [False] * 100)
+    population = np.ones(1200, dtype=bool)
+    schedule, cohorts = fit_schedule(nw, hit, population, 1, .90, thresholds=[100])
+    assert schedule == {1: 100} and cohorts[1]["n"] == 1000
+    triggered, when = replay(nw, population, schedule)
+    assert triggered.sum() == 1000 and np.all(when[1000:] == 10)
+
+
+def test_growth_filter_uses_only_current_and_minute1_observations():
+    sys.path.insert(0, str(study.ROOT / "scripts/ops"))
+    from research_lane_minute_schedule import replay
+    nw = np.zeros((2, 11))
+    nw[:, 1], nw[:, 3] = [1000, 100], [1000, 1000]
+    trigger, when = replay(nw, np.ones(2, dtype=bool), {3: 800}, growth=250)
+    assert trigger.tolist() == [False, True] and when.tolist() == [10, 3]
+    nw[:, 10] = [-9999, 9999]
+    assert np.array_equal(trigger, replay(nw, np.ones(2, dtype=bool), {3: 800}, growth=250)[0])
+
+
+def test_clock_sensitivity_shifts_observations_and_target_together():
+    sys.path.insert(0, str(study.ROOT / "scripts/ops"))
+    from research_lane_minute_schedule import clock_view
+    raw = {"nw": np.arange(11)[None, :], "nw10": np.array([10])}
+    primary, shifted = clock_view(raw, 0), clock_view(raw, -1)
+    assert primary["nw"][0, 1] == 1 and primary["nw10"][0] == 10
+    assert shifted["nw"][0, 1] == 0 and shifted["nw10"][0] == 9
+    assert raw["nw10"][0] == 10 and np.isnan(shifted["nw"][0, 0])

@@ -203,7 +203,8 @@ def _patch_ml_dispatch_tick_deps(monkeypatch, *, delivered_calls, logged, ledger
     )
 
 
-def _call_ml_dispatch_tick(match_key: str = "dltv.org/matches/ml-dispatch-tick.0") -> None:
+def _call_ml_dispatch_tick(match_key: str = "dltv.org/matches/ml-dispatch-tick.0", *,
+                           game_time=650.0, radiant_lead=0) -> None:
     C._ml_dispatch_tick(
         match_key=match_key,
         radiant_team_name="Team A",
@@ -213,8 +214,8 @@ def _call_ml_dispatch_tick(match_key: str = "dltv.org/matches/ml-dispatch-tick.0
         protracker_payload=None,
         team_elo_block="",
         team_elo_meta={"radiant_base_rating": 1500.0, "dire_base_rating": 1400.0},
-        game_time_seconds=650.0,
-        radiant_lead=0,
+        game_time_seconds=game_time,
+        radiant_lead=radiant_lead,
         full_message_text="СТАВКА НА Team A x1\nTeam A VS Team B",
     )
 
@@ -255,6 +256,24 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     assert len(logged) == 2
     assert logged[0]["delivered"][0]["status"] == "delivered"
     assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision
+
+
+def test_ml_dispatch_tick_early_nw_wait_transition_and_delivery_dedup(monkeypatch):
+    monkeypatch.setenv("DISPATCH_MODE", "ml")
+    monkeypatch.setenv("ML_DISPATCH_EARLY_NW", "1")
+    delivered_calls, logged = [], []
+    _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered_calls,
+                                 logged=logged, ledger=_FakeLedger())
+    for game_time, lead in [(239, 1000), (240, None), (240, -1000), (240, 999)]:
+        _call_ml_dispatch_tick(game_time=game_time, radiant_lead=lead)
+        assert logged[-1]["decisions"][0]["timing"] == "wait_600"
+    assert delivered_calls == []
+    _call_ml_dispatch_tick(game_time=240, radiant_lead=1000)
+    assert len(delivered_calls) == 1
+    assert logged[-1]["radiant_networth_lead"] == 1000
+    assert any("early_nw_release" in r for r in logged[-1]["decisions"][0]["reasons"])
+    _call_ml_dispatch_tick(game_time=245, radiant_lead=1100)
+    assert len(delivered_calls) == 1
 
 
 # --- _ml_dispatch_record_decisions: dedup keyed by base_url, not match_key --

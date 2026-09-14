@@ -5,8 +5,8 @@ date: "2026-09-14"
 area: dispatch
 status: full
 corpus: "28 241 pro maps; discovery24 292 до17.07.2026, confirmation3941 17.07–04.09; 8 purged; frozen live nw_mean"
-verdict: "Ретроспективно: dict>=20 при ML47–53 123/202=60.89%, но confirmation16/30=53.33%, добавочный logloss CI включает0 — не подтверждено для узкой группы. NW-кандидат: с4мин +1000 на pending-стороне, первое пересечение, confirmation440/470=93.62%, coverage33.26%, средний выход6:18; +500 даёт82.53%, +1500 98.13%. Allowlist+1000 55/58, мало. Никакого внедрения/заявления о прибыльности."
-harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; research_lane_residual_check.py; runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json"
+verdict: "Ретроспективно: dict>=20 при ML47–53 123/202=60.89%, но confirmation16/30=53.33%, добавочный logloss CI включает0 — не подтверждено для узкой группы. NW-кандидат: с4мин +1000 на pending-стороне, первое пересечение, confirmation440/470=93.62%, coverage33.26%, средний выход6:18; +500 даёт82.53%, +1500 98.13%. Allowlist+1000 55/58, мало. 14.09 владелец разрешил внедрение постоянного4:00/+1000. Поминутный кандидат3:1200..9:700 даёт489/534=91.57%, coverage37.79%; доказанного улучшения нет."
+harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; research_lane_residual_check.py; research_lane_minute_schedule.py; runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json"
 ---
 
 # E-290 — Lane dictionary и ранний выход по командному net worth
@@ -15,7 +15,9 @@ harness: "scripts/ops/research_lane_wait.py; research_lane_dictionary.py; resear
 
 DONE
 
-Офлайн-исследование завершено. Гейты, модели и прод не изменялись.
+Офлайн-расчёты завершены. После них владелец явно поручил внедрить простой
+выход с 4:00 при +1000 и перезапустить прод. Изменение подготовлено и проверено;
+приёмка деплоя фиксируется отдельным checkpoint ниже. Модели не менялись.
 
 ## SUMMARY
 
@@ -101,7 +103,96 @@ CI точности90.64–96.28%; Dire175/185, Radiant265/285. В сетке э
 `4:1000, 5:750, 6:750, 7:500, 8:500, 9:250`, выбранное по90% нижней границе
 **отдельных discovery-срезов**, целиком дало только87.98% в discovery и84.70%
 в confirmation. Название `discovery_lcb_0.9` относится к срезам и не гарантирует
-90% для политики. Поэтому простое постоянное +1000 — более понятный кандидат.
+90% для политики. Поэтому на этом этапе простое постоянное +1000 оставлено основным кандидатом.
+
+### Дополнение: с какой минуты начинать и отдельные пороги1–10
+
+**OBSERVED.** На той же замороженной выборке построены 20 вариантов для каждой
+из двух трактовок часов: старты1/2/3/4, discovery Wilson LCB90/95%, рост NW
+от минуты1 `None/0/250` (growth только для стартов3/4), постоянный+1000.
+Каждый следующий порог подбирается **только на ещё не сработавших discovery-картах**.
+Сетка100..3000 шаг100, минимум100 срабатываний на выбранной минуте.
+Нижняя граница Wilson используется для отбора; это не одновременная гарантия
+по всем просмотренным порогам. Confirmation уже использовалась ранее и не
+считается свежей OOS. Пропуск минуты означает отсутствие подходящего порога
+в этой сетке, а не доказательство невозможности раннего сигнала.
+
+При основном соответствии `raw index m → минута m`, LCB90 без growth:
+
+| Минута | Порог на pending-стороне | Confirmation первой отправки, hits/n |
+|---|---:|---:|
+| 1 | ждать | — |
+| 2 | ждать | — |
+| 3 | +1200 | 20/22 |
+| 4 | +1000 | 59/64 |
+| 5 | +1000 | 77/84 |
+| 6 | +900 | 106/114 |
+| 7 | +1100 | 55/57 |
+| 8 | +700 | 102/117 |
+| 9 | +700 | 70/76 |
+| 10 | обычное снятие ожидания по времени | не ранний прогноз |
+
+Подъём с900 на1100 на7-й минуте допустим: уже отправленные карты исключены,
+оставшаяся популяция другая. Не нужно искусственно делать пороги монотонными.
+
+| Политика | Hits/n | Точность (Wilson95CI) | Ранний выход | Средняя минута | Экономия минут на исходный сигнал |
+|---|---:|---:|---:|---:|---:|
+| +1000 с1 | 442/476 | 92.86% (90.18–94.84) | 33.69% | 6.07 | 1.323 |
+| +1000 с3 | 442/475 | 93.05% (90.40–95.01) | 33.62% | 6.13 | 1.299 |
+| **+1000 с4, выбран владельцем** | **440/470** | **93.62% (91.03–95.49)** | **33.26%** | **6.29** | **1.233** |
+| Поминутный LCB90 с3 | 489/534 | 91.57% (88.91–93.64) | 37.79% | 6.45 | 1.341 |
+| Поминутный LCB90 с4 | 487/532 | 91.54% (88.87–93.62) | 37.65% | 6.51 | 1.314 |
+| Поминутный LCB95 с3/4 | 422/447 | 94.41% (91.87–96.18) | 31.63% | 7.13 | 0.907 |
+
+LCB95 выбрал только `5:1600,6:1000,8:1100,9:900`, остальные минуты пропущены.
+У поминутного LCB90 day-block95CI88.25–94.53%; allowlist58/62 (малый n).
+Сравнение политик — компромисс точности/охвата на разных выбранных картах,
+не парный тест превосходства. Добавление старта1 к постоянному правилу с4
+даёт всего6 новых карт:2 попадания,4 ошибки; всего до4:00 пересекли+1000
+49 карт (42 успешных). Это описательное сравнение на reused confirmation.
+
+**Гипотеза про драку до крипов.** Growth>=0 или>=250 не изменил confirmation
+срабатывания90% расписания: те же489/534 для старта3 и487/532 для старта4.
+Для95% сgrowth250 порог на8 снизился до1000:432/457=94.53%, охват32.34%.
+Это перестройка расписания, не доказанный добавочный эффект growth.
+На3-й минуте при текущем NW800..1299 группа с NW1>=500 дала4/7, без такого
+раннего лида55/60; группа слишком мала, чтобы считать это подтверждением
+гипотезы. В диапазоне300..799 рост>=250 дал172/234 против32/38 без такого
+роста: монотонной пользы роста не видно. NW growth включает убийства, башни
+и другие источники; поминутных last hits/золота от крипов нет. Командный NW
+не отвечает, кто выиграл конкретный мид или матчап Slark/Ember.
+
+**Часы источника.** Rich builder (`pro_corpus_rich.py:51–62,114–117`) копирует
+`radiantNetworthLeads` без вставки нулевой точки, короткий массив forward-fill.
+Read-only проверка6 raw матчей из первых2 шардов: длина всегда
+`ceil(durationSeconds/60)+1` (1498с→26,2071→36,2434→42,2124→37,3552→61,2305→40).
+Это поддерживает baseline/index0 и основной target[10], но не заменяет
+timestamp-спецификацию. В `star_dispatch_replay_rows.py:156–168` и
+`networth_comeback_research.py:303–308` есть конфликтующее правило N−1.
+Отдельная sensitivity смещает и наблюдения, и цель: поминутный старт3 даёт
+509/575=88.52%, постоянный+1000 с4 —389/420=92.62%. Числа чувствительны к часам;
+в обеих версиях поминутная схема имеет больше охват и меньше точность.
+Обе версии используют одну исходную valid-популяцию: все28241 valid, finite0..10.
+Формальная привязка raw к часам и отсутствие forward-fill в ранних точках
+по всему корпусу не доказаны. Прод использует live `game_time` в секундах,
+а не индексы исторического массива.
+
+**DERIVED/INFERRED.** Старт4 — простой практический выбор владельца;
+поминутная схема пока не доказала улучшение и не внедряется. Не делать вывод
+«героям хватает ровно трёх пачек» или «рост NW — это преимущество в фарме».
+
+### Внедрение постоянного4:00/+1000, разрешено владельцем
+
+Только обычная ветка win/wait600: `240 <= game_time < 600`, signed team NW
+в пользу целевой стороны >=1000. Lane ML hit по-прежнему может снять ожидание
+раньше; 600с остаётся fallback. Missing/nonfinite NW держит ожидание. Late/All
+conflict1860, kills, veto, odds и персистентный dedup сохраняются.
+Настройки `ML_DISPATCH_EARLY_NW=1`, `..._START_SECONDS=240`, `..._MIN_LEAD=1000`;
+rollback: `ML_DISPATCH_EARLY_NW=0` в systemd drop-in и штатный restart script.
+В audit добавлены signed NW и `decisions[].reasons` с `early_nw_release`;
+startup печатает фактически прочитанные значения. Проверки119 passed, включая
+10 research; первоначальный wrapper test поймал отсутствие reasons в audit,
+после исправления повторная проверка прошла. Старый failed log сохранён.
 
 ## CHANGED
 
@@ -110,8 +201,10 @@ CI точности90.64–96.28%; Dire175/185, Radiant265/285. В сетке э
   frozen environment, словарь для28241 карт; импорт приложения/ключей не нужен.
 - `scripts/ops/research_lane_residual_check.py`: контроль калибровки, более поздняя
   проверка, paired day bootstrap. Явные reductions для матриц из2–3 колонок.
-- `base/tests/test_research_lane_wait.py`:7 регрессионных тестов.
-- Только исследовательский код, отчёт и индекс; никаких serving-изменений.
+- `scripts/ops/research_lane_minute_schedule.py`: conditional-unsent schedules, growth и clock sensitivity.
+- `base/tests/test_research_lane_wait.py`:10 регрессионных тестов.
+- `base/ml_dispatch.py`, `base/cyberscore_try.py` и их тесты: разрешённый владельцем live early-NW gate.
+- Исследовательский код/отчёт/индекс и отдельно разрешённое изменение обычного wait600.
 
 ## CHECKS
 
@@ -133,6 +226,9 @@ CI точности90.64–96.28%; Dire175/185, Radiant265/285. В сетке э
   Повтор с явными arithmetic reductions дал пустой stderr и те же результаты:
   max разница коэффициентов4.45e-16, loss1.2e-16. Исходный run/log сохранён.
 
+- Дополнение: оба minute_schedule workers exit0; frozen input hashes неизменны;
+  независимый replay дал489/534. `minute_schedule/verification.json`.
+
 ## POINTERS
 
 Полный artifact root: `runtime/artifacts/star-dispatch/lane_wait_20260914/`.
@@ -143,6 +239,9 @@ CI точности90.64–96.28%; Dire175/185, Radiant265/285. В сетке э
 - `direct_local/residual_arithmetic/residual_check.json`
 - `direct_local/verification.json`, `input_manifest.json`, `residual_arithmetic_inputs.json`
 - `prod_lane_environment.json`, `campaign_remote.json`, `extraction.json`.
+- `minute_schedule/{inputs.json,commands.json,run.log,exit.json,verification.json}`
+  и `minute_schedule/{primary,offset_minus1}/minute_schedule.json`.
+- `minute_schedule/gate_tests_final.log` —119 passed.
 
 Запуски: serv1 dictionary-residual completed; serv2 NW queue timeout без вычисления.
 Локальная executor-попытка тоже завершилась до worker: macOS отказал в rename после
@@ -160,6 +259,8 @@ venv_catboost/bin/python3 -m pytest base/tests/test_research_lane_wait.py -q
 venv_catboost/bin/python3 scripts/ops/research_lane_wait.py --output-dir OUTPUT_NW
 venv_catboost/bin/python3 scripts/ops/research_lane_dictionary.py --output-dir OUTPUT_DICT
 venv_catboost/bin/python3 scripts/ops/research_lane_residual_check.py --paired OUTPUT_NW/paired.npz --dictionary OUTPUT_DICT/dictionary.npz --output-dir OUTPUT_RESIDUAL
+venv_catboost/bin/python3 scripts/ops/research_lane_minute_schedule.py --paired OUTPUT_NW/paired.npz --output-dir OUTPUT_SCHEDULE --source-index-offset 0
+# Sensitivity: same command with --source-index-offset -1 and a different output dir.
 ```
 
 Модели не переобучались. Compact rich input — exact ID join из rich pro corpus
@@ -192,13 +293,15 @@ manifest включает revised workers/environment; первоначальн�
 Задача исследования выполнена. Для внедрения нужен отдельно утверждённый выбор
 допустимой ошибки и проверка live shadow на корректном игровом времени и стороне
 pending-сигнала. Узкий `ML47–53 + dict>=20` пока не использовать как доказанный
-самостоятельный повод отменить ожидание. Никаких production действий в этом ходе.
+самостоятельный повод отменить ожидание. Владелец после расчётов отдельно разрешил production4:00/+1000 и restart;
+переменные пороги остаются исследовательскими. Независимая будущая выборка
+нужна для нового выбора расписания.
 
 ```orchestra-evidence-v1
 {
   "schema": "orchestra-evidence-v1",
   "constraints": [
-    "User requests research only; 500 means total team net worth.",
+    "Original research: total team net worth. User subsequently explicitly authorized live240s/1000 deployment and restart.",
     "Direct local execution explicitly approved after macOS executor failure."
   ],
   "sources": [
@@ -221,6 +324,21 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
       "id": "VERIFY",
       "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/direct_local/verification.json",
       "sha256": "df17d9e13be79b9f7c65ba1653d1a5215c4ff92bda41f38771594632e391a2bc"
+    },
+    {
+      "id": "SCHEDULE",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/primary/minute_schedule.json",
+      "sha256": "f970a5b33410ff8649b5c1e2c10e80a253ee134b57edcee07da361df9d670d3e"
+    },
+    {
+      "id": "CLOCK_ALT",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/offset_minus1/minute_schedule.json",
+      "sha256": "84bb3215516ee89a5a119f4edd515d59476f9febbcd69d7f309089c5efbd1a0c"
+    },
+    {
+      "id": "SCHEDULE_VERIFY",
+      "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/minute_schedule/verification.json",
+      "sha256": "b305b917fa80d9e22b374d9c1f2e4f77c14a579c7fe9564b3df4f20135ee052c"
     }
   ],
   "claims": [
@@ -257,6 +375,16 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
       "kind": "NOT_CHECKED",
       "claim": "Prospective accuracy, live delivery, betting returns and independent source-clock alignment.",
       "scope": "Production deployment/benefits."
+    },
+    {
+      "id": "F4",
+      "kind": "OBSERVED",
+      "claim": "Conditional-unsent schedule start3 LCB90:489/534; alternate source clock509/575. Growth guards0/250 do not change primary90 confirmation triggers.",
+      "sources": [
+        "SCHEDULE",
+        "CLOCK_ALT"
+      ],
+      "scope": "Reused chronological confirmation; observed tradeoff, not prospective or causal efficacy."
     }
   ],
   "checks": [
@@ -267,12 +395,23 @@ pending-сигнала. Узкий `ML47–53 + dict>=20` пока не испо
         "VERIFY"
       ],
       "observed": "Exit0 workers; unchanged frozen hashes; unique maps; disjoint partitions and known series; independent470/440 check;7 tests passed."
+    },
+    {
+      "id": "T2",
+      "status": "PASS",
+      "sources": [
+        "SCHEDULE_VERIFY"
+      ],
+      "observed": "Both schedule jobs exit0, unchanged frozen inputs, independent489/534 replay;119 research/gate/wrapper/ledger tests passed."
     }
   ],
   "limitations": [
     "Current dictionary/model snapshots are retrospective.",
     "Confirmation-only day bootstrap is conditional on fitted coefficients.",
-    "Production allowlist confirmation for1000 has58 triggers."
+    "Production allowlist confirmation for1000 has58 triggers.",
+    "Threshold search Wilson intervals are not simultaneous guarantees.",
+    "Raw clocks lack explicit timestamps; six sample lengths support primary but do not prove it.",
+    "No creep-farm temporal attribution."
   ],
   "contradictions": [
     "Dictionary full neutral result60.89% weakens to53.33% on30 confirmation maps.",

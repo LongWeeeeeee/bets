@@ -1562,7 +1562,8 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   map_num, game_time, radiant_team, dire_team, heroes, elo_radiant,
   elo_dire, early_nw, early_win, late, all, lane` (каждый — `ModelVerdict|None`),
   `prematch_index` (только для лога, не используется в правилах),
-  `kills_windows_open: List[str]`, `already_sent: Optional[Set[Tuple]]`.
+  `kills_windows_open: List[str]`, `already_sent: Optional[Set[Tuple]]`,
+  `radiant_networth_lead: Optional[float]` — live общий NW Radiant minus Dire.
 - `ModelVerdict(side, confidence)` — сторона "Radiant"/"Dire" (никогда "tie").
 - `Config.from_env(env=None)` — читает env ПРИ КАЖДОМ ВЫЗОВЕ (не кэширует), чтобы
   тесты и systemd drop-in применялись без перезагрузки модуля.
@@ -1615,7 +1616,12 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   и `kills_total`, максимум по одному каждого на карту.
 - Тайминг: win-маркет смотрит на `ctx.lane` — если ML Laning подтверждает
   таргет `>=min_conf`, `timing="now"` (ставка на "00"); иначе `timing="now"`
-  только при `game_time >= ML_DISPATCH_TIMING_SECONDS` (600с), иначе `wait_600`.
+  при `game_time >= ML_DISPATCH_TIMING_SECONDS` (600с). E-290, решение владельца
+  14.09.2026: обычное ожидание также снимается с 240с при общем NW >=1000 в пользу
+  таргета. `ML_DISPATCH_EARLY_NW=1` включает условие (0 — rollback),
+  `ML_DISPATCH_EARLY_NW_START_SECONDS=240`, `ML_DISPATCH_EARLY_NW_MIN_LEAD=1000`.
+  Missing/nonfinite NW не снимает ожидание; берётся signed lead, не abs.
+  В остальных случаях `wait_600`. Ветки конфликта с ожиданием1860с не меняются.
   Kills-решения всегда `timing="now"` (фильтрацию по окну делает `Ctx.kills_windows_open`).
 - `expected_wr` = максимум уверенности среди моделей "за"; `min_odds =
   round(1/(expected_wr-margin), 2)`.

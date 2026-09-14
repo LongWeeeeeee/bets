@@ -315,6 +315,51 @@ def test_game_time_past_timing_seconds_gives_now_even_without_lane():
     assert win.timing == "now"
 
 
+@pytest.mark.parametrize("side,lead", [("Radiant", 1000), ("Dire", -1000)])
+@pytest.mark.parametrize("time,expected", [(239, "wait_600"), (240, "now"), (599, "now")])
+def test_early_nw_releases_exact_threshold_only_in_target_direction(side, lead, time, expected):
+    ctx = base_ctx(late=ModelVerdict(side, .70), game_time=time,
+                   radiant_networth_lead=lead)
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == expected
+    assert any("early_nw_release" in r for r in win.reasons) == (expected == "now")
+
+
+@pytest.mark.parametrize("lead", [None, 0, 999, -1000, float("nan"), float("inf"), "bad"])
+def test_early_nw_missing_small_or_opposing_lead_keeps_wait(lead):
+    ctx = base_ctx(late=ModelVerdict("Radiant", .70), game_time=240,
+                   radiant_networth_lead=lead)
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == "wait_600"
+
+
+def test_early_nw_config_disable_and_nonfinite_game_clock_fail_closed():
+    ctx = base_ctx(late=ModelVerdict("Radiant", .70), game_time=240,
+                   radiant_networth_lead=1000)
+    config = Config.from_env({"ML_DISPATCH_EARLY_NW": "0"})
+    assert not config.early_nw_enabled
+    assert next(d for d in evaluate(ctx, config).decisions if d.market == "win").timing == "wait_600"
+    ctx.game_time = float("nan")
+    assert not md._early_nw_release(ctx, cfg(), "Radiant")
+    defaults = Config.from_env({})
+    assert (defaults.early_nw_enabled, defaults.early_nw_start_seconds,
+            defaults.early_nw_min_lead) == (True, 240, 1000)
+
+
+def test_early_nw_does_not_override_late_conflict_wait_or_dedup():
+    ctx = base_ctx(early_nw=ModelVerdict("Radiant", .75),
+                   late=ModelVerdict("Dire", .70), game_time=300,
+                   radiant_networth_lead=-5000)
+    result = evaluate(ctx, cfg())
+    assert not any(d.market == "win" for d in result.decisions)
+    assert any(s.reason == md.REASON_LATE_CONFLICT_WAIT for s in result.skipped)
+    ctx.early_nw = None
+    ctx.already_sent = {(ctx.base_url, ctx.map_num, "win", "Dire")}
+    result = evaluate(ctx, cfg())
+    assert not any(d.market == "win" for d in result.decisions)
+    assert any(s.reason == md.REASON_DEDUP for s in result.skipped)
+
+
 # --- Dedup: in-memory set and SentLedger persistence -----------------------
 
 def test_already_sent_set_skips_repeat_decision():
