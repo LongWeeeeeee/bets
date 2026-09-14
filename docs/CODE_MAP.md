@@ -1299,7 +1299,9 @@ reload-политика (e647309).
 `fold_confusables(value)` (кириллические омоглифы → латиница, посимвольно, длина не меняется).
 Таблица `TEAM_NAME_ALIASES` пополняется руками и только подтверждёнными написаниями: `BetBoom Team` =
 `BoomBoys`/`BB Team`/`BetBoom` (SourceTV/GC против рендера Winline), `L1GA TEAM` = `L1GA`,
-`Level UP esports` = `Level UP`.
+`Level UP esports` = `Level UP`, `Inner Circle x Insanity` = `Inner Circle` (SourceTV против Winline).
+Для устранения дублей SourceTV/Winline ownership-предикаты используют `canonical_team_key`; ключи
+карточных серий и отображаемый порядок команд остаются на исходной нормализации.
 
 ---
 
