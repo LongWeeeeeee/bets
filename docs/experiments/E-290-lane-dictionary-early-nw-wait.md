@@ -5,7 +5,7 @@ date: "2026-09-14"
 area: dispatch
 status: blocked
 corpus: "28 241 сохранённых про-прогнозов; frozen live nw_mean; first-crossing 4–9 минут и хронологическая confirmation"
-verdict: "РАСЧЁТ НЕ ЗАВЕРШЁН: CPU-preflight serv1/serv2 пройден, общие слоты заняты aitrading; NW-задание истекло в очереди без выполнения. Шесть регрессионных тестов и восемь одинаковых реальных драфтов на обоих хостах проверены. Порогов/эффекта пока не утверждаем; прод не менялся."
+verdict: "ЧАСТИЧНО: словарь на serv1 рассчитан, Lane ML47–53 + abs(dict)>=20: 123/202=60.89%, Wilson95CI54.02–67.36%, mean ML50.87%. Это ретроспективная связь, свежий срез только23 карты. NW ещё не рассчитан: serv2 queue timeout; разрешённый пользователем локальный запуск упал до worker из-за macOS rename readonly snapshot. Прод не менялся."
 harness: "scripts/ops/research_lane_wait.py; scripts/ops/research_lane_dictionary.py; campaign_remote.json in runtime/artifacts/star-dispatch/lane_wait_20260914"
 ---
 
@@ -17,10 +17,13 @@ Date: 2026-09-14. Scope: offline research; no production gate changes.
 
 BLOCKED
 
-Full results pending: the initial remote campaign was admitted by CPU preflight,
-but queued behind other projects' occupied global node slots. Its NW worker
-exhausted the queue deadline before executing. This is not a negative scientific
-result. No estimate below is a completed measurement until result receipts exist.
+Dictionary scoring completed on serv1 and both output files were collected with
+verified hashes. The NW job timed out in the serv2 queue without running. The
+user then explicitly authorized local completion. CPU preflight passed after
+load fell, but the local executor failed before starting the worker: macOS
+returns `PermissionError` when renaming its snapshot directory after chmod 0500.
+The exact installed snapshot helper reproduced the failure. No executor code
+was changed; an explicit exception for direct local calculation is pending.
 
 ## SUMMARY
 
@@ -35,6 +38,22 @@ result. No estimate below is a completed measurement until result receipts exist
   transformed lane confidence points, not gold and not a win probability.
 - This study uses frozen retrospective predictions and a present dictionary.
   A later-date confirmation partition does not make them prospective forecasts.
+
+Observed dictionary results, exact frozen live `nw_mean` semantics:
+
+| Population / abs(dict) cut | n | Correct NW10 direction | Wilson 95% CI | Mean Lane ML for dictionary side |
+|---|---:|---:|---:|---:|
+| Lane ML 47–53, >=10 | 1,359 | 59.31% | 56.67–61.89% | 50.47% |
+| Lane ML 47–53, >=15 | 599 | 61.27% | 57.31–65.09% | 50.62% |
+| Lane ML 47–53, >=20 (primary) | 202 | 60.89% | 54.02–67.36% | 50.87% |
+| No Lane ML hit, >=20 | 925 | 65.84% | 62.72–68.82% | 55.01% |
+
+At the requested >=20 cut, the neutral subgroup contains 82/134 correct Dire
+predictions and 41/68 correct Radiant predictions. Before July23 it is 110/179
+(61.45%); after July23 it is only 13/23 (56.52%, CI36.81–74.37%). Thus the overall
+association is positive, but recent evidence is sparse. A difference from the
+mean ML probability is not by itself a calibration-controlled incremental test.
+No NW threshold recommendation is available yet.
 
 ## CHANGED
 
@@ -78,7 +97,7 @@ Method fixed before viewing results:
 
 Executed checks: six local regression tests passed; eight real draft fixtures
 produced identical source-cascade outputs on serv1 and serv2 with NumPy 2.4.6
-and the actual `nw_mean` environment. Full-job completion is still pending.
+and the actual `nw_mean` environment. The dictionary full job completed; the NW full job remains unexecuted.
 
 ## POINTERS
 
@@ -123,9 +142,13 @@ Where to look for an error:
 
 ## NEXT
 
-Resolve the remote queue without interrupting other workloads, collect verified
-outputs from both requested hosts, assess confirmation and contrary evidence,
-then complete this record. Production remains outside the authorized scope.
+After the pending user exception, run the remaining local NW calculation and
+`scripts/ops/research_lane_residual_check.py`. The latter fits only discovery
+coefficients and compares calibrated Lane ML against Lane ML plus dictionary
+on the same confirmation maps. Its paired day CI is conditional on the fitted
+coefficients; the current dictionary still precludes a prospective claim.
+Complete the record only after actual output verification. Production remains
+outside the authorized scope.
 
 ```orchestra-evidence-v1
 {
@@ -149,6 +172,11 @@ then complete this record. Production remains outside the authorized scope.
       "id": "S3",
       "path": "runtime/artifacts/star-dispatch/lane_wait_20260914/fixture_nw_mean_serv2.json",
       "sha256": "6be0ab06824b52bb1b2af2fc140d515f8a2e203f64180a341381372199572352"
+    },
+    {
+      "id": "S4",
+      "path": ".orchestra/campaigns/run-e96058ca734b7d16df93bf42/artifacts/dictionary-residual/dictionary.json",
+      "sha256": "f8410c5c8c0cbe8094ba2600ce74440b81309cb14302cfb7ba9daa10ac40901f"
     }
   ],
   "claims": [
@@ -164,8 +192,17 @@ then complete this record. Production remains outside the authorized scope.
     {
       "id": "U1",
       "kind": "NOT_CHECKED",
-      "claim": "Full dictionary residual estimates and early-stopping confirmation results are unavailable.",
-      "scope": "Remote full workloads remain queued or failed before execution."
+      "claim": "NW stopping estimates and calibrated residual confirmation remain unavailable.",
+      "scope": "NW workers failed before computation; residual check staged only."
+    },
+    {
+      "id": "F2",
+      "kind": "OBSERVED",
+      "claim": "Neutral47-53 abs(dictionary)>=20: hits123 of202; rate0.6089108910891089; Wilson95CI0.5401826228809129 to0.6735741210329934.",
+      "sources": [
+        "S4"
+      ],
+      "scope": "Retrospective full dictionary study, frozen nw_mean."
     }
   ],
   "checks": [
@@ -185,7 +222,7 @@ then complete this record. Production remains outside the authorized scope.
   ],
   "contradictions": [],
   "decision_required": [
-    "Await user response about additional node slots and a replacement campaign."
+    "Await user exception for direct local calculations after reproduced executor failure."
   ]
 }
 ```
