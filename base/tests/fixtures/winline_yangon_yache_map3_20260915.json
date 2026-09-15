@@ -1,0 +1,154 @@
+{
+  "capture_date": "2026-09-15",
+  "capture_command": "ssh serv1 grep -i -E \"yache|yangon\" /root/main/runtime/winline_telegram_sent.jsonl",
+  "scope": "Exact first/terminal map3 journal records and first poll attempt; full private poller evidence retained in incident artifacts.",
+  "messages": [
+    {
+      "wall": 1789474863.7377918,
+      "kind": "first",
+      "canonical_key": "winline:league:epl world series|yache123|yangon galacticos|map3|YANGON GALACTICOS|YACHE123",
+      "delivered": true,
+      "message": "🆕 Winline · карта 3\nYANGON GALACTICOS — YACHE123\n1.45   |   2.50\n🕐 —",
+      "observation": {
+        "enqueued_wall": 1789474863.6373286,
+        "worker_started_wall": 1789474863.637599,
+        "suppression_reason": null,
+        "deferred_until_monotonic": null,
+        "canonical_key": "winline:league:epl world series|yache123|yangon galacticos|map3|YANGON GALACTICOS|YACHE123",
+        "producer_pid": 1773980,
+        "producer_start_generation": "pid-1773980",
+        "attempt_index": 1,
+        "attempt_started_at": 1789474863.4880614,
+        "attempt_finished_at": 1789474863.634838,
+        "dom_captured_wall": 1789474863.511781,
+        "dom_history_queued_id": "3d2c11e3c8bd4d29a991561e0fe0734b",
+        "card_team_order": "YANGON GALACTICOS|YACHE123",
+        "card_odds": [
+          1.45,
+          2.5
+        ],
+        "odds_raw_pair": [
+          1.45,
+          2.5
+        ],
+        "odds_previous_pair": [
+          null,
+          null
+        ],
+        "odds_orientation_source": "card_provenance",
+        "odds_orientation_correction": null,
+        "output_pair": [
+          1.45,
+          2.5
+        ],
+        "send_started_wall": 1789474863.6376777,
+        "send_finished_wall": 1789474863.7377625
+      }
+    },
+    {
+      "wall": 1789480939.217539,
+      "kind": "terminal",
+      "canonical_key": "winline:league:epl world series|yache123|yangon galacticos|map3|YANGON GALACTICOS|YACHE123",
+      "delivered": true,
+      "message": "🏁 Winline · карта 3\nYANGON GALACTICOS — YACHE123\nкарта завершена\n💰 Yangon Galacticos +4 002\n🕐 17:26",
+      "observation": {
+        "enqueued_wall": 1789480938.7333028,
+        "worker_started_wall": 1789480939.048279,
+        "suppression_reason": null,
+        "deferred_until_monotonic": null,
+        "canonical_key": "winline:league:epl world series|yache123|yangon galacticos|map3|YANGON GALACTICOS|YACHE123",
+        "producer_pid": 1773980,
+        "producer_start_generation": "pid-1773980",
+        "attempt_index": null,
+        "attempt_started_at": null,
+        "attempt_finished_at": null,
+        "dom_captured_wall": null,
+        "dom_history_queued_id": null,
+        "card_team_order": null,
+        "card_odds": null,
+        "odds_raw_pair": null,
+        "odds_previous_pair": null,
+        "odds_orientation_source": null,
+        "odds_orientation_correction": null,
+        "output_pair": [
+          null,
+          null
+        ],
+        "send_started_wall": 1789480939.0483696,
+        "send_finished_wall": 1789480939.2175024
+      }
+    }
+  ],
+  "first_attempt": {
+    "schema_version": "winline_current_map_odds_poller.v1",
+    "producer_pid": 1773980,
+    "producer_start_generation": "pid-1773980",
+    "start_generation": "pid-1773980",
+    "canonical_key": "winline:league:epl world series|yache123|yangon galacticos|map3|YANGON GALACTICOS|YACHE123",
+    "series": "winline:league:epl world series|yache123|yangon galacticos",
+    "map_num": 3,
+    "team1": "YANGON GALACTICOS",
+    "team2": "YACHE123",
+    "selected_side": null,
+    "attempt_index": 1,
+    "attempt_started_at": 1789474863.4880614,
+    "attempt_finished_at": 1789474863.634838,
+    "dom_captured_wall": 1789474863.511781,
+    "attempt_started_at_monotonic": 140329.372013911,
+    "attempt_finished_at_monotonic": 140329.518790955,
+    "attempt_start_delta_seconds": null,
+    "latency_seconds": 0.14677704399218783,
+    "attempt_latency_seconds": 0.14677704399218783,
+    "cadence_interval_seconds": 60.0,
+    "nominal_next_poll_at_monotonic": 140389.372013911,
+    "cadence_overrun": false,
+    "overrun": false,
+    "coalesced_missed_intervals": 0,
+    "cadence_compliant": true,
+    "acquisition_mode": "initial_goto",
+    "acquisition_mode_requested": "initial_goto",
+    "reload_attempted": false,
+    "current_url": "https://winline.ru/stavki/sport/kibersport/dota_2",
+    "dom_signature": "8284756251365204930",
+    "dom_hash": "8284756251365204930",
+    "dom_signature_scope": "card",
+    "market_status": "open",
+    "source": "winline_current_map_winner",
+    "p1_odds": 1.45,
+    "p2_odds": 2.5,
+    "parser_failure_reasons": [],
+    "consecutive_misses": 0,
+    "market_missing_seconds": null,
+    "reload_count": 0,
+    "last_reload_at_monotonic": null,
+    "next_poll_at_monotonic": 140389.372013911,
+    "next_poll_monotonic": 140389.372013911,
+    "accepted": true,
+    "pending": false,
+    "page_valid": true,
+    "error": null,
+    "acquisition_error": null,
+    "series_last_map": false,
+    "odds_promoted_from_match": false,
+    "card_team_order": "YANGON GALACTICOS|YACHE123",
+    "card_odds": [
+      1.45,
+      2.5
+    ],
+    "miss_fingerprint": null,
+    "match_found": true,
+    "dom_age_seconds": 0.0,
+    "dom_history_queued_id": "3d2c11e3c8bd4d29a991561e0fe0734b",
+    "odds_raw_pair": [
+      1.45,
+      2.5
+    ],
+    "odds_previous_pair": [
+      null,
+      null
+    ],
+    "odds_orientation_source": "card_provenance"
+  },
+  "absent_overview_text": "Линия Live сейчас Игры 24/7 Киберспорт Главная Мой счет Результаты Войти Регистрация Ближайшие DOTA 2 1 European Pro League WINLINE Star Series 1 Counter-Strike 7 WINLINE MPKBK CIS LAN 7 1 Ranked CCT EU 1 CCT South America European Pro League Еще 14 5 StarLadder StarSeries Ranked, Qualifier 3 Circuit X Curitiba Circuito Retake ESEA Fiesta Series Gamers Club Liga H2H Liga 2x2 1 Logitech G Play Connect Media Eleague 1 NODWIN Clutch Private Club Pulse Beat StarLadder StarSeries. Дуэль игроков. Убийства League of Legends LEC LCS LPL CBLOL LFL Еще 3 Rift Legends Road Of Legends World Star Challengers Invitational Valorant Champions VCT Mobile Legends MPL Standoff 2 WINLINE Epic Jumble Rumble Rainbow Six EU MENA League NA League SA League King of glory KPL King Pro League ГЛАВНАЯ LIVE DOTA 2 CS LOL VALORANT MOBILE LEGENDS STANDOFF 2 RAINBOW SIX KING OF GLORY Киберспорт Исход 1 x 2 Фора 1 - 2 Тотал М - Б DOTA 2 | WINLINE Star Series DAXAK CLUB VOODOOSH CLUB Пер.2 +6 1 1 21 40 2К 53 21 1К Матч 1.62 2.15 - - - - - - STRAY CLUB COOMAN CLUB Сегодня 18:00 +21 Матч 1.38 2.82 2.17 - 1.5 + 1.61 1.67 2.5 2.07 1 карта 1.50 2.42 - - - - - - ROSTIKFACEKID CLUB ROSTIK999 CLUB Сегодня 21:00 +21 Матч 1.46 2.52 2.36 - 1.5 + 1.52 1.72 2.5 2.00 1 карта 1.57 2.26 - - - - - - DOTA 2 | European Pro League NEMIGA GAMING ZERO TENACITY Сегодня 18:00 +50 Матч 2.29 1.55 1.45 + 1.5 - 2.55 1.77 2.5 1.94 1 карта 2.12 1.64 - - - 1.83 53.5 1.87 YELLOW SUBMARINE URALAN Сегодня 21:00 +49 Матч 1.08 6.59 1.34 - 1.5 + 3.01 1.29 2.5 3.26 1 карта 1.16 4.61 - - - 1.83 54.5 1.87 WINLINE support@winline.ru Онлайн чат Работа у нас ИГРОКАМ Программа лояльности Служба поддержки Клубы Блог ДОКУМЕНТЫ Основные документы 2026 © Букмекерская контора WINLINE – российская букмекерская контора, осуществляющая деятельность на территории РФ на основании лицензии на осуществление деятельности по организации и проведению азартных игр в букмекерских конторах или тотализаторах № Л027-00108-77/00395482 от 09.07.2009 г., предоставленной ООО «Управляющая компания НКС» (ОГРН: 1077758954635; ИНН: 7714707736; место нахождения: 123112, г. Москва, Пресненская набережная, д. 8, стр. 1, помещ. 1/11; полное фирменное наименование: Общество с ограниченной ответственностью «Управляющая компания Национального коневодческого союза»; сокращенное фирменное наименование: ООО «Управляющая компания НКС»; коммерческое обозначение: Букмекерская контора WINLINE, БК WINLINE; товарный знак: WINLINE). Настоящий сайт является источником информации об организаторе основанных на риске игр, пари, о правилах их проведения, о призовом фонде таких игр, пари, о количестве призов или выигрышей, о сроках, месте и порядке получения призов или выигрышей, о сроках розыгрышей призов в процессе проведения основанных на риске игр, пари. Данная информация содержится в соответствующих правилах, размещенных на сайте. Настоящий сайт является источником информации об организаторе акций, о правилах и сроках их проведения, количестве призов или выигрышей по результатам таких акций, сроках, месте и порядке их получения. Данная информация содержится в соответствующих правилах, размещенных на сайте. На данном сайте не проводятся стимулирующие мероприятия (акции, конкурсы), условием участия в которых является приобретение определенного товара (услуги).Посетитель сайта выражает согласие на обработку его персональных данных в соответствии с Политикой в отношении обработки персональных данных и сведения о реализуемых требованиях к защите персональных данных. 18+ 17:22 (GMT +3) Ставка на Дота 2 Киберспорт давно стал привычной частью линии букмекерских компаний, а одной из самых популярных дисциплин по праву считается Dota 2. Эта игра стабильно собирает многомиллионную аудиторию, а поединки топовых команд привлекают внимание зрителей по всему миру. Dota 2 регулярно представлена в линии Winline, где на матчи предлагаются все виды исходов для заключения ставок, конкурентные коэффициенты и специальные акции, приуроченные к крупным киберспортивным турнирам, а также есть фора по картам ставки на Дота 2. Что такое Dota 2 Дота 2 — это многопользовательская командная игра, выпущенная компанией Valve в 2013 году. Проект вырос из пользовательской карты для Warcraft III и со временем превратился в одну из главных дисциплин киберспорта. Игра стала столь популярной благодаря ряду факторов: высокая конкуренция — в турнирах участвует множество профессиональных команд; динамичный геймплей — матчи насыщены событиями, что повышает зрелищность и интерес к ставкам; разнообразие рынков — можно заключить ставку на победителя или отдельные события в турнире, например, на первую кровь, тотал ликвидаций персонажей за игру, рампейдж. Помимо зрелищности пользователей привлекает доступность аналитики и статистики — данные можно посмотреть на стриминговых платформах, а также сервисах Dotabuff, OpenDota, Liquipedia. Турниры по Dota 2 Турниры по Дота 2 проходят практически круглый год и регулярно транслируются в прямом эфире на платформе Winline. Соревнования делятся на несколько уровней: Major — pro-league, где участвуют самые сильные коллективы мира и разыгрываются значительные очки; Minor — турниры рангом ниже, где менее титулованные команды борются за право попасть в высший эшелон; квалификации — отличная возможность увидеть новых молодых талантов киберспорта. Наибольший интерес у пользователей вызывают события системы DPC. Это сезонные соревнования, в которых команды зарабатывают очки для попадания на The International, где подводятся итоги года. Виды ставок на DOTA 2 Линия на Дота 2 включает как базовые, так и расширенные рынки, что создаёт большое количество вариантов для прогнозов на матчи по киберспорту. Среди наиболее популярных вариантов можно выделить: исход. Пользователь выбирает, кто победит в конкретной игре или серии; победа на конкретной карте. В зависимости от локации игроки показывают разную эффективность. Поэтому в некоторых случаях лучше ставить не на весь поединок, а на победу на определённой карте; тоталы. Если матч проходит в формате нескольких карт, можно выбрать ставки на их общее количество; фора. В этом случае одному из участников матча даётся виртуальное преимущество или отставание. Гандикап позволяет уравнять шансы коллективов с разным уровнем подготовки. Помимо стандартных рынков в Дота 2 доступны специальные рынки, связанные с ключевыми моментами игры: первая кровь, первая уничтоженная башня, контроль рун и другие события. Анализ матчей и команд в Dota 2 В Dota 2, как и в любой другой дисциплине, недостаточно просто ставить на фаворита. Для успешного прогноза Winline рекомендует учитывать сразу несколько факторов, которые влияют на исход матчей и серии: текущие результаты. Анализ последних 5–10 матчей выбранных команд помогает оценить форму игроков и стабильность коллективов; метаанализ. Dota 2 постоянно развивается через обновления и патчи. Это влияет на результаты команд. Нужно учитывать актуальные тренды в выборе и запрете героев на этапе драфта; мотивация. Турнирная значимость матча напрямую влияет на поведение игроков. Команды могут активно бороться за выход в плей-офф или, наоборот, действовать расслабленно, если событие для них малозначимо; статистика карт. В зависимости от текущего патча и стратегии, эффективность игроков может сильно различаться на разных картах. Некоторые коллективы лучше действуют на определённых локациях, другие специализируются на конкретных тактических схемах; итоги личных встреч. История очных противостояний помогает понять, как команды адаптируются друг к другу, на каких картах выигрывают и где испытывают трудности; изменения в составах. Любые замены могут заметно влиять на игровые комбинации, скорость принятия решений и общую слаженность. В киберспорте даже один удачный или неудачный эпизод может изменить ход всей игры. Поэтому прогнозы всегда строятся на совокупности факторов и статистики, а не только на статусе или рейтинге фаворита. Ставки на Dota 2 в Winline Winline — это букмекерская компания, которая предлагает широкий выбор событий для ставок на киберспорт. Пользователи могут делать прогнозы на Дота 2 в прематче и лайве, а также следить за онлайн-трансляциями различных турниров. В росписи доступны все виды рынков: исход, точный счёт, тотал, фора и другие. Ставки можно делать как на сайте, так и в мобильном приложении. Ещё одно преимущество Winline — развитая бонусная система. Все новые клиенты могут получить фрибет 10 000 за регистрацию и первый депозит, а постоянным игрокам доступны регулярные поощрения в рамках программы лояльности. Регистрируйтесь, изучайте все доступные предложения в киберспорте, выбирайте лучшие команды и наслаждайтесь миром Dota 2 вместе с нами! Развернуть Купон 0 В игре 0 Выбери коэффициент, чтобы поставить Перейти в историю",
+  "absent_overview_capture": "ssh serv1 cat /root/main/runtime/winline_overview_snapshot.json on 2026-09-15"
+}

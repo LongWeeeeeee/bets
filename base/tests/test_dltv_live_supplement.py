@@ -9,6 +9,7 @@
   (Zero Tenacity vs Devil Kings, map1, 10-9, 828s; убраны charts/canvas).
 """
 import copy
+import gzip
 import json
 import os
 import sys
@@ -264,6 +265,63 @@ def _notify_env(monkeypatch, live_payload):
     monkeypatch.setattr(cs, "_winline_dltv_draft_seeded", False)
     monkeypatch.setattr(cs, "_winline_map_clocks", {})
     return lambda url, timeout: live_payload
+
+
+@pytest.mark.parametrize("snapshot_available", [True, False])
+def test_unpriced_card_still_freezes_clock_when_dltv_enters_intermission(
+        monkeypatch, snapshot_available):
+    """Full captures, 2026-09-15: Winline has only Match, DLTV is between maps.
+
+    ssh serv1 cat /root/main/runtime/winline_overview_snapshot.json
+    curl -fsS https://dltv.org/live/series.json
+    """
+    _notify_env(monkeypatch, None)
+    with gzip.open(os.path.join(FIX_DIR, "winline_unpriced_overview_20260915.json.gz"),
+                   "rt") as source:
+        snapshot = json.load(source)
+    series = _load("dltv_series_intermission_20260915.json")
+    cs._winline_overview_inject_for_tests(snapshot["text"], html=snapshot["html"])
+    snapshot_calls = []
+
+    def fetch_series():
+        snapshot_calls.append(True)
+        return series if snapshot_available else None
+
+    monkeypatch.setattr(cs, "_dltv_live_series_snapshot", fetch_series)
+    monkeypatch.setattr(cs, "_winline_first_active", lambda: True)
+    monkeypatch.setattr(cs, "WINLINE_CARD_SWEEP_ENABLED", True)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers", {})
+    monkeypatch.setattr(cs, "_winline_bridge_live_pairs", lambda: set())
+    key = cs._winline_card_series_key("WINLINE Star Series", "DAXAK CLUB", "VOODOOSH CLUB")
+    store = cs._winline_clock_key(key, 2)
+    cs._winline_map_clocks[store] = dict(game_time=1800, map_num=2,
+                                       wall=time.time(), live=True, source="dltv")
+    # No priced map may create a poller or emit a fresh draft.
+    monkeypatch.setattr(cs, "ensure_winline_current_map_polling",
+                        lambda **kw: pytest.fail("unpriced card started a poller"))
+    monkeypatch.setattr(cs, "send_winline_odds_message",
+                        lambda *a, **kw: pytest.fail("unpriced card sent a draft"))
+    result = cs._winline_sweep_cards_from_snapshot()
+    assert result["skipped_rows"] >= 1
+    assert len(snapshot_calls) == 1
+    assert cs._winline_map_clocks[store]["live"] is (not snapshot_available)
+
+
+def test_clock_only_refresh_uses_live_payload_without_sending_draft(
+        monkeypatch, series_snapshot, live_payload):
+    fetcher = _notify_env(monkeypatch, live_payload)
+    monkeypatch.setattr(cs, "_winline_refresh_from_bridge_snapshot", lambda: None)
+    key = cs._winline_card_series_key("BLAST Slam, Qualifier", "ZERO TENACITY", "DEVIL KINGS")
+    result = cs._winline_card_dltv_draft_notify(
+        league="BLAST Slam, Qualifier", team1="ZERO TENACITY", team2="DEVIL KINGS",
+        map_num=None, series_key=key, snapshot=series_snapshot,
+        match_fetcher=fetcher, bridge_live_pairs=set(), clock_only=True,
+        send_fn=lambda *a, **kw: pytest.fail("clock refresh sent a draft"))
+    assert result == "none"
+    observed_at = cs._winline_map_clocks[cs._winline_clock_key(key, 1)]["wall"]
+    assert cs._winline_map_clock_label(
+        key + "|map1|ZERO TENACITY|DEVIL KINGS", observed_at) == "13:48"
+    assert not cs._winline_dltv_draft_sent
 
 
 def _norm_pair(a, b):

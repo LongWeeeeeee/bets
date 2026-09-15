@@ -335,6 +335,39 @@ def test_terminal_reported():
     assert "🏁 Winline" in message and "карта завершена" in message
 
 
+@pytest.mark.parametrize("proven", [True, False])
+def test_yangon_final_notice_labels_last_observation(monkeypatch, proven):
+    monkeypatch.setattr(cs, "_winline_current_map_pollers", {})
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "winline_yangon_yache_map3_20260915.json").read_text())
+    terminal = next(m for m in fixture["messages"] if m["kind"] == "terminal")
+    key = terminal["canonical_key"]
+    # Recover the exact observed fields from the delivered incident message.
+    gold = next(l.removeprefix("💰 ") for l in terminal["message"].splitlines()
+                if l.startswith("💰 "))
+    stamp = terminal["message"].split("🕐 ")[1]
+    monkeypatch.setattr(cs, "_winline_net_worth_label", lambda key: gold)
+    monkeypatch.setattr(cs, "_winline_resolve_map_winner", lambda *a, **kw: "YACHE123")
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(1.45, 2.50), sender, clock, key=key)
+    clock.advance(10)
+    cs._winline_odds_telegram_notify(
+        {}, key, is_terminal=True, map_end_proven=proven,
+        send_fn=sender, monotonic_fn=clock, stamp_fn=lambda: stamp)
+    if not proven:
+        clock.advance(_HOLD + 1)
+        cs._winline_flush_pending_stop_notices(
+            monotonic_fn=clock, stamp_fn=lambda: stamp, send_fn=sender)
+    message = sender.messages[-1]
+    assert "🕐 последнее известное время: 17:26" in message
+    if proven:
+        assert "💰 по последним данным: Yangon Galacticos +4 002" in message
+        assert "🏆 победа: YACHE123" in message
+    else:
+        assert "конец карты не подтверждён" in message
+        assert "🏆 победа" not in message
+
+
 def test_unproven_terminal_is_not_called_map_end(monkeypatch):
     """Потолок опроса и молчащий фид — остановка опроса, а не конец карты.
 
