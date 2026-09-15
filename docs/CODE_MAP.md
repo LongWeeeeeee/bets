@@ -1624,9 +1624,9 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 
 | Переменная | Default | Смысл |
 |---|---|---|
-| `ML_DISPATCH_MIN_CONF` | `0.60` | порог уверенности для всех пяти моделей (тот же порог красит ★ в панели) |
+| `ML_DISPATCH_MIN_CONF` | `0.60` | порог уверенности для всех шести моделей: Early NW, Early Win, Late, All, ML Laning, 🤖 Prematch (тот же порог красит ★ в панели, включая главную строку «🤖 ML-модель: ... (оценка)» с 15.09.2026) |
 | `ML_DISPATCH_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница ELO для деления на андердога (U) / фаворита (F); при `\|elo_r-elo_d\|<diff` `underdog_side=None` |
-| `ML_DISPATCH_WIN_MODELS` | `late,all,early_win,early_nw` | какие модели считаются "поддержкой" win-маркета (все четыре с 12.09.2026 16:50 — правило владельца «хоть одна ★ → сигнал»; до этого `early_nw` в дефолте не было); Late/All всегда вето-модели независимо от этого списка |
+| `ML_DISPATCH_WIN_MODELS` | `late,all,early_win,early_nw,prematch` | какие модели считаются "поддержкой" win-маркета (все четыре с 12.09.2026 16:50 — правило владельца «хоть одна ★ → сигнал»; до этого `early_nw` в дефолте не было; 🤖 Prematch добавлен 15.09.2026 — офлайн сильнейшая модель, ★≥0.60 даёт 71.2% n=9389, её собственный путь `prematch_model_bet` заблокирован `_dispatch_mode_reject_for_delivery` с 12.09.2026, это wiring возвращает её мнение в ставку; НЕ в `EARLY_ONLY_BLOCK_MODELS`, откат — `ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw`); Late/All всегда вето-модели независимо от этого списка |
 | `ML_DISPATCH_KILLS_REQUIRE_ALL` | `0` | `=1` требует ещё и `all>=порог` за андердога для kills-решений |
 | `ML_DISPATCH_TIMING_SECONDS` | `600.0` | если ML Laning не подтвердил таргет на 00, ждать это игровое время для win-маркета |
 | `ML_DISPATCH_MIN_ODDS_MARGIN` | `0.0` | запас в `min_odds = 1/(expected_wr-margin)`; известный нулевой пол цены, флаг существует, чтобы позже ужесточить |
@@ -1640,8 +1640,8 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 **Правила (решения владельца 12.09.2026, win-маркет дополнен 15.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из
   `ML_DISPATCH_WIN_MODELS` даёт `S` при `>=min_conf` (★ в панели = ровно этот
-  порог, т.е. любая из четырёх звёзд Early NW / Early Win / All / Late — уже
-  поддержка; `expected_wr` = максимум по голосующим, поэтому Early NW 0.73
+  порог, т.е. любая из пяти звёзд Early NW / Early Win / All / Late / 🤖
+  Prematch — уже поддержка; `expected_wr` = максимум по голосующим, поэтому Early NW 0.73
   даёт `min_odds` 1.37, а не 1.64 от Early Win); `S` ветируется, если Late
   ИЛИ All (всегда проверяются, вне зависимости от `win_models`) дают *другую*
   сторону при `>=min_conf`. Вето разрешается ПО КАЖДОЙ СТОРОНЕ ОТДЕЛЬНО раньше
@@ -1652,7 +1652,15 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   стороны пережили свою вето-проверку. E-291 (владелец, 15.09.2026): если
   единственная поддержка `S` — Early NW/Early Win без `all`/`late` в
   `models_for`, Decision не создаётся (`Skipped(reason="early_solo_blocked")`,
-  откат — `ML_DISPATCH_EARLY_SOLO_BLOCK=0`).
+  откат — `ML_DISPATCH_EARLY_SOLO_BLOCK=0`). 🤖 Prematch (15.09.2026) —
+  обычная модель поддержки/`Ctx.prematch`, не в `EARLY_ONLY_BLOCK_MODELS`
+  (соло-★ не блокируется) и не в `KILLS_EARLY_MODELS` (не запускает ветки
+  ожидания 31-й минуты ниже, только обычное вето Late/All); сторону/
+  уверенность берёт из того же значения тика, что печатает главная строка
+  панели «🤖 ML-модель: ... (оценка)» (`_ml_dispatch_prematch_pair`,
+  `base/cyberscore_try.py`), а не пересчитывает — отказ модели (не
+  `SOURCE_PREMATCH` или `index=0`) даёт `Ctx.prematch=None`, как и исчезающая
+  строка панели.
 - Kills-маркеты (только при наличии U): Early NW и/или Early Win `>=min_conf`
   за U (плюс опционально All при `ML_DISPATCH_KILLS_REQUIRE_ALL=1`) дают до
   двух решений — `kills_window` (только если открыто окно

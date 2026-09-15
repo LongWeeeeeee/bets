@@ -1,6 +1,6 @@
 """ML dispatch evaluator (stage 1 of the ML-dispatch plan).
 
-Pure decision logic for the five-model ML betting dispatch that will
+Pure decision logic for the six-model ML betting dispatch that will
 eventually replace the STAR word-dict paths in ``cyberscore_try.py``
 (stage 2, not implemented here). This module imports nothing from
 ``cyberscore_try`` and has no side effects other than the optional
@@ -10,15 +10,29 @@ caller-driven — :func:`evaluate` itself never touches disk.
 Rules implemented (owner decisions, 12.09.2026 — see
 ``/Users/alex/.claude/plans/swirling-giggling-kurzweil.md``):
 
-- Threshold ``ML_DISPATCH_MIN_CONF`` (default 0.60) applies to all five
-  models: Early NW, Early Win, Late, All, ML Laning.
+- Threshold ``ML_DISPATCH_MIN_CONF`` (default 0.60) applies to all six
+  models: Early NW, Early Win, Late, All, ML Laning, 🤖 Prematch.
 - Underdog ``U`` = side with ELO lower by >= ``ML_DISPATCH_UNDERDOG_MIN_DIFF``
   (default 50). If ``|elo_radiant - elo_dire| < diff`` there is no U/F
   split (``underdog_side is None``).
+- 🤖 Prematch (owner decision 15.09.2026, E-291 context): the 35-feature
+  general prematch model — panel line "🤖 ML-модель: SIDE NN.N% (оценка)" —
+  is wired in as a sixth ``ML_DISPATCH_WIN_MODELS`` member, ``"prematch"``,
+  appended to the default. Offline it is the single strongest model (★
+  ≥0.60 gives 71.2% n=9389, 71.5% solo) and its own dedicated delivery path
+  (``prematch_model_bet``) has been blocked by ``_dispatch_mode_reject_for_delivery``
+  since ``DISPATCH_MODE=ml`` (12.09.2026) — this is the path that lets its
+  opinion reach a bet again. It is a plain support model like Late/All/Early
+  NW/Early Win — NOT a veto model (``VETO_MODELS`` stays ``("late", "all")``)
+  and NOT in ``EARLY_ONLY_BLOCK_MODELS``, so a starred early_nw/early_win +
+  prematch pair (or a solo prematch star) is never ``early_solo_blocked``.
+  Rollback without a deploy (systemd drop-in): ``ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw``.
 - Win market (x1 always): a side ``S`` is backed if at least one of the
-  configured ``ML_DISPATCH_WIN_MODELS`` (default ``late,all,early_win,early_nw``
+  configured ``ML_DISPATCH_WIN_MODELS`` (default
+  ``late,all,early_win,early_nw,prematch``
   — owner rule 12.09.2026 16:50: "если хоть одна из Early NW / Early Win /
-  All / Late имеет ★, сигнал посылается"; ★ in the panel is exactly
+  All / Late имеет ★, сигнал посылается", extended to 🤖 Prematch
+  15.09.2026; ★ in the panel is exactly
   ``confidence >= ML_DISPATCH_MIN_CONF``, so any starred model is support)
   favors ``S`` at >= threshold. E-291 (owner decision 15.09.2026): a solo
   ``early_nw``/``early_win`` star with no ``all``/``late`` support in
@@ -83,9 +97,13 @@ for the stage-2 owner to confirm before wiring into ``cyberscore_try``):
    outside Late/All disagreeing with no Late/All verdict present at
    all — see the "conflict" vs "veto" tests below, which exercise both
    branches deliberately with different ``win_models`` configs.
-3. ``prematch_index`` is carried on ``Ctx`` for logging only (per the
-   plan, the 35-feature prematch model is explicitly not applied to
-   ML-dispatch decisions); ``evaluate`` never reads it.
+3. ``prematch_index`` (the raw ensemble index, not a side/confidence
+   verdict) is carried on ``Ctx`` for logging only; ``evaluate`` never
+   reads it. The derived ``ctx.prematch`` (a ``ModelVerdict``, added
+   15.09.2026) is a separate field and IS read by ``evaluate`` like any
+   other win model — the caller (``cyberscore_try.py``) is responsible
+   for deriving it from the same panel-line side/confidence so the model
+   never votes on a tick where the panel shows no opinion.
 
 Optional time cap: ``ML_DISPATCH_MAX_GAME_TIME`` (seconds; unset/empty/<=0 =
 no cap, the historical behavior). When set and ``ctx.game_time`` exceeds it,
@@ -165,8 +183,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SIDES = ("Radiant", "Dire")
 VETO_MODELS = ("late", "all")
-DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw")
-ALLOWED_WIN_MODELS = ("late", "all", "early_win", "early_nw")
+DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw", "prematch")
+ALLOWED_WIN_MODELS = ("late", "all", "early_win", "early_nw", "prematch")
 KILLS_EARLY_MODELS = ("early_nw", "early_win")
 EARLY_ONLY_BLOCK_MODELS = ("early_nw", "early_win")
 
@@ -209,9 +227,14 @@ class ModelVerdict:
 class Ctx:
     """Everything :func:`evaluate` needs for one tick of one map.
 
-    ``early_nw``, ``early_win``, ``late``, ``all``, ``lane`` are each
-    ``Optional[ModelVerdict]``; ``None`` means "model did not vote"
+    ``early_nw``, ``early_win``, ``late``, ``all``, ``lane``, ``prematch``
+    are each ``Optional[ModelVerdict]``; ``None`` means "model did not vote"
     (surfaces as ``model_missing`` in ``skipped``, where relevant).
+    ``prematch`` (added 15.09.2026) is the 35-feature general prematch
+    model's own side/confidence — the same values the "🤖 ML-модель: ...
+    (оценка)" panel line prints — kept separate from ``prematch_index``
+    (the raw ensemble index, logging-only, see module docstring design
+    decision 3).
     ``kills_windows_open`` lists labels of currently-open kill windows,
     nearest one first (empty list => no ``kills_window`` decision this
     tick, but ``kills_total`` is unaffected).
@@ -231,6 +254,7 @@ class Ctx:
     late: Optional[ModelVerdict] = None
     all: Optional[ModelVerdict] = None
     lane: Optional[ModelVerdict] = None
+    prematch: Optional[ModelVerdict] = None
     prematch_index: Optional[float] = None
     kills_windows_open: List[str] = field(default_factory=list)
     kills30_radiant: Optional[float] = None

@@ -7978,8 +7978,20 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
         return "\n".join(_fb_lines) + "\n"
     side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
     confidence = 50.0 + abs(index)
-    line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%"
-    if str(source or "") == win_model_veto.SOURCE_PREMATCH:
+    is_prematch_source = str(source or "") == win_model_veto.SOURCE_PREMATCH
+    # ★ marker (owner decision 15.09.2026, same ML_DISPATCH_MIN_CONF/helper
+    # as the four draft-model lines below): only on the prematch-sourced
+    # line, since that is the reading `ml_dispatch.Ctx.prematch` consumes.
+    _main_star = ""
+    if is_prematch_source:
+        try:
+            _main_star_min_conf = float(os.getenv("ML_DISPATCH_MIN_CONF", "0.60"))
+        except Exception:                            # noqa: BLE001
+            _main_star_min_conf = 0.60
+        if confidence / 100.0 >= _main_star_min_conf:
+            _main_star = " ★"
+    line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%{_main_star}"
+    if is_prematch_source:
         line += " (оценка)"
         calibration = details.get("calibration") or {}
         wr = calibration.get("expected_wr")
@@ -12264,8 +12276,8 @@ def _dispatch_mode_block_detail(decision: Dict[str, Any]) -> str:
 # Живёт РЯДОМ с `_try_dispatch_prematch_model_bet`, не заменяет его: словарные
 # STAR-пути продолжают вычислять свои ставки во всех режимах, гейт
 # `_dispatch_mode_reject_for_delivery` режет их сообщения только в `ml`. Эта
-# функция читает пять модельных вердиктов, прогоняет через
-# `ml_dispatch.evaluate`, пишет строку в лог решений и — только в `ml` —
+# функция читает шесть модельных вердиктов (🤖 Prematch добавлен 15.09.2026),
+# прогоняет через `ml_dispatch.evaluate`, пишет строку в лог решений и — только в `ml` —
 # отправляет `Decision`ы с timing=="now" через `_deliver_and_persist_signal`.
 # Любое исключение ловится целиком: тик карты не должен падать из-за нового
 # пути.
@@ -12345,6 +12357,43 @@ def _ml_dispatch_extract_index_details(*blocks) -> Tuple[Optional[float], Dict[s
             if isinstance(candidate, dict) and candidate.get("refusal_reason"):
                 return None, candidate
     return None, {}
+
+
+def _ml_dispatch_prematch_source(*blocks) -> Optional[str]:
+    """``win_model_veto.SOURCE_KEY`` of the same block ``index`` came from.
+
+    Same scan as `_ml_dispatch_extract_index_details` (its own return shape
+    is pinned by ``test_dispatch_mode_gate.py``/`test_prematch_refusal_fallback.py`,
+    so it stays a plain ``(index, details)`` pair) — this sibling helper
+    (pattern from `_late_model_side_from_blocks`) re-reads the SOURCE_KEY of
+    the SAME first block that carried the index, no extra model call.
+    """
+    for block in blocks:
+        if isinstance(block, dict) and block.get(win_model_veto.INDEX_KEY) is not None:
+            return block.get(win_model_veto.SOURCE_KEY)
+    return None
+
+
+def _ml_dispatch_prematch_pair(index: Optional[float], source: Optional[str]) -> Optional[Dict[str, Any]]:
+    """🤖 verdict for `ml_dispatch.Ctx.prematch` (owner decision 15.09.2026).
+
+    Same side/confidence the "🤖 ML-модель: SIDE NN.N% (оценка)" panel line
+    prints (`_format_win_model_line`, ``side = "Radiant" if index > 0 else
+    "Dire"``, ``confidence = 50.0 + abs(index)``) — reused here, not
+    recomputed, and gated the same way: only when ``source ==
+    win_model_veto.SOURCE_PREMATCH`` (the 35-feature general prematch model,
+    not a draft-only fallback) and ``index`` is not exactly 0 (no side).
+    Missing/refused model -> ``None``, same as the panel line disappearing.
+    """
+    if index is None or str(source or "") != win_model_veto.SOURCE_PREMATCH:
+        return None
+    if index > 0:
+        side = "Radiant"
+    elif index < 0:
+        side = "Dire"
+    else:
+        return None
+    return {"side": side, "confidence": (50.0 + abs(index)) / 100.0}
 
 
 def _ml_dispatch_verdict_from_pair(pair: Any):
@@ -12561,7 +12610,7 @@ def _ml_dispatch_tick(
     all_model_line: str = "",
     laning_timestamp: Any = None,
 ) -> None:
-    """Один тик одной карты: оценить пять моделей, залогировать решение,
+    """Один тик одной карты: оценить шесть моделей, залогировать решение,
     при ``DISPATCH_MODE=ml`` — отправить ``Decision``ы с ``timing=="now"``.
 
     Ничего не возвращает и не поднимает исключений наружу.
@@ -12614,6 +12663,12 @@ def _ml_dispatch_tick(
         kills30_pair = win_model_veto.last_kills30(index) if index is not None else None
         kills30_radiant = kills30_pair.get("radiant") if isinstance(kills30_pair, dict) else None
         kills30_dire = kills30_pair.get("dire") if isinstance(kills30_pair, dict) else None
+        # 🤖 Prematch as a sixth win model (owner decision 15.09.2026): same
+        # index/source this tick already extracted above, no recompute — see
+        # `_ml_dispatch_prematch_pair` (matches `_format_win_model_line`,
+        # cyberscore_try.py:7979-7992).
+        prematch_source = _ml_dispatch_prematch_source(early_output, mid_output, all_output)
+        prematch_pair = _ml_dispatch_prematch_pair(index, prematch_source)
 
         lane_verdicts = {"all": None, "lane": None}
         if isinstance(radiant_heroes_and_pos, dict) and isinstance(dire_heroes_and_pos, dict):
@@ -12644,6 +12699,7 @@ def _ml_dispatch_tick(
             late=_ml_dispatch_verdict_from_pair(late_pair),
             all=_ml_dispatch_verdict_from_pair(lane_verdicts.get("all")),
             lane=_ml_dispatch_verdict_from_pair(lane_verdicts.get("lane")),
+            prematch=_ml_dispatch_verdict_from_pair(prematch_pair),
             prematch_index=index,
             kills_windows_open=_ml_dispatch_open_kills_windows(game_time_value),
             kills30_radiant=kills30_radiant,
@@ -12664,6 +12720,7 @@ def _ml_dispatch_tick(
             "late": _verdict_view(ctx.late),
             "all": _verdict_view(ctx.all),
             "lane": _verdict_view(ctx.lane),
+            "prematch": _verdict_view(ctx.prematch),
             "kills30": kills30_pair if isinstance(kills30_pair, dict) else None,
         }
         decisions_view = [

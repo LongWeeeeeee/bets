@@ -287,9 +287,10 @@ Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): пор
 ```
 
 **Правила владельца (12.09.2026, зафиксированы докстрингом `ml_dispatch.py`):**
-порог `ML_DISPATCH_MIN_CONF=0.60` на все пять моделей; андердог = сторона с
+порог `ML_DISPATCH_MIN_CONF=0.60` на все шесть моделей (Early NW, Early Win,
+Late, All, ML Laning, 🤖 Prematch); андердог = сторона с
 ELO ниже на `>=ML_DISPATCH_UNDERDOG_MIN_DIFF` (50); win-ставка идёт при
-поддержке хотя бы одной из `ML_DISPATCH_WIN_MODELS` (default `late,all,early_win`)
+поддержке хотя бы одной из `ML_DISPATCH_WIN_MODELS` (default `late,all,early_win,early_nw,prematch`)
 и при отсутствии вето Late/All за другую сторону (вето разрешается ПОСЛЕ
 поддержки, по каждой стороне отдельно — конфликт только если обе стороны
 пережили свою вето-проверку); kills-маркеты только при наличии U, через
@@ -306,8 +307,21 @@ E-290 (решение владельца 14.09.2026): обычное ожида�
 E-291 (владелец, 15.09.2026): одиночная ★ Early NW/Early Win без `all`/`late`
 в поддержке win-маркета больше не даёт Decision (`Skipped(reason=
 "early_solo_blocked")`, офлайн-WR 50-57% хуже ELO); откат — `ML_DISPATCH_EARLY_SOLO_BLOCK=0`.
-предматчевая 35-признаковая модель (`prematch_index`) НЕ применяется к
-ml_dispatch-решениям, несётся в `Ctx` только для лога.
+🤖 Prematch (владелец, 15.09.2026): 35-признаковая общая предматчевая модель —
+панельная строка «🤖 ML-модель: СТОРОНА NN.N% (оценка)» — подключена как
+шестая модель поддержки `ML_DISPATCH_WIN_MODELS` (не вето, не в
+`EARLY_ONLY_BLOCK_MODELS`/`KILLS_EARLY_MODELS`); офлайн она сильнейшая из всех
+(★≥0.60 → 71.2%, n=9389), а её собственный путь доставки
+(`prematch_model_bet`) заблокирован `_dispatch_mode_reject_for_delivery` с
+12.09.2026 (`DISPATCH_MODE=ml`) — это wiring возвращает её мнение в ставку.
+`Ctx.prematch` берёт то же значение тика, что печатает панельная строка
+(`_ml_dispatch_prematch_pair`, `base/cyberscore_try.py`), не пересчитывает;
+отказ модели (источник не `SOURCE_PREMATCH` или `index=0`) даёт
+`Ctx.prematch=None`. Панельная строка получает ★ при `conf>=ML_DISPATCH_MIN_CONF`
+тем же порогом, что и четыре draft-строки ниже. Раздельно живёт
+`prematch_index` (сырой индекс, только для лога, `evaluate` его не читает —
+design decision 3 докстринга `ml_dispatch.py`). Откат без деплоя —
+`ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw`.
 
 **Ветки ожидания при разногласии (владелец, 13.09.2026, дефолт
 `ML_DISPATCH_LATE_CONFLICT_MODE=wait`, подробности и данные —

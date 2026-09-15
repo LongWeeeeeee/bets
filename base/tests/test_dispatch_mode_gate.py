@@ -258,6 +258,88 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision
 
 
+def _patch_ml_dispatch_tick_deps_no_index_mock(monkeypatch, *, logged, ledger):
+    # Same as `_patch_ml_dispatch_tick_deps` but leaves the real
+    # `_ml_dispatch_extract_index_details`/`_ml_dispatch_prematch_source` in
+    # place, so an `early_output` block's own INDEX_KEY/SOURCE_KEY drive
+    # `ctx.prematch` for real (owner decision 15.09.2026).
+    monkeypatch.setattr(C.win_model_veto, "_heroes_vector", lambda r, d: tuple(range(10)))
+    monkeypatch.setattr(C.win_model_veto, "last_kills30", lambda index: None)
+    monkeypatch.setattr(_laning_serving_module, "verdicts", lambda *a, **k: {"all": None, "lane": None})
+    monkeypatch.setattr(
+        C, "_team_elo_base_rating_for_side",
+        lambda meta, side: 1500.0 if side == "radiant" else 1400.0,
+    )
+    monkeypatch.setattr(C, "_ml_dispatch_sent_ledger", lambda: ledger)
+    monkeypatch.setattr(
+        C, "_ml_dispatch_record_decisions",
+        lambda record, *, dedup_view: logged.append(record),
+    )
+    monkeypatch.setattr(C, "_deliver_and_persist_signal", lambda *a, **k: True)
+
+
+def _call_ml_dispatch_tick_with_early_output(match_key: str, early_output: dict) -> None:
+    C._ml_dispatch_tick(
+        match_key=match_key,
+        radiant_team_name="Team A",
+        dire_team_name="Team B",
+        live_league={},
+        top="", mid="", bot="",
+        protracker_payload=None,
+        team_elo_block="",
+        team_elo_meta={"radiant_base_rating": 1500.0, "dire_base_rating": 1400.0},
+        game_time_seconds=650.0,
+        radiant_lead=0,
+        early_output=early_output,
+        full_message_text="СТАВКА НА Team A x1\nTeam A VS Team B",
+    )
+
+
+def test_ml_dispatch_tick_ctx_prematch_verdict_matches_panel_line(monkeypatch) -> None:
+    # Ctx.prematch (owner decision 15.09.2026) must carry the SAME
+    # side/confidence the "🤖 ML-модель: ... (оценка)" panel line prints
+    # (`_format_win_model_line`, cyberscore_try.py:7979-7994): index=-17.1,
+    # SOURCE_PREMATCH -> "Dire 67.1%" -> ModelVerdict("Dire", 0.671).
+    monkeypatch.setenv("DISPATCH_MODE", "shadow")
+    logged: list = []
+    _patch_ml_dispatch_tick_deps_no_index_mock(monkeypatch, logged=logged, ledger=_FakeLedger())
+    index = -17.1
+    early_output = {
+        C.win_model_veto.INDEX_KEY: index,
+        C.win_model_veto.SOURCE_KEY: C.win_model_veto.SOURCE_PREMATCH,
+        C.win_model_veto.DETAILS_KEY: {
+            "index": index, "early_nw": None, "early_win": None, "late": None,
+        },
+    }
+    _call_ml_dispatch_tick_with_early_output(
+        "dltv.org/matches/ml-dispatch-tick-prematch.0", early_output,
+    )
+    assert len(logged) == 1
+    assert logged[0]["verdicts"]["prematch"] == {"side": "Dire", "confidence": 0.671}
+
+
+def test_ml_dispatch_tick_ctx_prematch_absent_when_source_is_not_prematch(monkeypatch) -> None:
+    # A draft-only source (model refused/not the 35-feature prematch model
+    # this tick) -- ctx.prematch stays None, same as the panel's "(оценка)"
+    # suffix not appearing.
+    monkeypatch.setenv("DISPATCH_MODE", "shadow")
+    logged: list = []
+    _patch_ml_dispatch_tick_deps_no_index_mock(monkeypatch, logged=logged, ledger=_FakeLedger())
+    index = -17.1
+    early_output = {
+        C.win_model_veto.INDEX_KEY: index,
+        C.win_model_veto.SOURCE_KEY: C.win_model_veto.SOURCE_DRAFT,
+        C.win_model_veto.DETAILS_KEY: {
+            "index": index, "early_nw": None, "early_win": None, "late": None,
+        },
+    }
+    _call_ml_dispatch_tick_with_early_output(
+        "dltv.org/matches/ml-dispatch-tick-prematch-refused.0", early_output,
+    )
+    assert len(logged) == 1
+    assert logged[0]["verdicts"]["prematch"] is None
+
+
 def test_ml_dispatch_tick_early_nw_wait_transition_and_delivery_dedup(monkeypatch):
     monkeypatch.setenv("DISPATCH_MODE", "ml")
     monkeypatch.setenv("ML_DISPATCH_EARLY_NW", "1")

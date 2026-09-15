@@ -320,6 +320,74 @@ def test_early_solo_block_e_env_toggle_restores_pre_e291_behavior():
     assert win[0].models_for == ["early_win"]
 
 
+# --- 🤖 Prematch as a sixth win model (owner decision 15.09.2026) ---------
+
+def test_prematch_solo_star_backs_a_side():
+    # (a) 🤖 Prematch wired in 15.09.2026 as a sixth win model -- unlike
+    # early_nw/early_win, it is NOT in EARLY_ONLY_BLOCK_MODELS, so a solo
+    # prematch star is a plain Decision, not early_solo_blocked (E-291).
+    ctx = base_ctx(prematch=ModelVerdict("Dire", 0.671))
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Dire"
+    assert win[0].models_for == ["prematch"]
+    assert win[0].expected_wr == 0.671
+
+
+def test_prematch_plus_both_early_stars_not_early_solo_blocked():
+    # (b) early_nw + early_win + prematch all star the same side; all/late
+    # are present but below threshold. prematch in models_for is enough to
+    # avoid early_solo_blocked (only early_nw/early_win alone would block).
+    ctx = base_ctx(
+        early_nw=ModelVerdict("Radiant", 0.70),
+        early_win=ModelVerdict("Radiant", 0.65),
+        prematch=ModelVerdict("Radiant", 0.66),
+        all=ModelVerdict("Radiant", 0.55),
+        late=ModelVerdict("Radiant", 0.50),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1 and win[0].target_side == "Radiant"
+    assert not any(s.reason == md.REASON_EARLY_SOLO_BLOCKED for s in result.skipped)
+    assert sorted(win[0].models_for) == ["early_nw", "early_win", "prematch"]
+
+
+def test_prematch_below_threshold_is_skipped():
+    # (c)
+    ctx = base_ctx(prematch=ModelVerdict("Radiant", 0.58))
+    result = evaluate(ctx, cfg())
+    assert result.decisions == []
+    skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
+    assert skip.reason == md.REASON_BELOW_THRESHOLD
+
+
+def test_prematch_radiant_vs_late_dire_vetoes_radiant():
+    # (d) prematch is not in KILLS_EARLY_MODELS, so it never triggers the
+    # 13.09.2026 late-conflict wait branch (that only watches
+    # early_nw/early_win) -- plain Late veto applies directly: Late backs
+    # Dire, vetoing Radiant's prematch support; Dire is backed off Late.
+    ctx = base_ctx(
+        prematch=ModelVerdict("Radiant", 0.671),
+        late=ModelVerdict("Dire", 0.65),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1 and win[0].target_side == "Dire"
+    radiant_skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
+    assert radiant_skip.reason == md.REASON_VETO
+
+
+def test_prematch_ignored_when_win_models_env_excludes_it():
+    # (e) explicit ML_DISPATCH_WIN_MODELS without prematch (the pre-15.09.2026
+    # rollback value) -- a solo prematch star gives no support.
+    ctx = base_ctx(prematch=ModelVerdict("Radiant", 0.90))
+    config = Config.from_env({"ML_DISPATCH_WIN_MODELS": "late,all,early_win,early_nw"})
+    assert "prematch" not in config.win_models
+    result = evaluate(ctx, config)
+    assert result.decisions == []
+
+
 # --- Kills: only with an underdog, both markets, KILLS_REQUIRE_ALL --------
 
 def test_kills_require_an_underdog():
@@ -546,7 +614,9 @@ def test_config_from_env_defaults_when_unset():
     result = Config.from_env({})
     assert result.min_conf == 0.60
     assert result.underdog_min_diff == 50.0
-    assert result.win_models == ("late", "all", "early_win", "early_nw")
+    # prematch appended to the default 15.09.2026 (E-291 context, owner
+    # decision): the 🤖 general prematch model becomes a sixth win model.
+    assert result.win_models == ("late", "all", "early_win", "early_nw", "prematch")
     assert result.kills_require_all is False
     assert result.timing_seconds == 600.0
     assert result.min_odds_margin == 0.0
