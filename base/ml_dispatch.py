@@ -20,7 +20,13 @@ Rules implemented (owner decisions, 12.09.2026 — see
   — owner rule 12.09.2026 16:50: "если хоть одна из Early NW / Early Win /
   All / Late имеет ★, сигнал посылается"; ★ in the panel is exactly
   ``confidence >= ML_DISPATCH_MIN_CONF``, so any starred model is support)
-  favors ``S`` at >= threshold. ``S`` is vetoed if Late or All (always
+  favors ``S`` at >= threshold. E-291 (owner decision 15.09.2026): a solo
+  ``early_nw``/``early_win`` star with no ``all``/``late`` support in
+  ``models_for`` is *not enough* on its own (offline 50-57%, worse than
+  ELO) and is skipped as ``early_solo_blocked`` instead of becoming a
+  Decision; a paired early+all/late star is unaffected. Toggle via
+  ``ML_DISPATCH_EARLY_SOLO_BLOCK`` (default on; "0"/"false"/"off" disables
+  it and restores the pre-E-291 behavior). ``S`` is vetoed if Late or All (always
   checked, independent of the win-models config) favors the *other*
   side at >= threshold. Vetoes are resolved PER SIDE FIRST, conflict
   SECOND (owner correction 12.09.2026, "правка 0"): a side is a real
@@ -162,6 +168,7 @@ VETO_MODELS = ("late", "all")
 DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw")
 ALLOWED_WIN_MODELS = ("late", "all", "early_win", "early_nw")
 KILLS_EARLY_MODELS = ("early_nw", "early_win")
+EARLY_ONLY_BLOCK_MODELS = ("early_nw", "early_win")
 
 REASON_BELOW_THRESHOLD = "below_threshold"
 REASON_VETO = "veto"
@@ -174,6 +181,7 @@ REASON_TOO_LATE = "too_late"
 REASON_LATE_CONFLICT_WAIT = "late_conflict_wait"
 REASON_KILLS30_MISSING = "kills30_missing"
 REASON_KILLS30_BELOW = "kills30_below_threshold"
+REASON_EARLY_SOLO_BLOCKED = "early_solo_blocked"
 
 RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
@@ -261,6 +269,7 @@ class Config:
     early_nw_enabled: bool = True
     early_nw_start_seconds: float = 240.0
     early_nw_min_lead: float = 1000.0
+    early_solo_block: bool = True
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -308,6 +317,9 @@ class Config:
             early_nw_enabled=str(env.get("ML_DISPATCH_EARLY_NW", "1")) == "1",
             early_nw_start_seconds=_float("ML_DISPATCH_EARLY_NW_START_SECONDS", 240.0),
             early_nw_min_lead=_float("ML_DISPATCH_EARLY_NW_MIN_LEAD", 1000.0),
+            early_solo_block=str(
+                env.get("ML_DISPATCH_EARLY_SOLO_BLOCK", "1")
+            ).strip().lower() not in ("0", "false", "off"),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -598,6 +610,15 @@ def _evaluate_win(
         key = _dedup_key(ctx, "win", side)
         if ctx.already_sent is not None and key in ctx.already_sent:
             skipped.append(Skipped("win", side, REASON_DEDUP, f"key={key} already sent"))
+            continue
+
+        if cfg.early_solo_block and all(
+            name in EARLY_ONLY_BLOCK_MODELS for name in models_for
+        ):
+            skipped.append(Skipped(
+                "win", side, REASON_EARLY_SOLO_BLOCKED,
+                f"models_for={models_for}; need all/late support (E-291)",
+            ))
             continue
 
         expected_wr = max(ctx.model(name).confidence for name in models_for)

@@ -191,9 +191,12 @@ def test_owner_example_8995161253_map2_backs_dire_with_all_four_stars():
 
 
 def test_lone_early_nw_star_backs_the_side_under_default_config():
-    # Only Early NW is starred; Late/All/Early Win are present but below
-    # the threshold on the SAME side (no veto). Previously early_nw was
-    # not in DEFAULT_WIN_MODELS and this map produced no decision.
+    # E-291 (owner decision 15.09.2026, adapted from the pre-E-291 test of
+    # the same name): only Early NW is starred; Late/All/Early Win are
+    # present but below the threshold on the SAME side (no veto). Before
+    # 15.09.2026 this produced a Decision with models_for == ["early_nw"];
+    # now a solo early_nw/early_win star (no all/late support) is blocked
+    # as early_solo_blocked instead (offline 50-57%, worse than ELO).
     ctx = base_ctx(
         game_time=900.0,
         early_nw=ModelVerdict("Radiant", 0.66),
@@ -203,27 +206,118 @@ def test_lone_early_nw_star_backs_the_side_under_default_config():
     )
     result = evaluate(ctx, cfg())
     win = [d for d in result.decisions if d.market == "win"]
-    assert len(win) == 1 and win[0].target_side == "Radiant"
-    assert win[0].models_for == ["early_nw"]
+    assert win == []
+    skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
+    assert skip.reason == md.REASON_EARLY_SOLO_BLOCKED
 
 
 def test_any_one_of_four_win_models_confirms_the_favorite():
-    for model_name in ("late", "all", "early_win", "early_nw"):
+    # E-291: late/all alone still confirm a Decision; early_win/early_nw
+    # alone are now blocked (early_solo_blocked) since they have no
+    # all/late support in models_for -- adapted from the pre-15.09.2026
+    # version of this test, which expected a Decision for all four.
+    for model_name in ("late", "all"):
         ctx = base_ctx(elo_radiant=1550.0, elo_dire=1500.0,
                         **{model_name: ModelVerdict("Radiant", 0.61)})
         result = evaluate(ctx, cfg())
         win = [d for d in result.decisions if d.market == "win"]
         assert len(win) == 1 and win[0].target_side == "Radiant", model_name
+    for model_name in ("early_win", "early_nw"):
+        ctx = base_ctx(elo_radiant=1550.0, elo_dire=1500.0,
+                        **{model_name: ModelVerdict("Radiant", 0.61)})
+        result = evaluate(ctx, cfg())
+        win = [d for d in result.decisions if d.market == "win"]
+        assert win == [], model_name
+        skip = next(s for s in result.skipped
+                    if s.market == "win" and s.side == "Radiant")
+        assert skip.reason == md.REASON_EARLY_SOLO_BLOCKED, model_name
 
 
 def test_any_one_of_four_win_models_confirms_the_underdog():
-    for model_name in ("late", "all", "early_win", "early_nw"):
+    # E-291: same split as the favorite test above.
+    for model_name in ("late", "all"):
         ctx = base_ctx(elo_radiant=1400.0, elo_dire=1500.0,
                         **{model_name: ModelVerdict("Radiant", 0.61)})
         result = evaluate(ctx, cfg())
         assert result.underdog_side == "Radiant"
         win = [d for d in result.decisions if d.market == "win"]
         assert len(win) == 1 and win[0].target_side == "Radiant", model_name
+    for model_name in ("early_win", "early_nw"):
+        ctx = base_ctx(elo_radiant=1400.0, elo_dire=1500.0,
+                        **{model_name: ModelVerdict("Radiant", 0.61)})
+        result = evaluate(ctx, cfg())
+        assert result.underdog_side == "Radiant"
+        win = [d for d in result.decisions if d.market == "win"]
+        assert win == [], model_name
+        skip = next(s for s in result.skipped
+                    if s.market == "win" and s.side == "Radiant")
+        assert skip.reason == md.REASON_EARLY_SOLO_BLOCKED, model_name
+
+
+# --- E-291: solo early_nw/early_win win-decisions are blocked -------------
+
+def test_early_solo_block_a_only_early_win_star_is_blocked():
+    # (a) Only early_win is starred for Radiant; nothing else clears the
+    # threshold -> no win Decision, Skipped early_solo_blocked for Radiant.
+    ctx = base_ctx(early_win=ModelVerdict("Radiant", 0.70))
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert win == []
+    skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
+    assert skip.reason == md.REASON_EARLY_SOLO_BLOCKED
+
+
+def test_early_solo_block_b_both_early_models_still_blocked_without_all_or_late():
+    # (b) early_nw + early_win both star Radiant; all/late are present but
+    # below threshold -> still blocked (models_for has no all/late).
+    ctx = base_ctx(
+        early_nw=ModelVerdict("Radiant", 0.70),
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.55),
+        late=ModelVerdict("Radiant", 0.50),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert win == []
+    skip = next(s for s in result.skipped if s.market == "win" and s.side == "Radiant")
+    assert skip.reason == md.REASON_EARLY_SOLO_BLOCKED
+
+
+def test_early_solo_block_c_early_plus_all_still_confirms():
+    # (c) early_win + all both star Radiant -> Decision as before, with
+    # both models in models_for (paired early+all/late is unaffected).
+    ctx = base_ctx(
+        early_win=ModelVerdict("Radiant", 0.65),
+        all=ModelVerdict("Radiant", 0.70),
+    )
+    result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1 and win[0].target_side == "Radiant"
+    assert sorted(win[0].models_for) == ["all", "early_win"]
+
+
+def test_early_solo_block_d_lone_late_and_lone_all_are_unaffected():
+    # (d) A lone Late star and a lone All star still produce Decisions
+    # (owner: Late/All-only behavior is unchanged by E-291).
+    ctx_late = base_ctx(late=ModelVerdict("Radiant", 0.65))
+    win_late = [d for d in evaluate(ctx_late, cfg()).decisions if d.market == "win"]
+    assert len(win_late) == 1 and win_late[0].target_side == "Radiant"
+
+    ctx_all = base_ctx(all=ModelVerdict("Radiant", 0.65))
+    win_all = [d for d in evaluate(ctx_all, cfg()).decisions if d.market == "win"]
+    assert len(win_all) == 1 and win_all[0].target_side == "Radiant"
+
+
+def test_early_solo_block_e_env_toggle_restores_pre_e291_behavior():
+    # (e) ML_DISPATCH_EARLY_SOLO_BLOCK=0 is the rollback: a solo early_win
+    # star produces a Decision again, like before 15.09.2026.
+    ctx = base_ctx(early_win=ModelVerdict("Radiant", 0.70))
+    config = Config.from_env({"ML_DISPATCH_EARLY_SOLO_BLOCK": "0"})
+    assert config.early_solo_block is False
+    result = evaluate(ctx, config)
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1 and win[0].target_side == "Radiant"
+    assert win[0].models_for == ["early_win"]
 
 
 # --- Kills: only with an underdog, both markets, KILLS_REQUIRE_ALL --------
@@ -456,6 +550,7 @@ def test_config_from_env_defaults_when_unset():
     assert result.kills_require_all is False
     assert result.timing_seconds == 600.0
     assert result.min_odds_margin == 0.0
+    assert result.early_solo_block is True
 
 
 # --- laning_serving.verdicts() and the ★ marker ----------------------------
