@@ -229,6 +229,22 @@ Late-сторона при 51–58% требует ≥1.9–2.0.
   **без гейта** (§F, вариант `none`): any ≥0.60 — 62.5% (8084), solo_strict — 60.5% (557), ≥0.70 — 70.6%.
   Решение владельца 15.09: одиночную Late пока не трогать; вопрос «ждать 1860 с + гейт таблицы» открыт.
 
+### Внедрение 2: 🤖 prematch как win-модель диспетчера (15.09, 21:21 MSK)
+
+Повод — карта 9000517214.59 (Stray Club vs Cooman Club): Early NW D0.83★ + Early Win D0.60★ отсеклись как
+`early_solo_blocked`, хотя 🤖 дала Dire 0.671 (`prematch_model_eval.jsonl`: bet=True, reason=ok). При этом
+собственный путь 🤖 (`prematch_model_bet`) молчит с 12.09 14:56: гейт `_dispatch_mode_reject_for_delivery`
+(`cyberscore_try.py:12216-12240`) в `DISPATCH_MODE=ml` режет всё с origin ≠ ml_dispatch. Замер правила владельца
+(`owner_rule_enw_ew_pm.txt`, 14 942 карты): enw≥.60+ew≥.60+🤖≥.60 одна сторона — 72.2% (3257); + all,late той же
+стороны — 74.1% (1889); те же ранние без согласия 🤖 и без all/late★ — 53.6% (3775), при 🤖 против — 31.5% (880).
+Работу делает 🤖, поэтому вместо исключения для ранних она подключена как шестая win-модель (коммит e9b73b8):
+`Ctx.prematch` = сторона/уверенность той же строки панели (`sign(index)`, `50+|index|`), только при
+`source == SOURCE_PREMATCH`; `prematch` в `ALLOWED/DEFAULT_WIN_MODELS`, не вето-модель и не «ранняя», поэтому
+связка ранние+🤖 проходит `early_solo_block`; панельная строка 🤖 получает ★ при ≥ `ML_DISPATCH_MIN_CONF`;
+audit `verdicts.prematch`. Деплой: serv1 HEAD e9b73b8, рестарт 21:20:59 MSK, MainPID 2074358, 119 тестов
+диспетчера зелёные на 3.12. Откат без кода — drop-in `ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw`.
+Не проверено: калибровка 🤖 в бою (офлайн-реплей 0.722 → 71.2%); тайминг 🤖-решения — обычный `wait_600`.
+
 ## Выводы
 
 1. **Не работают соло:** Early NW (монетка) и Early Win (хуже ELO-фаворита на тех же картах). Одна ★ Early Win
