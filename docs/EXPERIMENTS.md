@@ -911,3 +911,31 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
   источники меток одного провайдера, нет исполненной цены. Не обучать
   калибровку на этой проверке. Следующий шаг — полный журнал прогнозов/исходов
   с match ID и branch, затем свежая общая проверка ML против ELO-only.
+
+## E-293 — зеркальный драфт: проверка сторон у драфт-моделей (15.09.2026)
+
+- **Повод:** live-панель 9000738531 (Rostik999 Club = Radiant: Ursa/Lion/Centaur/
+  Techies/AA; Rostikfacekid Club = Dire: Anti-Mage/Rubick/Pudge/WR/Oracle).
+  Владелец: «AM у соперника, а Late показывает на Rostik999 — не перепутаны ли стороны?»
+- **Стороны в данных:** GC `runtime/sourcetv_matches.json` radiant_team_id=10164431,
+  OpenDota `teams/10164431` = Rostik999 Club; все 5 radiant-аккаунтов играли за
+  Rostik999 в 8995943806, все 5 dire — за Rostikfacekid в 8997487287. Имена в бой
+  идут от GC-id (`cyberscore_try.py:39389`), не от порядка команд DLTV. Не перепутаны.
+- **Результат (локальные модели, symmetry-only):** `win_model_veto.win_index_draft`
+  (`base/win_model_veto.py:1258`): orig p_R 0.704 / logit +0.868, mirror 0.355 / −0.596;
+  сумма логитов +0.27 → Radiant-интерцепт ≈ +0.14 логита (≈+3 пп), героевая часть
+  ≈ ±0.73 — вердикт держится на героях. `late_win_model.verdict`
+  (`base/late_win_model.py:126`): orig Radiant 0.690, mirror Dire 0.677 (p_R 0.323),
+  антисимметрия |Δ| 0.013. Абсолютные значения ≠ прод (prod draft_logit +0.716,
+  late 0.669): локальный каталог модели отличается от serv1.
+- **Харнесс/запуск:** `venv_catboost/bin/python3 runtime/experiments/draft-cp/mirror_check_9000738531.py`
+  → `runtime/artifacts/draft-cp/mirror_check_9000738531.{json,md,log}` (<1 мин).
+- **Где искать ошибку:** одна карта, не выборка; словарные Early/Late/All метрики
+  (`base/functions.py:4473 synergy_and_counterpick`) НЕ проверены — dict-файлы
+  early/late/post_lane локально отсутствуют, прогонять на serv1 с копией словарей;
+  All-модель диспетчера (`base/ml_dispatch.py:255`) пропущена — нужны live-признаки;
+  p-пространство у win_index_draft несимметрично на 0.06 — это side-prior пабов,
+  не путаница, но если интерцепт нужен нулевым, править калибровку, не панель.
+  Ставка диспетчера на 10:05 (rule `win_single_model_confirm`, late/all/prematch
+  0.669/0.672/0.674 при NW −2.8k) — три однотипные модели, не независимое
+  подтверждение; исход карты на момент записи не известен.
