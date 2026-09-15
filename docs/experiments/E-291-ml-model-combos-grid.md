@@ -215,6 +215,20 @@ early_nw/early_win +0, all +2, late (гейт) +12 (79.9% при 0.60/0.60, n=87
 Для Late-связок кэф надо смотреть по ветке состояния на 31-й: in-play цена ведущей стороны будет ниже 1.13, а отстающая
 Late-сторона при 51–58% требует ≥1.9–2.0.
 
+### Внедрение и поправка к предпосылке о Late (15.09, 18:49 MSK)
+
+- **Внедрено:** одиночная ★ Early NW / Early Win больше не даёт win-Decision — `base/ml_dispatch.py`
+  `_evaluate_win` → `Skipped(reason="early_solo_blocked")`, если в `models_for` нет `all`/`late`
+  (коммит 391fa34, merge 7dec7ee; serv1 HEAD 7dec7ee, рестарт `scripts/run/restart_cyberscore.sh`,
+  MainPID 2001050, `DISPATCH_MODE=ml`, 112 тестов зелёные на python 3.12). Откат без кода —
+  drop-in `ML_DISPATCH_EARLY_SOLO_BLOCK=0` + рестарт. Ветки ожидания 1860 с, kills и вето не менялись.
+- **Поправка:** гейт «Late только при late dispatch 31+ с NW-порогом» в проде применяется к legacy
+  STAR-пути и к ветке конфликта (`_evaluate_win_late_conflict`), но НЕ к одиночной Late★ на plain path
+  ML-диспетчера: та стреляет по `wait_600` (`_timing_for_win`, `ml_dispatch.py:455-462`); живой лог serv1 —
+  `models_for=['late']` на 649/709/831 с (карта 8995038826). Для текущего прода релевантны цифры Late
+  **без гейта** (§F, вариант `none`): any ≥0.60 — 62.5% (8084), solo_strict — 60.5% (557), ≥0.70 — 70.6%.
+  Решение владельца 15.09: одиночную Late пока не трогать; вопрос «ждать 1860 с + гейт таблицы» открыт.
+
 ## Выводы
 
 1. **Не работают соло:** Early NW (монетка) и Early Win (хуже ELO-фаворита на тех же картах). Одна ★ Early Win
