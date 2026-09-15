@@ -37,3 +37,40 @@ Env overrides (все опциональны):
 - **Presence-mode** (если включён): multi-bookmaker; presence may still use subprocess/Selenium helpers when Camoufox import unavailable — never for odds prepare/send.
 - Прокси-пулы для обхода лимитов (настраиваются в `base/keys.py`).
 - Lock-файлы — против multiple instances. Sharded stats — оптимизация больших lookup-таблиц.
+
+## Обновление browser 152.0.4-beta.30 (2026-09-15)
+
+Официальная beta.30 воспроизводит зависание native click с `humanize=True`.
+Для обновления используется отдельно обозначенная локальная сборка
+`beta.30+inputfix35b45c1`: официальный Linux x86_64 архив плюс ровно четыре
+Juggler JS-файла принятого upstream-фикса
+[35b45c1](https://github.com/daijro/camoufox/pull/756).
+Это не неизменённый официальный релиз. Python wrapper — `camoufox==0.5.6`,
+Playwright остаётся `1.60.0`; Python на serv1 — 3.12.
+
+`scripts/ops/patch_camoufox_beta30_input.py SOURCE UPSTREAM_DIR OUTPUT`
+создаёт отдельный `omni.ja`: `UPSTREAM_DIR` должен указывать на
+`additions/juggler` из точного commit `35b45c145c1a04504fe8cacb42ddc03f4cd2ca93`.
+Скрипт проверяет хэши трёх исходных и четырёх новых файлов, затем все записи
+готового архива; существующие SOURCE/OUTPUT не перезаписывает.
+Готовый OUTPUT устанавливается как `omni.ja` в отдельной копии браузера
+для проверки. Соседний `browser/omni.ja` не меняется.
+
+Wrapper 0.5 использует multiversion cache: `.0.5_FLAG`, `config.json` с
+`active_version`, каталог `browsers/official/<version>` с `version.json`.
+**Не запускать новый wrapper на старом плоском cache:** без `.0.5_FLAG`
+он удаляет старое дерево при миграции. Сначала подготовить и проверить
+отдельный cache через `XDG_CACHE_HOME`, сохранить старый cache целиком,
+затем переключить каталог при остановленных `cyberscore` и `avito-monitor`.
+Fingerprint и cookies Avito сохраняются; копия persistent profile делается
+после остановки Avito и до первого запуска Firefox 152.
+
+Допуск: исходный click-reproducer, smoke init-script/DOM/MutationObserver/
+reload и persistent fingerprint, upstream `near-edge-mouse-deadlock.py`,
+`mouse-boundary-sweep.py`, `input-ack-backstop.py`. После переключения:
+`pip check`, import-smoke, стандартный `restart_cyberscore.sh`, старт Avito,
+проверка executable path, новых PID, `NRestarts=0` и свежих рабочих данных.
+Rollback возвращает вместе wrapper 0.4.11, старый browser cache и профиль
+Avito до миграции; не открывать обновлённый профиль старым Firefox.
+Артефакты проверки и резервные копии:
+`runtime/artifacts/odds-winline/camoufox-upgrade-20260915-beta30/`.
