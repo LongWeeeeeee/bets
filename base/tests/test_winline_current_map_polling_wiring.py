@@ -20,6 +20,7 @@ Contract:
 from __future__ import annotations
 
 import ast
+import json
 import os
 import sys
 import threading
@@ -118,6 +119,47 @@ def _clear_wiring_state() -> None:
         st = getattr(cs, attr, None)
         if isinstance(st, dict):
             st.clear()
+
+
+def test_yangon_card_absence_does_not_announce_map_end(
+        tmp_path, monkeypatch, _drain_notifications):
+    """15 Sep: card_absent closed all maps with stale 17:26/+4002 stats."""
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "winline_yangon_yache_map3_20260915.json").read_text())
+    attempt = fixture["first_attempt"]
+    _clear_wiring_state()
+    monkeypatch.setattr(cs, "_winline_current_map_pollers", {})
+    monkeypatch.setattr(cs, "_winline_odds_notify_state", {})
+    monkeypatch.setattr(cs, "_winline_refresh_from_bridge_snapshot", lambda: None)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **kw: True)
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_CURRENT_MAP_CONTINUOUS_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sent = []
+    monkeypatch.setattr(cs, "send_winline_odds_message",
+                        lambda message, **kw: (sent.append(message), True)[1])
+    clock = FakeClock(wall=attempt["attempt_started_at"])
+    cs._winline_overview_inject_for_tests("YANGON GALACTICOS YACHE123")
+    key = cs.ensure_winline_current_map_polling(
+        series=attempt["series"], map_num=3, team1=attempt["team1"],
+        team2=attempt["team2"], producer_pid=1, producer_start_generation="g1",
+        monotonic_fn=clock.monotonic, wall_fn=clock.time,
+        is_map_current=cs._winline_card_is_current,
+        collector=lambda **kw: dict(attempt), evidence_path=tmp_path / "poller.json")
+    assert key
+    cs.tick_winline_current_map_polling(monotonic_fn=clock.monotonic, wall_fn=clock.time)
+    assert any("🆕 Winline · карта 3" in m for m in sent)
+    cs._winline_overview_inject_for_tests(fixture["absent_overview_text"])
+    clock.advance(60)
+    cs.tick_winline_current_map_polling(monotonic_fn=clock.monotonic, wall_fn=clock.time)
+    assert not any("карта завершена" in m for m in sent), sent
+    # Silence only confirms that polling stopped, never that a team won.
+    clock.advance(cs._winline_stop_notice_hold_seconds() + 1)
+    cs._winline_flush_pending_stop_notices(
+        monotonic_fn=clock.monotonic,
+        send_fn=lambda message, **kw: (sent.append(message), True)[1])
+    assert any("конец карты не подтверждён" in m for m in sent), sent
+    assert not any("карта завершена" in m for m in sent), sent
 
 
 def _accepted_collector_result(**overrides: Any) -> Dict[str, Any]:

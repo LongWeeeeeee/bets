@@ -4069,9 +4069,12 @@ def _winline_build_odds_message(
         lines.append(
             f"{_winline_odds_side(prev_p1, p1)}   |   {_winline_odds_side(prev_p2, p2)}"
         )
+    last_observation = kind in {"terminal", "stopped", "winner"}
     if net_worth:
-        lines.append(f"💰 {net_worth}")
-    lines.append(f"🕐 {stamp}")
+        gold_label = "по последним данным: " if last_observation else ""
+        lines.append(f"💰 {gold_label}{net_worth}")
+    clock_label = "последнее известное время: " if last_observation else ""
+    lines.append(f"🕐 {clock_label}{stamp}")
     return "\n".join(lines)
 
 
@@ -19611,7 +19614,10 @@ def _winline_card_is_current(**kwargs: Any) -> Any:
         return True
     if all(name and name in flat for name in names):
         return {"current": True, "confirmed": True, "map_num": map_num}
-    return {"current": False, "reason": "card_absent", "map_num": map_num}
+    # The poller's legacy normalizer treats a named reason as proven unless
+    # explicitly told otherwise. A missing card only ends this observation.
+    return {"current": False, "reason": "card_absent", "proven": False,
+            "map_num": map_num}
 
 
 def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
@@ -19701,6 +19707,20 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                       if isinstance(r, dict) and r.get("kind") == "map"
                       and r.get("map_num") and r.get("has_prices")][:rows_cap]
             if not priced:
+                # Market availability must not freeze the last live clock.
+                # Refresh/freeze existing observations without starting a
+                # priced-map poller or announcing an unpriced draft.
+                # A failed prefetch must not trigger another request per card.
+                if dltv_series is not None:
+                    try:
+                        _winline_card_dltv_draft_notify(
+                            league=league, team1=team1, team2=team2, map_num=None,
+                            series_key=_winline_card_series_key(league, team1, team2),
+                            snapshot=dltv_series, bridge_live_pairs=bridge_live_pairs,
+                            clock_only=True,
+                        )
+                    except Exception:
+                        pass
                 summary["skipped_rows"] += 1
                 continue
             for row in priced:
@@ -20650,6 +20670,7 @@ def _winline_card_dltv_draft_notify(
     snapshot: Any = None,
     match_fetcher: Any = None,
     bridge_live_pairs: Any = None,
+    clock_only: bool = False,
 ) -> str:
     """DLTv-подпитка карточного ряда: часы (🕐/💰) + драфт, когда мост слеп.
 
@@ -20662,6 +20683,8 @@ def _winline_card_dltv_draft_notify(
     только если пару НЕ видит вживую мост (`bridge_live_pairs` — иначе
     мостовой разбор драфта главный и дубль не нужен). Fail-open: пары моста
     неизвестны — драфт разрешён.
+    `clock_only=True` обновляет/замораживает часы без отправки драфта;
+    используется для live-карточек, в которых сейчас нет map-ряда с ценами.
     Возвращает "sent" (отправлен сейчас), "duplicate" (уже был) или
     "none". Счётчик sweep считает только "sent".
     """
@@ -20706,6 +20729,8 @@ def _winline_card_dltv_draft_notify(
             _winline_reset_dltv_clock(key_base, current_map)
             print(f"📡 DLTv-live: clock not started (draft?) "
                   f"match={found['match_id']}")
+        if clock_only:
+            return "none"
         draft = _dltv_parse_live_draft(payload)
         if not draft:
             print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
