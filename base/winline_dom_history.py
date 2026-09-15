@@ -25,6 +25,8 @@ import uuid
 LOG = logging.getLogger(__name__)
 MAX_INPUT_CHARS = 4_500_000
 STATUS_RESERVE_BYTES = 65536
+V1_SCHEMA = "winline_dom_history.v1"
+V2_SCHEMA = "winline_dom_history.v2"
 
 
 def enabled() -> bool:
@@ -39,6 +41,69 @@ def _number(name: str, default: float, minimum: float) -> float:
         return max(minimum, value) if math.isfinite(value) else default
     except (TypeError, ValueError):
         return default
+
+
+def _archive_file(root, name):
+    """Return a file below *root* without accepting a traversal from an index."""
+    root = Path(root).resolve()
+    target = (root / str(name)).resolve()
+    if os.path.commonpath((str(root), str(target))) != str(root):
+        raise ValueError("archive reference escapes root")
+    return target
+
+
+def read_record(root, index):
+    """Read a v1 or v2 index entry and return a replay-ready full record.
+
+    v2 keeps the raw HTML in a content-addressed gzip blob.  The returned
+    record deliberately has the same ``inputs['html']`` shape as v1 so replay
+    callers need no format branch.  A missing or altered referenced blob raises
+    a normal file/decompression error or ``ValueError`` rather than replaying
+    unverified input.
+    """
+    if not isinstance(index, dict) or not index.get("file"):
+        raise ValueError("archive index entry has no record file")
+    packed = _archive_file(root, index["file"]).read_bytes()
+    expected = index.get("sha256")
+    if expected and hashlib.sha256(packed).hexdigest() != expected:
+        raise ValueError("archive record SHA-256 mismatch")
+    try:
+        record = json.loads(gzip.decompress(packed))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("archive record is unreadable") from exc
+    if not isinstance(record, dict):
+        raise ValueError("archive record is not an object")
+
+    if record.get("schema") == V2_SCHEMA:
+        ref = record.get("html_ref")
+        if not isinstance(ref, dict) or not ref.get("file") or not ref.get("sha256"):
+            raise ValueError("archive v2 record has no valid HTML reference")
+        blob = _archive_file(root, ref["file"]).read_bytes()
+        if ref.get("gzip_sha256") and hashlib.sha256(blob).hexdigest() != ref["gzip_sha256"]:
+            raise ValueError("archive HTML blob gzip SHA-256 mismatch")
+        try:
+            html_bytes = gzip.decompress(blob)
+            html = html_bytes.decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ValueError("archive HTML blob is unreadable") from exc
+        if hashlib.sha256(html_bytes).hexdigest() != ref["sha256"]:
+            raise ValueError("archive HTML blob SHA-256 mismatch")
+        inputs = record.get("inputs")
+        if not isinstance(inputs, dict):
+            raise ValueError("archive v2 record has no inputs")
+        record["inputs"] = dict(inputs, html=html)
+        return record
+
+    if record.get("schema") != V1_SCHEMA:
+        raise ValueError("unsupported archive record schema")
+    inputs = record.get("inputs")
+    if not isinstance(inputs, dict) or not isinstance(inputs.get("html"), str):
+        raise ValueError("archive v1 record has no HTML")
+    expected_html = index.get("html_sha256") or record.get("html_sha256")
+    actual_html = hashlib.sha256(inputs["html"].encode("utf-8")).hexdigest()
+    if expected_html and actual_html != expected_html:
+        raise ValueError("archive v1 HTML SHA-256 mismatch")
+    return record
 
 
 class WinlineDOMHistory:
@@ -83,7 +148,7 @@ class WinlineDOMHistory:
                 return None
             capture_id = uuid.uuid4().hex
             record = {
-                "schema": "winline_dom_history.v1", "capture_id": capture_id,
+                "schema": V2_SCHEMA, "capture_id": capture_id,
                 "queued_wall": time.time(), "producer_pid": os.getpid(),
                 "attempt": copy.deepcopy(attempt), "inputs": dict(inputs),
                 "result": copy.deepcopy({k: v for k, v in result.items()
@@ -126,19 +191,38 @@ class WinlineDOMHistory:
 
     def _write_record(self, record):
         html_bytes = record["inputs"]["html"].encode("utf-8")
-        record["html_sha256"] = hashlib.sha256(html_bytes).hexdigest()
-        packed = gzip.compress(json.dumps(record, ensure_ascii=False).encode("utf-8"),
+        html_sha256 = hashlib.sha256(html_bytes).hexdigest()
+        blob_name = "blobs/" + html_sha256 + ".html.gz"
+        blob = gzip.compress(html_bytes, compresslevel=1, mtime=0)
+        blob_target = self.root / blob_name
+        if blob_target.exists():
+            # Never overwrite an existing evidence blob.  A collision or
+            # corruption must be visible rather than silently changing history.
+            existing = gzip.decompress(blob_target.read_bytes())
+            if hashlib.sha256(existing).hexdigest() != html_sha256:
+                raise ValueError("existing HTML blob SHA-256 mismatch")
+            new_blob = b""
+        else:
+            new_blob = blob
+        stored = dict(record)
+        stored["inputs"] = dict(record["inputs"])
+        stored["inputs"].pop("html", None)
+        stored["html_ref"] = dict(file=blob_name, sha256=html_sha256,
+                                  gzip_sha256=hashlib.sha256(blob).hexdigest(),
+                                  bytes=len(blob))
+        packed = gzip.compress(json.dumps(stored, ensure_ascii=False).encode("utf-8"),
                                compresslevel=1, mtime=0)
         name = record["capture_id"] + ".json.gz"
         index = dict(capture_id=record["capture_id"], file=name,
                      sha256=hashlib.sha256(packed).hexdigest(),
-                     html_sha256=record["html_sha256"], bytes=len(packed),
+                     html_sha256=html_sha256, bytes=len(packed),
+                     html_file=blob_name, html_bytes=len(blob),
                      capture_wall=record["inputs"].get("captured_wall"),
                      canonical_key=record["attempt"].get("canonical_key"),
                      attempt_index=record["attempt"].get("attempt_index"),
                      market_status=record["attempt"].get("market_status"))
         line = (json.dumps(index, ensure_ascii=False) + "\n").encode("utf-8")
-        required = len(packed) + len(line)
+        required = len(new_blob) + len(packed) + len(line)
         if self._stats["used_bytes"] + required + STATUS_RESERVE_BYTES > self.max_bytes:
             with self._lock:
                 self._stats["budget_exhausted"] = True
@@ -152,6 +236,12 @@ class WinlineDOMHistory:
             self._stats["used_bytes"] += required
         target = self.root / name
         tmp = self.root / (name + ".tmp")
+        if new_blob:
+            blob_target.parent.mkdir(exist_ok=True)
+            blob_tmp = blob_target.with_name(blob_target.name + ".tmp")
+            with blob_tmp.open("xb") as fh:
+                fh.write(new_blob)
+            os.replace(blob_tmp, blob_target)
         with tmp.open("xb") as fh:
             fh.write(packed)
         os.replace(tmp, target)
@@ -167,7 +257,7 @@ class WinlineDOMHistory:
             self.root.mkdir(parents=True, exist_ok=True)
             lock_file = (self.root / "writer.lock").open("a")
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            used = sum(p.stat().st_size for p in self.root.iterdir() if p.is_file())
+            used = sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
             with self._lock:
                 self._stats["used_bytes"] = used
             while not self._stop.is_set() or not self._queue.empty():
@@ -175,9 +265,11 @@ class WinlineDOMHistory:
                     record = self._queue.get(timeout=0.25)
                 except queue.Empty:
                     continue
+                status_changed = False
                 try:
                     if not self._disabled:
                         self._write_record(record)
+                        status_changed = True
                     else:
                         with self._lock:
                             self._stats["dropped"] += 1
@@ -192,12 +284,14 @@ class WinlineDOMHistory:
                             # Do not invalidate a newer capture already enqueued.
                             self._samples.pop(key, None)
                     LOG.warning("Winline DOM history write failed: %s", exc)
+                    status_changed = True
                 finally:
                     self._queue.task_done()
-                try:
-                    self._write_status()
-                except OSError as exc:
-                    LOG.warning("Winline DOM history status write failed: %s", exc)
+                if status_changed:
+                    try:
+                        self._write_status()
+                    except OSError as exc:
+                        LOG.warning("Winline DOM history status write failed: %s", exc)
         except Exception as exc:
             with self._lock:
                 self._disabled = True

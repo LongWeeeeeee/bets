@@ -7,12 +7,23 @@ from pathlib import Path
 import sys
 import threading
 import time
+import types
 
 import pytest
 
 BASE = Path(__file__).resolve().parents[1]
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
+
+# Isolated worktrees deliberately exclude the ignored production credentials.
+# The imported parser/poller only need these names during archive unit tests.
+if "keys" not in sys.modules:
+    test_keys = types.ModuleType("keys")
+    test_keys.api_to_proxy = {}
+    test_keys.BOOKMAKER_PROXY_URL = None
+    test_keys.BOOKMAKER_PROXY_POOL = []
+    test_keys.DLTV_PROXY_POOL = []
+    sys.modules["keys"] = test_keys
 
 import bookmaker_selenium_odds as bk
 import cyberscore_try as cs
@@ -53,14 +64,7 @@ def _result(status="open"):
 
 def _records(root):
     index = [json.loads(s) for s in (root / "index.jsonl").read_text().splitlines()]
-    records = []
-    for row in index:
-        packed = (root / row["file"]).read_bytes()
-        assert hashlib.sha256(packed).hexdigest() == row["sha256"]
-        record = json.loads(gzip.decompress(packed))
-        assert hashlib.sha256(record["inputs"]["html"].encode()).hexdigest() == row["html_sha256"]
-        records.append(record)
-    return records
+    return [history.read_record(root, row) for row in index]
 
 
 def test_stable_prices_are_sampled_and_five_second_closure_is_preserved(tmp_path, monkeypatch):
@@ -132,6 +136,103 @@ def test_budget_counts_existing_evidence_and_never_deletes_it(tmp_path):
     assert status["written"] == 0
     assert old.read_bytes() == before
     assert list(tmp_path.glob("*.json.gz")) == [old]
+
+
+def test_v2_deduplicates_html_but_retains_each_attempt_metadata(tmp_path):
+    writer = history.WinlineDOMHistory(tmp_path, interval_s=0)
+    assert writer.submit(_attempt(172), _inputs(), _result())
+    assert writer.submit(_attempt(173), _inputs(), _result("closed"))
+    assert writer.close(timeout=3)
+
+    index = [json.loads(s) for s in (tmp_path / "index.jsonl").read_text().splitlines()]
+    records = _records(tmp_path)
+    blobs = list((tmp_path / "blobs").glob("*.html.gz"))
+    assert len(index) == len(records) == 2
+    assert len(blobs) == 1
+    assert [record["attempt"]["attempt_index"] for record in records] == [172, 173]
+    assert [record["result"]["market_status"] for record in records] == ["open", "closed"]
+    assert all(record["schema"] == history.V2_SCHEMA for record in records)
+    assert all(record["inputs"]["html"] == HTML for record in records)
+    assert all(row["html_file"] == "blobs/" + row["html_sha256"] + ".html.gz" for row in index)
+
+
+def test_reader_accepts_v1_and_rejects_missing_or_corrupt_v2_html(tmp_path):
+    v1 = dict(schema=history.V1_SCHEMA, capture_id="old", attempt=_attempt(),
+              inputs=_inputs(), result=_result())
+    v1["html_sha256"] = hashlib.sha256(HTML.encode()).hexdigest()
+    packed = gzip.compress(json.dumps(v1).encode(), mtime=0)
+    (tmp_path / "old.json.gz").write_bytes(packed)
+    old = dict(file="old.json.gz", sha256=hashlib.sha256(packed).hexdigest(),
+               html_sha256=v1["html_sha256"])
+    assert history.read_record(tmp_path, old)["inputs"]["html"] == HTML
+
+    missing = dict(schema=history.V2_SCHEMA, capture_id="missing", attempt=_attempt(),
+                   inputs=dict(_inputs(), html=None), result=_result(),
+                   html_ref=dict(file="blobs/missing.html.gz", sha256="0" * 64))
+    packed = gzip.compress(json.dumps(missing).encode(), mtime=0)
+    (tmp_path / "missing.json.gz").write_bytes(packed)
+    missing_row = dict(file="missing.json.gz", sha256=hashlib.sha256(packed).hexdigest())
+    with pytest.raises(FileNotFoundError):
+        history.read_record(tmp_path, missing_row)
+
+    blob = tmp_path / "blobs" / "corrupt.html.gz"
+    blob.parent.mkdir()
+    blob.write_bytes(gzip.compress(b"altered", mtime=0))
+    corrupt = dict(missing, capture_id="corrupt",
+                   html_ref=dict(file="blobs/corrupt.html.gz", sha256="0" * 64))
+    packed = gzip.compress(json.dumps(corrupt).encode(), mtime=0)
+    (tmp_path / "corrupt.json.gz").write_bytes(packed)
+    corrupt_row = dict(file="corrupt.json.gz", sha256=hashlib.sha256(packed).hexdigest())
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        history.read_record(tmp_path, corrupt_row)
+
+
+def test_budget_counts_existing_referenced_blob_and_new_record(tmp_path):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    writer = history.WinlineDOMHistory(seed, interval_s=0)
+    assert writer.submit(_attempt(), _inputs(), _result())
+    assert writer.close(timeout=3)
+    row = json.loads((seed / "index.jsonl").read_text().splitlines()[0])
+    blob = seed / row["html_file"]
+    blob_bytes = blob.read_bytes()
+
+    target = tmp_path / "target"
+    target_blob = target / row["html_file"]
+    target_blob.parent.mkdir(parents=True)
+    target_blob.write_bytes(blob_bytes)
+    writer = history.WinlineDOMHistory(
+        target, interval_s=0,
+        # There is room only for the already referenced blob and status reserve,
+        # not the new per-attempt record and index entry.
+        max_bytes=len(blob_bytes) + history.STATUS_RESERVE_BYTES + 1,
+    )
+    assert writer.submit(_attempt(), _inputs(), _result())
+    assert writer.close(timeout=3)
+    assert writer.status()["budget_exhausted"]
+    assert not (target / row["file"]).exists()
+
+
+def test_budget_exhaustion_emits_one_warning_and_status(tmp_path, monkeypatch, caplog):
+    writer = history.WinlineDOMHistory(tmp_path, interval_s=0, max_bytes=1)
+    calls = []
+    original = writer._write_status
+
+    def write_status_once():
+        calls.append(1)
+        original()
+
+    monkeypatch.setattr(writer, "_write_status", write_status_once)
+    with caplog.at_level("WARNING", logger="winline_dom_history"):
+        assert writer.submit(_attempt(), _inputs(), _result())
+        writer._queue.join()
+        assert writer.submit(_attempt(173), _inputs(), _result()) is None
+    assert writer.close(timeout=3)
+    assert len(calls) == 1
+    assert [record.message for record in caplog.records
+            if "budget exhausted" in record.message] == [
+                "Winline DOM history budget exhausted: %s" % tmp_path,
+            ]
 
 
 def test_write_error_is_visible_and_next_attempt_can_be_written(tmp_path, monkeypatch):
