@@ -156,6 +156,25 @@ def test_v2_deduplicates_html_but_retains_each_attempt_metadata(tmp_path):
     assert all(row["html_file"] == "blobs/" + row["html_sha256"] + ".html.gz" for row in index)
 
 
+def test_v2_reuses_existing_valid_blob_bytes_not_a_recompression(tmp_path):
+    html_sha256 = hashlib.sha256(HTML.encode()).hexdigest()
+    blob = gzip.compress(HTML.encode(), compresslevel=9, mtime=123)
+    expected_blob = gzip.compress(HTML.encode(), compresslevel=1, mtime=0)
+    assert blob != expected_blob
+    target = tmp_path / "blobs" / (html_sha256 + ".html.gz")
+    target.parent.mkdir()
+    target.write_bytes(blob)
+
+    writer = history.WinlineDOMHistory(tmp_path, interval_s=0)
+    assert writer.submit(_attempt(), _inputs(), _result())
+    assert writer.close(timeout=3)
+    row = json.loads((tmp_path / "index.jsonl").read_text().splitlines()[0])
+    stored = json.loads(gzip.decompress((tmp_path / row["file"]).read_bytes()))
+    assert stored["html_ref"]["gzip_sha256"] == hashlib.sha256(blob).hexdigest()
+    assert stored["html_ref"]["bytes"] == len(blob)
+    assert history.read_record(tmp_path, row)["inputs"]["html"] == HTML
+
+
 def test_reader_accepts_v1_and_rejects_missing_or_corrupt_v2_html(tmp_path):
     v1 = dict(schema=history.V1_SCHEMA, capture_id="old", attempt=_attempt(),
               inputs=_inputs(), result=_result())
@@ -253,6 +272,28 @@ def test_write_error_is_visible_and_next_attempt_can_be_written(tmp_path, monkey
     assert writer.close(timeout=3)
     assert writer.status()["errors"] == 1
     assert [r["attempt"]["attempt_index"] for r in _records(tmp_path)] == [173]
+
+
+def test_failed_blob_temp_does_not_block_retry_for_same_html(tmp_path, monkeypatch):
+    writer = history.WinlineDOMHistory(tmp_path, interval_s=15)
+    original_replace = history.os.replace
+    failed = []
+
+    def fail_first_blob_replace(source, destination):
+        if not failed and str(destination).endswith(".html.gz"):
+            failed.append((source, destination))
+            raise OSError("simulated blob rename failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(history.os, "replace", fail_first_blob_replace)
+    assert writer.submit(_attempt(), _inputs(), _result())
+    writer._queue.join()
+    assert writer.submit(_attempt(173), _inputs(), _result())
+    assert writer.close(timeout=3)
+    assert len(failed) == 1
+    assert writer.status()["errors"] == 1
+    assert [r["attempt"]["attempt_index"] for r in _records(tmp_path)] == [173]
+    assert len(list((tmp_path / "blobs").glob("*.tmp"))) == 1
 
 
 def test_close_reports_timeout_then_drains_already_queued_records(tmp_path, monkeypatch):

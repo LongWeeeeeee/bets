@@ -193,16 +193,17 @@ class WinlineDOMHistory:
         html_bytes = record["inputs"]["html"].encode("utf-8")
         html_sha256 = hashlib.sha256(html_bytes).hexdigest()
         blob_name = "blobs/" + html_sha256 + ".html.gz"
-        blob = gzip.compress(html_bytes, compresslevel=1, mtime=0)
         blob_target = self.root / blob_name
         if blob_target.exists():
             # Never overwrite an existing evidence blob.  A collision or
             # corruption must be visible rather than silently changing history.
-            existing = gzip.decompress(blob_target.read_bytes())
+            blob = blob_target.read_bytes()
+            existing = gzip.decompress(blob)
             if hashlib.sha256(existing).hexdigest() != html_sha256:
                 raise ValueError("existing HTML blob SHA-256 mismatch")
             new_blob = b""
         else:
+            blob = gzip.compress(html_bytes, compresslevel=1, mtime=0)
             new_blob = blob
         stored = dict(record)
         stored["inputs"] = dict(record["inputs"])
@@ -238,7 +239,10 @@ class WinlineDOMHistory:
         tmp = self.root / (name + ".tmp")
         if new_blob:
             blob_target.parent.mkdir(exist_ok=True)
-            blob_tmp = blob_target.with_name(blob_target.name + ".tmp")
+            # Preserve a failed partial blob as evidence, but never let it
+            # block the next capture of the same HTML.
+            blob_tmp = blob_target.with_name(
+                blob_target.name + "." + record["capture_id"] + ".tmp")
             with blob_tmp.open("xb") as fh:
                 fh.write(new_blob)
             os.replace(blob_tmp, blob_target)
