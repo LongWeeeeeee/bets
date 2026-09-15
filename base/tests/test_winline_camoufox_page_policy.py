@@ -184,6 +184,11 @@ class _CountingPage:
             raise self._reload_error
         return None
 
+    def wait_for_function(self, script, *, timeout):
+        assert "ww-feature-block-event-dsk" in script
+        assert timeout == odds_parser.WINLINE_RELOAD_FEED_TIMEOUT_MS
+        return True
+
     def content(self) -> str:
         self.content_calls += 1
         return self._html
@@ -200,6 +205,8 @@ class _CountingPage:
         self.evaluate_calls += 1
         if "document.readyState" in str(script):
             return "complete"
+        if "document.body.innerHTML" in str(script) and ".includes(" in str(script):
+            return True
         return False
 
     def close(self) -> None:
@@ -373,8 +380,8 @@ def test_controlled_reload_exactly_one_reload_then_dom_no_sleep(monkeypatch) -> 
 
     assert page.goto_calls == [], f"controlled_reload must not goto on live URL; got {page.goto_calls}"
     assert len(page.reload_calls) == 1
-    assert page.reload_calls[0]["wait_until"] == "domcontentloaded"
-    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
+    assert page.reload_calls[0]["wait_until"] == "commit"
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_RELOAD_COMMIT_TIMEOUT_MS
     assert page.reload_calls[0]["timeout"] < 30_000
     assert sleep.calls == [], f"controlled_reload must not add hidden sleep; got {sleep.calls}"
     assert page.content_calls >= 1
@@ -401,7 +408,7 @@ def test_controlled_reload_failure_surfaced_single_attempt(monkeypatch) -> None:
 
     assert page.goto_calls == []
     assert len(page.reload_calls) == 1, "exactly one reload attempt even on failure"
-    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_RELOAD_COMMIT_TIMEOUT_MS
     assert sleep.calls == []
     assert load_status == "partial_load"
     assert load_error
@@ -628,3 +635,62 @@ def test_named_page_repair_keeps_same_page_object(monkeypatch) -> None:
     assert page.reload_calls == []
     assert sleep.calls == []
     assert page.url == WINLINE_LIVE
+
+
+def test_reload_returns_new_feed_without_waiting_for_domcontentloaded(monkeypatch):
+    _patch_sleep(monkeypatch)
+    html = (Path(__file__).parent / 'fixtures/winline_dawn_klim_map2_20260913.html').read_text()
+    class ReadyPage(_CountingPage):
+        def reload(self, wait_until, timeout):
+            # The archived incident waited12s for DOMContentLoaded although a
+            # fresh target market was available. No such wait is needed here.
+            assert wait_until == 'commit'
+            super().reload(wait_until, timeout)
+            self._html = html
+    page = ReadyPage(html='old document', body_text='', url=WINLINE_LIVE)
+    status, error, new_html, _, _, diag = _run_load(page, WINLINE_LIVE, 'controlled_reload')
+    parsed = odds_parser._extract_winline_current_map_winner('', 'Dawn Bulls', 'Klim Sani4', 2, html=new_html)
+    assert parsed.odds == [1.57, 2.25]
+    assert status == 'ok' and not error
+    assert diag['reload_committed'] is True
+
+
+def test_failed_reload_commit_never_returns_old_priced_dom(monkeypatch):
+    _patch_sleep(monkeypatch)
+    html = (Path(__file__).parent / 'fixtures/winline_dawn_klim_map2_20260913.html').read_text()
+    page = _CountingPage(html=html, body_text='Dawn Bulls Klim Sani4 2 карта 1.57 2.25',
+        url=WINLINE_LIVE, reload_error=TimeoutError('commit timed out'))
+    status, error, retained_html, visible, body, diag = _run_load(page, WINLINE_LIVE, 'controlled_reload')
+    assert status == 'partial_load' and error
+    assert not retained_html and not visible and not body
+    assert diag['reload_committed'] is False
+
+
+def test_reload_feed_readiness_timeout_is_visible_partial_load(monkeypatch):
+    _patch_sleep(monkeypatch)
+    page = _CountingPage(html='<html><body></body></html>', body_text='', url=WINLINE_LIVE)
+    def timeout(*args, **kwargs):
+        raise TimeoutError('feed readiness timed out')
+    monkeypatch.setattr(page, 'wait_for_function', timeout)
+    status, error, _, _, _, diag = _run_load(page, WINLINE_LIVE, 'controlled_reload')
+    assert status == 'partial_load'
+    assert 'feed readiness' in error
+    assert diag['reload_committed'] is True
+
+
+def test_parser_cannot_recover_old_quote_after_failed_reload_commit(monkeypatch):
+    _patch_sleep(monkeypatch)
+    html = (Path(__file__).parent / 'fixtures/winline_dawn_klim_map2_20260913.html').read_text()
+    page = _CountingPage(html=html, body_text='Dawn Bulls Klim Sani4 2 карта 1.57 2.25',
+        url=WINLINE_LIVE, reload_error=TimeoutError('commit timed out'))
+    async def forbidden(*args, **kwargs):
+        pytest.fail('failed commit must not reread the old document')
+    monkeypatch.setattr(odds_parser, '_sweep_camoufox_feed', forbidden)
+    monkeypatch.setattr(odds_parser, '_parse_map_market_on_current_camoufox_page_async', forbidden)
+    result = asyncio.run(odds_parser.parse_site_in_camoufox_page_async(
+        page, 'winline', WINLINE_LIVE, 'Dawn Bulls', 'Klim Sani4', 'presence',
+        forced_map_num=2, acquisition_mode='controlled_reload', capture_dom=True,
+    ))
+    assert result.odds == []
+    assert result.source == 'winline_reload_commit_failed'
+    assert result._dom_history_payload['html'] == ''

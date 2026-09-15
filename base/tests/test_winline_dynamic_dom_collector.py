@@ -79,7 +79,14 @@ class _CountingPage:
     def evaluate(self, script: str, arg=None):  # noqa: ARG002
         if "document.readyState" in str(script):
             return "complete"
+        if "document.body.innerHTML" in str(script) and ".includes(" in str(script):
+            return True
         return False
+
+    def wait_for_function(self, script, *, timeout):
+        assert 'ww-feature-block-event-dsk' in script
+        assert timeout == odds_parser.WINLINE_RELOAD_FEED_TIMEOUT_MS
+        return None
 
 
 def _html_body(text: str) -> str:
@@ -235,8 +242,8 @@ def test_controlled_reload_calls_reload_exactly_once(monkeypatch) -> None:
 
     assert page.goto_calls == []
     assert len(page.reload_calls) == 1
-    assert page.reload_calls[0]["wait_until"] == "domcontentloaded"
-    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
+    assert page.reload_calls[0]["wait_until"] == "commit"
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_RELOAD_COMMIT_TIMEOUT_MS
     assert page.browser_spawn_count == 0
     diag = _assert_bounded_diag(result)
     assert diag["acquisition_mode"] == "controlled_reload"
@@ -363,7 +370,7 @@ def test_load_helper_controlled_reload_matrix(monkeypatch) -> None:
     )
     assert page.goto_calls == []
     assert len(page.reload_calls) == 1
-    assert page.reload_calls[0]["wait_until"] == "domcontentloaded"
+    assert page.reload_calls[0]["wait_until"] == "commit"
     if len(payload) >= 6:
         assert payload[5].get("acquisition_mode") == "controlled_reload"
 

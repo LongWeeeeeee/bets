@@ -639,6 +639,8 @@ _COMPLETE_DOM_WITH_BODY_TEXT_JS = """() => {
 # match. Keep bounded Winline acquisition below the monitor's 30s ceiling;
 # legacy/non-Winline callers retain the historical 60s timeout.
 WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS = 12_000
+WINLINE_RELOAD_COMMIT_TIMEOUT_MS = 3_000
+WINLINE_RELOAD_FEED_TIMEOUT_MS = 1_500
 
 # Winline рисует ленту событий во ВНУТРЕННЕМ контейнере (`div.main`,
 # `div.main__wrapper`): само тело страницы не скроллится (`document.body`
@@ -890,6 +892,8 @@ async def _load_site_render_payload_camoufox_async(
     load_error = ""
     acq_error = ""
     navigated = False
+    reload_committed = False
+    reload_failed_before_commit = False
 
     try:
         if mode == "dynamic_dom":
@@ -928,11 +932,13 @@ async def _load_site_render_payload_camoufox_async(
                 try:
                     await _maybe_await(
                         page.reload(
-                            wait_until="domcontentloaded",
-                            timeout=navigation_timeout_ms,
+                            wait_until="commit",
+                            timeout=WINLINE_RELOAD_COMMIT_TIMEOUT_MS,
                         )
                     )
+                    reload_committed = True
                 except Exception as reload_exc:
+                    reload_failed_before_commit = True
                     if _page_needs_navigation(page, url):
                         try:
                             await _maybe_await(
@@ -942,6 +948,7 @@ async def _load_site_render_payload_camoufox_async(
                                     timeout=navigation_timeout_ms,
                                 )
                             )
+                            reload_failed_before_commit = False
                         except Exception as repair_exc:
                             load_status = "partial_load"
                             acq_error = _sanitize_acquisition_error(repair_exc)
@@ -949,6 +956,23 @@ async def _load_site_render_payload_camoufox_async(
                     else:
                         load_status = "partial_load"
                         acq_error = _sanitize_acquisition_error(reload_exc)
+                        load_error = acq_error
+                if reload_committed:
+                    # A committed navigation has replaced the old document.
+                    # Do not wait for unrelated resources to fire DOMContentLoaded:
+                    # wait briefly for the event feed, then let the normal parser
+                    # prove target team/map/market identity on the new DOM.
+                    try:
+                        if _page_needs_navigation(page, url):
+                            await _maybe_await(page.goto(url, wait_until="domcontentloaded",
+                                                        timeout=navigation_timeout_ms))
+                        else:
+                            await _maybe_await(page.wait_for_function(
+                                "() => !!document.querySelector('ww-feature-block-event-dsk, ww-pinned-card')",
+                                timeout=WINLINE_RELOAD_FEED_TIMEOUT_MS))
+                    except Exception as ready_exc:
+                        load_status = "partial_load"
+                        acq_error = _sanitize_acquisition_error(ready_exc)
                         load_error = acq_error
         elif mode == "initial_goto":
             if _page_needs_navigation(page, url):
@@ -997,7 +1021,7 @@ async def _load_site_render_payload_camoufox_async(
     # После свежей навигации в DOM только первая порция карточек: прокрутки выше
     # адресованы окну, а лента Winline скроллится внутренним контейнером. Режимы
     # acquisition — это Winline, для остальных букмекеров поведение не меняется.
-    if mode and navigated:
+    if mode and navigated and not reload_failed_before_commit:
         if mode == "dynamic_dom":
             # Холодная страница: SPA поднимает ленту ~20-30 c (замер 10.09.2026:
             # мгновенное чтение отдаёт shell из 149 символов). Ждём маркеры
@@ -1040,6 +1064,10 @@ async def _load_site_render_payload_camoufox_async(
             visible = " ".join(soup.stripped_strings)
         except Exception:
             visible = ""
+    if reload_failed_before_commit:
+        # A failed commit may leave the old, still priced document in place.
+        # It cannot prove that recovery obtained a new quote.
+        html = visible = body_text = ""
 
     page_url = combined_page_url or _page_current_url(page) or str(url or "")
     if len(page_url) > _PAGE_URL_DIAG_MAX:
@@ -1052,6 +1080,8 @@ async def _load_site_render_payload_camoufox_async(
         "dom_signature": _bounded_dom_signature(sig_source),
         "acquisition_latency_ms": round(latency_ms, 3),
         "acquisition_error": acq_error or None,
+        "reload_committed": reload_committed,
+        "reload_failed_before_commit": reload_failed_before_commit,
     }
 
     return load_status, load_error, html, visible or body_text, body_text, acquisition_diag
@@ -4320,6 +4350,7 @@ async def parse_site_in_camoufox_page_async(
     if (
         site == "winline"
         and effective_acq
+        and not acq_diag.get("reload_failed_before_commit")
         and team1
         and team2
         and not _text_matches_teams(body_text or visible or "", team1, team2)
@@ -4418,6 +4449,8 @@ async def parse_site_in_camoufox_page_async(
     captured_monotonic = time.monotonic()
 
     def _with_acq(result: SiteResult) -> SiteResult:
+        if site == "winline":
+            result.dom_captured_wall = captured_wall
         if miss_fingerprint:
             result.miss_fingerprint = miss_fingerprint
         if capture_dom and site == "winline":
@@ -4430,6 +4463,12 @@ async def parse_site_in_camoufox_page_async(
                 "page_instance_id": id(page), "parser_path": "full_parser",
             }
         return _apply_acquisition_diag(result, acq_diag)
+
+    if site == "winline" and acq_diag.get("reload_failed_before_commit"):
+        return _with_acq(SiteResult(
+            site=site, url=url, status=load_status, match_found=False,
+            odds=[], source="winline_reload_commit_failed", details=str(load_error or ""),
+        ))
 
     if _is_deeplink(site, url):
         if not body_text:

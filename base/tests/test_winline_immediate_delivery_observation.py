@@ -38,6 +38,40 @@ _FORBIDDEN_HELPER = "_".join(
 _FORBIDDEN_HELPER_ATTR = "_" + _FORBIDDEN_HELPER
 _ENRICH_PRODUCER = "_bookmaker_enrich_delayed_match_state"
 
+
+@pytest.mark.parametrize('map_num,source,reason', [
+    (2, {'status': 'live', 'observed_at': 995.0}, 'ok'),
+    (2, {'status': 'live', 'observed_at': 100.0}, 'current_map_observation_stale'),
+    (2, {'status': 'finished', 'observed_at': 995.0}, 'match_finished'),
+    (None, {'status': 'live', 'observed_at': 995.0}, 'current_map_unavailable'),
+])
+def test_ml_dispatch_binds_current_map_without_refreshing_old_source(monkeypatch, map_num, source, reason):
+    from types import SimpleNamespace
+    captured = {}
+    def deliver(key, text, **kwargs):
+        captured.update(kwargs)
+        return False
+    monkeypatch.setattr(cs, '_deliver_and_persist_signal', deliver)
+    monkeypatch.setattr(cs, '_build_prematch_model_bet_message', lambda **kw: 'signal')
+    monkeypatch.setattr(cs, '_format_win_model_line', lambda *a, **kw: '')
+    monkeypatch.setattr(cs, '_late_model_side_from_blocks', lambda *a: None)
+    decision = SimpleNamespace(market='win', target_side='Dire', target_team='B',
+        expected_wr=.6, min_odds=1.8, rule='test')
+    cs._ml_dispatch_deliver_decision(decision, match_key='exact-map-key', base_url='match',
+        ctx_map_num=map_num or 0, resolved_map_num=map_num, radiant_team_name='A', dire_team_name='B',
+        live_league=source, top=None, mid=None, bot=None, protracker_payload=None, team_elo_block='',
+        game_time_seconds=0, radiant_lead=0, early_output=None, mid_output=None, all_output=None,
+        radiant_heroes_and_pos=None, dire_heroes_and_pos=None, full_message_text='',
+        ml_laning_line='', all_model_line='', ledger=None)
+    obs = captured['current_map_observation']
+    assert captured['map_num'] == map_num
+    assert captured['selected_side'] == 'dire'
+    if map_num is not None:
+        assert obs['match_key'] == 'exact-map-key'
+        assert obs['observed_at'] == source['observed_at']
+    assert cs._bookmaker_validate_current_map_observation(obs, expected_map_num=map_num,
+        expected_match_key='exact-map-key', now=1000.0, max_age_seconds=15) == reason
+
 # Callers that intentionally skip bookmaker prepare (non-odds when flag is True).
 _NON_ODDS_REASON_MARKERS = {
     "pipeline_send_every_parsed_match",  # skip when PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND
@@ -171,14 +205,14 @@ def test_ast_immediate_odds_callers_pass_observation_and_map() -> None:
     assert len(delayed) == 1, "delayed path reference must remain exactly once"
     assert delayed[0] not in immediate_odds or not _classify_odds_enabled(delayed[0])
 
-    # Coverage contract: all 20 immediate odds-enabled real callers.
+    # Coverage contract: all 21 immediate odds-enabled real callers (including ML dispatch).
     # 20-й — `star_signal_sent_now_prematch_model`: ставка предматчевой модели
     # на 00-й минуте (E-142). Число здесь ЗАЩИТНОЕ: оно ловит новый немедленный
     # отправитель, который забыли обвязать observation/map, поэтому поднимать
     # его можно только вместе с проверкой, что новый вызов проходит структурный
     # контракт ниже (has_local_enrich / has_map / has_match_key_bind).
-    assert len(immediate_odds) == 20, (
-        f"expected 20 immediate odds-enabled callers, got {len(immediate_odds)}: "
+    assert len(immediate_odds) == 21, (
+        f"expected 21 immediate odds-enabled callers, got {len(immediate_odds)}: "
         + ", ".join(f"L{c['lineno']}:{c['reason']}" for c in immediate_odds)
     )
 
@@ -670,7 +704,7 @@ def test_direct_local_enrich_bind_constructs_canonical_observation() -> None:
 
     # Production immediate sites must use this pattern (source-level).
     immediate = _immediate_odds_callers()
-    assert len(immediate) == 20   # +1: ставка предматчевой модели на 00 (E-142)
+    assert len(immediate) == 21   # ML dispatch also binds the exact current map.
     unwired = [
         f"L{c['lineno']}:{c['reason']}"
         for c in immediate

@@ -953,6 +953,7 @@ class WinlineCurrentMapOddsPoller:
             "attempt_index": self._attempt_index,
             "attempt_started_at": started_wall,
             "attempt_finished_at": finished_wall,
+            "dom_captured_wall": result.get("dom_captured_wall"),
             "attempt_started_at_monotonic": started_mono,
             "attempt_finished_at_monotonic": finished_mono,
             "attempt_start_delta_seconds": attempt_start_delta,

@@ -268,3 +268,113 @@ def test_frozen_observation_cannot_replace_first_sendable_quote(monkeypatch):
     drain()
     assert len(messages) == 2
     assert '🆕' in messages[0] and 'карта завершена' in messages[1]
+
+
+def test_deferred_price_sends_at_spacing_deadline_without_another_poll(monkeypatch, tmp_path):
+    frozen(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(cs.time, 'monotonic', lambda: now[0])
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, '3')
+    journal = tmp_path / 'sent.jsonl'
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV, str(journal))
+    messages = []
+    monkeypatch.setattr(cs, 'send_winline_odds_message', lambda m, **kw: messages.append(m) or True)
+    cs._winline_enqueue_notification(QUOTE, KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    now[0] = 100.75
+    changed = dict(QUOTE, p1_odds=2.02, p2_odds=1.70, attempt_index=35,
+                   canonical_key=KEY, producer_pid=123, producer_start_generation='run1',
+                   dom_captured_wall=1000.0, odds_raw_pair=[2.02, 1.70])
+    cs._winline_enqueue_notification(changed, KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    assert len(messages) == 1
+    now[0] = 102.999
+    assert cs._winline_take_notification(now[0]) is None
+    now[0] = 103.0
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    assert len(messages) == 2
+    assert '1.80 → 2.02' in messages[-1]
+    import json
+    trace = json.loads(journal.read_text().splitlines()[-1])['observation']
+    assert trace['attempt_index'] == 35
+    assert trace['producer_start_generation'] == 'run1'
+    assert trace['dom_captured_wall'] == 1000.0
+    assert trace['output_pair'] == [2.02, 1.7]
+    assert trace['enqueued_wall'] <= trace['worker_started_wall'] <= trace['send_started_wall'] <= trace['send_finished_wall']
+    assert trace['deferred_until_monotonic'] == 103.0
+    assert trace['suppression_reason'] == 'rate_limit'
+
+
+@pytest.mark.parametrize('newer', [dict(QUOTE, p1_odds=2.10, p2_odds=1.65),
+    dict(QUOTE, odds_bettable=False), {'market_status': 'missing'}, END])
+def test_new_observation_supersedes_deferred_quote(monkeypatch, newer):
+    frozen(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(cs.time, 'monotonic', lambda: now[0])
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, '3')
+    cs._winline_enqueue_notification(QUOTE, KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    now[0] = 100.75
+    cs._winline_enqueue_notification(dict(QUOTE, p1_odds=2.02), KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    assert cs._winline_notification_queue[0]['not_before_mono'] == 103
+    cs._winline_enqueue_notification(newer, KEY)
+    assert all(e.get('not_before_mono') is None for e in cs._winline_notification_queue)
+    assert all(e['payload'].get('p1_odds') != 2.02 for e in cs._winline_notification_queue)
+
+
+def test_deferred_price_does_not_block_other_map_and_expires(monkeypatch):
+    frozen(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(cs.time, 'monotonic', lambda: now[0])
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, '1')
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PENDING_AGE_ENV, '15')
+    cs._winline_enqueue_notification(QUOTE, KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    now[0] = 101
+    cs._winline_enqueue_notification(dict(QUOTE, p1_odds=2.02), KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    assert cs._winline_notification_queue[0]['not_before_mono'] == 160
+    cs._winline_enqueue_notification(QUOTE, NEXT)
+    assert cs._winline_take_notification(now[0])['key'] == NEXT
+    now[0] = 117
+    assert cs._winline_take_notification(now[0]) is None
+    assert not cs._winline_notification_queue
+
+
+def test_frozen_observation_during_defer_cannot_resurrect_old_quote(monkeypatch):
+    frozen(monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(cs.time, 'monotonic', lambda: now[0])
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, '3')
+    cs._winline_enqueue_notification(QUOTE, KEY)
+    cs._winline_process_notification(cs._winline_take_notification(now[0]))
+    now[0] = 101
+    cs._winline_enqueue_notification(dict(QUOTE, p1_odds=2.02), KEY)
+    entry = cs._winline_take_notification(now[0])
+    monkeypatch.setattr(cs, '_winline_notification_inflight', entry)
+    original = cs._winline_odds_telegram_notify
+    def notify(*args, **kwargs):
+        result = original(*args, **kwargs)
+        cs._winline_enqueue_notification(dict(QUOTE, odds_bettable=False), KEY)
+        return result
+    monkeypatch.setattr(cs, '_winline_odds_telegram_notify', notify)
+    cs._winline_process_notification(entry)
+    assert not cs._winline_notification_queue
+
+
+def test_worker_wakes_for_deferred_quote_without_another_poll(monkeypatch):
+    first_sent, changed_sent = threading.Event(), threading.Event()
+    messages = []
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, '0.1')
+    def send(message, **kwargs):
+        messages.append(message)
+        (first_sent if len(messages) == 1 else changed_sent).set()
+        return True
+    monkeypatch.setattr(cs, 'send_winline_odds_message', send)
+    cs._winline_enqueue_notification(QUOTE, KEY)
+    assert first_sent.wait(1)
+    cs._winline_enqueue_notification(dict(QUOTE, p1_odds=2.02, p2_odds=1.70), KEY)
+    assert changed_sent.wait(1), 'worker did not send at the deadline without another poll'
+    assert len(messages) == 2
+    assert '1.80 → 2.02' in messages[-1]

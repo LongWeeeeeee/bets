@@ -2616,6 +2616,7 @@ def _winline_map_site_result_to_collector_dict(
         "parser_failure_reasons": list(getattr(result, "parser_failure_reasons", None) or []),
         "error": err,
         "acquisition_error": acq_error,
+        "dom_captured_wall": getattr(result, "dom_captured_wall", None),
         "page_valid": bool(page_valid),
         "acquisition_mode_echo": str(acq_echo or acquisition_mode),
         "match_found": match_found,
@@ -2643,6 +2644,8 @@ def _winline_map_site_result_to_collector_dict(
 
 
 def _winline_attach_dom_history(result: Any, payload: Any) -> Any:
+    if isinstance(result, dict) and isinstance(payload, dict):
+        result["dom_captured_wall"] = payload.get("captured_wall")
     if (_winline_dom_history.enabled() and isinstance(result, dict)
             and isinstance(payload, dict)):
         result["_dom_history_payload"] = {
@@ -3391,6 +3394,7 @@ def ensure_winline_current_map_polling(
 WINLINE_ODDS_TELEGRAM_ENABLED_ENV = "WINLINE_ODDS_TELEGRAM_ENABLED"
 WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV = "WINLINE_ODDS_TELEGRAM_MIN_SPACING_S"
 WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV = "WINLINE_ODDS_TELEGRAM_MAX_PER_MIN"
+WINLINE_ODDS_TELEGRAM_MAX_PENDING_AGE_ENV = "WINLINE_ODDS_TELEGRAM_MAX_PENDING_AGE_S"
 WINLINE_CURRENT_MAP_CONTINUOUS_ENV = "WINLINE_CURRENT_MAP_CONTINUOUS"
 # Сколько ждать, прежде чем объявить остановку опроса. Недоказанный терминал —
 # это «мы не знаем», а не «опрос кончился»: тот же ключ обычно заводится заново
@@ -3471,6 +3475,17 @@ def _winline_notification_entry_key(entry: Dict[str, Any]) -> str:
 def _winline_enqueue_notification(payload: Dict[str, Any], key: str, **kwargs: Any) -> None:
     if not _winline_odds_notify_enabled():
         return
+    with _winline_current_map_state_lock:
+        canonical = _winline_resolve_notification_key(key)[0]
+        if (_winline_notification_inflight is not None
+                and not _winline_notification_inflight.get("maintenance")
+                and _winline_notification_entry_key(_winline_notification_inflight) == canonical):
+            _winline_notification_inflight["superseded"] = True
+        # Every newer observation invalidates a deferred quote, including a
+        # frozen/missing market and a terminal. Never retry an obsolete price.
+        _winline_notification_queue[:] = [e for e in _winline_notification_queue
+            if not (e.get("not_before_mono") is not None
+                    and _winline_notification_entry_key(e) == canonical)]
     if not kwargs.get("is_terminal") and payload.get("odds_bettable") is False:
         # Frozen observations are silent. They must not coalesce away the last
         # sendable quote needed to introduce this map before its terminal.
@@ -3479,7 +3494,8 @@ def _winline_enqueue_notification(payload: Dict[str, Any], key: str, **kwargs: A
     # move its latest orientation state backwards.
     entry = {"key": key, "payload": copy.deepcopy({
         k: v for k, v in payload.items() if k != "attempts"
-    }), "kwargs": dict(kwargs)}
+    }), "kwargs": dict(kwargs), "enqueued_wall": time.time(),
+        "enqueued_mono": time.monotonic()}
     with _winline_current_map_state_lock:
         canonical = _winline_notification_entry_key(entry)
         terminal = bool(kwargs.get("is_terminal"))
@@ -3534,12 +3550,28 @@ def _winline_process_notification(entry: Dict[str, Any]) -> None:
             payload = dict(entry["payload"])
             if flipped:
                 payload["p1_odds"], payload["p2_odds"] = payload.get("p2_odds"), payload.get("p1_odds")
+        trace = {"enqueued_wall": entry.get("enqueued_wall"),
+                 "worker_started_wall": time.time(),
+                 "suppression_reason": entry.get("suppression_reason"),
+                 "deferred_until_monotonic": entry.get("not_before_mono")}
         try:
-            _winline_odds_telegram_notify(payload, key, already_oriented=True, **entry["kwargs"])
+            _winline_odds_telegram_notify(payload, key, already_oriented=True,
+                                        delivery_trace=trace, **entry["kwargs"])
         except Exception:
             logger.exception("winline queued notification failed")
         with _winline_current_map_state_lock:
             key = _winline_notification_entry_key(entry)
+            due = trace.get("retry_at_monotonic")
+            if due is not None and not entry["kwargs"].get("is_terminal"):
+                # A newer observation may have arrived during this send attempt.
+                # It owns the next price; don't append the older deferred one.
+                if not entry.get("superseded") and not any(not e.get("maintenance") and
+                           _winline_notification_entry_key(e) == key
+                           for e in _winline_notification_queue):
+                    entry["not_before_mono"] = due
+                    entry["suppression_reason"] = trace.get("suppression_reason")
+                    _winline_notification_queue.append(entry)
+                return
             state = _winline_odds_notify_state.get(key) or {}
             retry = (entry["kwargs"].get("is_terminal")
                      and entry["kwargs"].get("map_end_proven", True)
@@ -3549,6 +3581,24 @@ def _winline_process_notification(entry: Dict[str, Any]) -> None:
             return
         if _winline_notification_stop.wait(1.0):
             return
+
+
+def _winline_take_notification(now: float) -> Optional[Dict[str, Any]]:
+    """Called under the lock. Delayed prices do not block other maps/lifecycle."""
+    max_age = max(0.0, _winline_env_float(WINLINE_ODDS_TELEGRAM_MAX_PENDING_AGE_ENV, 15.0))
+    for entry in list(_winline_notification_queue):
+        due = entry.get("not_before_mono")
+        if due is not None:
+            if now - entry.get("enqueued_mono", now) > max_age:
+                _winline_notification_queue.remove(entry)
+                logger.info("winline deferred quote expired key=%s age=%.3f",
+                            _winline_notification_entry_key(entry), now - entry.get("enqueued_mono", now))
+                continue
+            if now < due:
+                continue
+        _winline_notification_queue.remove(entry)
+        return entry
+    return None
 
 
 def _winline_notification_worker_loop() -> None:
@@ -3564,7 +3614,7 @@ def _winline_notification_worker_loop() -> None:
                     _winline_notification_queue.append({
                         "key": "", "payload": {}, "kwargs": {}, "maintenance": True})
                 next_maintenance = time.monotonic() + 1.0
-            entry = _winline_notification_queue.pop(0) if _winline_notification_queue else None
+            entry = _winline_take_notification(time.monotonic())
             _winline_notification_inflight = entry
         try:
             if entry is not None and entry.get("maintenance"):
@@ -3582,7 +3632,10 @@ def _winline_notification_worker_loop() -> None:
             with _winline_current_map_state_lock:
                 _winline_notification_inflight = None
         if entry is None:
-            _winline_notification_wake.wait(max(0.01, next_maintenance - time.monotonic()))
+            with _winline_current_map_state_lock:
+                due = min([next_maintenance] + [e["not_before_mono"]
+                    for e in _winline_notification_queue if e.get("not_before_mono") is not None])
+            _winline_notification_wake.wait(max(0.01, due - time.monotonic()))
 
 
 def _winline_start_notification_worker() -> None:
@@ -3776,9 +3829,29 @@ def _winline_stabilize_odds_orientation(
     if not all(math.isfinite(value) and value > 1.0 for value in (p1, p2)):
         return payload
 
+    # A same-sample, structurally matched market outranks historical prices.
+    # Sep 13 Dawn Bulls/Klim Sani4: a real 2.20/1.60 -> 1.57/2.25
+    # repricing satisfied the temporal heuristic despite unchanged card order.
+    _, team1, team2 = _winline_parse_canonical_key(key)
+    normalize = lambda value: " ".join(str(value or "").casefold().split())
+    order = [normalize(value) for value in str(payload.get("card_team_order") or "").split("|")]
+    teams = [normalize(team1), normalize(team2)]
+    card = payload.get("card_odds")
+    proven = False
+    if all(teams) and teams[0] != teams[1] and isinstance(card, (list, tuple)) and len(card) == 2:
+        try:
+            card_pair = tuple(float(value) for value in card)
+            expected = card_pair if order == teams else card_pair[::-1] if order == teams[::-1] else None
+            proven = expected == (p1, p2)
+        except (TypeError, ValueError):
+            pass
     with _winline_current_map_state_lock:
         previous = dict(_winline_odds_orientation_state.get(key) or {})
-        if previous and _winline_odds_pair_looks_transposed(
+        payload["odds_raw_pair"] = [p1, p2]
+        payload["odds_previous_pair"] = [previous.get("p1"), previous.get("p2")]
+        payload["odds_orientation_source"] = "card_provenance" if proven else "temporal_fallback"
+        payload.pop("odds_orientation_correction", None)
+        if not proven and previous and _winline_odds_pair_looks_transposed(
             previous.get("p1"),
             previous.get("p2"),
             p1,
@@ -4457,6 +4530,7 @@ def _winline_odds_telegram_notify(
     winner_fn: Any = None,
     steam_fn: Any = None,
     stratz_fn: Any = None,
+    delivery_trace: Any = None,
 ) -> Optional[str]:
     """Сообщить в админ-чат об изменении кэфов текущей карты. Fail-open.
 
@@ -4488,6 +4562,13 @@ def _winline_odds_telegram_notify(
         return None
 
     mono = (monotonic_fn or time.monotonic)()
+    trace = delivery_trace if isinstance(delivery_trace, dict) else {}
+    trace.update({field: payload.get(field) for field in (
+        "canonical_key", "producer_pid", "producer_start_generation", "attempt_index",
+        "attempt_started_at", "attempt_finished_at", "dom_captured_wall",
+        "dom_history_queued_id", "card_team_order", "card_odds", "odds_raw_pair",
+        "odds_previous_pair", "odds_orientation_source", "odds_orientation_correction")})
+    trace["output_pair"] = [payload.get("p1_odds"), payload.get("p2_odds")]
     p1 = payload.get("p1_odds")
     p2 = payload.get("p2_odds")
     status = str(payload.get("market_status") or "").strip().lower()
@@ -4568,10 +4649,15 @@ def _winline_odds_telegram_notify(
     min_spacing = _winline_env_float(WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, 3.0)
     max_per_min = _winline_env_float(WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, 12.0)
     last_sent = prev.get("last_sent_mono")
-    if not lifecycle_kind and last_sent is not None and (mono - float(last_sent)) < min_spacing:
-        return None
     recent = [t for t in (prev.get("sent_mono") or []) if mono - float(t) < 60.0]
+    retry_at = mono
+    if not lifecycle_kind and last_sent is not None and (mono - float(last_sent)) < min_spacing:
+        retry_at = max(retry_at, float(last_sent) + min_spacing)
     if not lifecycle_kind and max_per_min > 0 and len(recent) >= max_per_min:
+        retry_at = max(retry_at, min(recent) + 60.0)
+    if retry_at > mono:
+        trace["retry_at_monotonic"] = retry_at
+        trace["suppression_reason"] = "rate_limit"
         return None
 
     map_num, team1, team2 = _winline_parse_canonical_key(key)
@@ -4596,6 +4682,7 @@ def _winline_odds_telegram_notify(
     # Кэфы Winline уходят в ОТДЕЛЬНЫЙ бот (keys.WinlineToken), ставки остаются
     # в основном. Токен разный, чат тот же (админ).
     sender = send_fn or send_winline_odds_message
+    trace["send_started_wall"] = time.time()
     try:
         # Кэфы — служебный поток: шлём без звука, чтобы не глушить пуши ставок.
         delivered = sender(
@@ -4604,8 +4691,9 @@ def _winline_odds_telegram_notify(
             mirror_to_vk=False,
             silent=True,
         )
+        trace["send_finished_wall"] = time.time()
         _winline_journal_sent_message(
-            kind=kind, key=key, message=message, delivered=delivered)
+            kind=kind, key=key, message=message, delivered=delivered, observation=trace)
         if delivered is False:
             logger.warning("winline odds telegram notify returned delivered=false")
             return None
@@ -4614,8 +4702,9 @@ def _winline_odds_telegram_notify(
             logger.warning("winline odds telegram notify failed: %s", exc)
         except Exception:
             pass
+        trace["send_finished_wall"] = time.time()
         _winline_journal_sent_message(
-            kind=kind, key=key, message=message, delivered=False)
+            kind=kind, key=key, message=message, delivered=False, observation=trace)
         return None
 
     with _winline_current_map_state_lock:
@@ -4653,7 +4742,7 @@ def _winline_sent_journal_path() -> Optional[Path]:
 
 
 def _winline_journal_sent_message(*, kind: str, key: Any, message: str,
-                                  delivered: Any) -> None:
+                                  delivered: Any, observation: Any = None) -> None:
     """Записать факт отправки карточки или отказ. Fail-open, без повторов.
 
     Доставка трактуется так же, как в уведомлении: отказом считается только
@@ -4670,6 +4759,8 @@ def _winline_journal_sent_message(*, kind: str, key: Any, message: str,
             "delivered": delivered is not False,
             "message": message,
         }
+        if isinstance(observation, dict):
+            record["observation"] = dict(observation)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -12407,6 +12498,12 @@ def _ml_dispatch_deliver_decision(
         "ml_market": decision.market,
     }
     dedup_key = (base_url, ctx_map_num, decision.market, decision.target_side)
+    current_map_observation = None
+    if isinstance(resolved_map_num, int) and 1 <= resolved_map_num <= 5:
+        current_map_observation = _bookmaker_enrich_delayed_match_state(
+            {"map_num": resolved_map_num}, live_league,
+        )
+        current_map_observation["match_key"] = str(match_key or "").strip()
     delivered = _deliver_and_persist_signal(
         match_key,
         message_text,
@@ -12419,6 +12516,7 @@ def _ml_dispatch_deliver_decision(
             "min_odds": decision.min_odds,
         },
         map_num=resolved_map_num,
+        current_map_observation=current_map_observation,
         selected_side=target_side_lower,
         stake_multiplier_context=stake_context,
     )

@@ -1444,3 +1444,28 @@ def test_net_worth_comes_from_the_bridge_snapshot(monkeypatch, tmp_path):
     _snapshot_with(monkeypatch, tmp_path, row)
 
     assert cs._winline_net_worth_label(_synapse_key(row)) == "Team Synapse +5 000"
+
+
+@pytest.mark.parametrize("teams,prior,expected", [
+    (("Dawn Bulls", "Klim Sani4"), (2.20, 1.60), (1.57, 2.25)),
+    (("Klim Sani4", "Dawn Bulls"), (1.60, 2.20), (2.25, 1.57)),
+])
+def test_archived_map2_dom_order_overrides_temporal_transposition(teams, prior, expected):
+    """Sep13 attempt35: real source repricing was falsely swapped in Telegram."""
+    import bookmaker_selenium_odds as bk
+    html = (Path(__file__).parent / "fixtures/winline_dawn_klim_map2_20260913.html").read_text()
+    parsed = bk._extract_winline_current_map_winner("", *teams, 2, html=html)
+    assert tuple(parsed.odds) == expected
+    key = "sourcetv:league:20145|id:10232231|id:10251056|map2|" + "|".join(teams)
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(*prior), sender, clock, key=key)
+    clock.advance(10)
+    payload = dict(_attempt(*parsed.odds), card_team_order=parsed.card_team_order,
+                   card_odds=parsed.card_odds, page_valid=True)
+    message = _notify(payload, sender, clock, key=key)
+    assert message is not None
+    assert (payload["p1_odds"], payload["p2_odds"]) == expected
+    assert payload["odds_orientation_source"] == "card_provenance"
+    assert payload.get("odds_orientation_correction") is None
+    assert f"{prior[0]:.2f} → {expected[0]:.2f}" in message
+    assert f"{prior[1]:.2f} → {expected[1]:.2f}" in message

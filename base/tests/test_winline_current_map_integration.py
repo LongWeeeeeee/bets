@@ -141,7 +141,14 @@ class _CountingPage:
         self.evaluate_calls += 1
         if "document.readyState" in str(script):
             return "complete"
+        if "document.body.innerHTML" in str(script) and ".includes(" in str(script):
+            return True
         return False
+
+    def wait_for_function(self, script, *, timeout):
+        assert 'ww-feature-block-event-dsk' in script
+        assert timeout == odds_parser.WINLINE_RELOAD_FEED_TIMEOUT_MS
+        return None
 
     def close(self) -> None:
         self.closed = True
