@@ -939,3 +939,122 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
   Ставка диспетчера на 10:05 (rule `win_single_model_confirm`, late/all/prematch
   0.669/0.672/0.674 при NW −2.8k) — три однотипные модели, не независимое
   подтверждение; исход карты на момент записи не известен.
+
+## E-294 — team-pair+time membership proof для ребейза live-ledger (16.09.2026)
+
+- **Повод:** находка 16.09.2026 — офлайн-replay копии боевого ledger
+  (`live_elo_progress_serv1_20260916.json`, 159 applied) против Mac-снимка дал
+  89 covered / 5 replay / 65 error; все 65 ошибок ловятся на `_applied_entry_for_rebase`
+  из-за отсутствия exact-id membership (`ELO/live_team_strength.py:781`).
+  55 из 65 — ключи `dltv.org/matches/<series_id>.0`, где `match_id` совпадает
+  с серийным id DLTV, а не с Valve match id; одна запись несёт фиксированный
+  плейсхолдер `match_id=1700000000`.
+- **Изменение:** снимок теперь пишет `meta.recent_completed_match_keys` (пара
+  {radiant_team_id, dire_team_id} + стартовый timestamp) и `..._tolerance_seconds`
+  (по умолчанию 10800 с) вторым, независимым доказательством membership —
+  один проход `_recent_completed_match_meta` (`ELO/live_team_strength.py`,
+  билдер снимка). Гварды `_applied_entry_for_rebase`/`_pending_entry_for_rebase`
+  при промахе точного id пробуют пару команд в допуске через
+  `_snapshot_recent_completed_keys`/`_snapshot_has_team_pair_near`; исходное
+  сообщение об ошибке не менялось, добавлено второе предложение с указанием,
+  какое доказательство пробовалось.
+- **Результат (реальные данные, side-путь, снимок НЕ боевой):** 89→93 covered,
+  65→61 error, replay 5→5 (без изменений). 4 записи исправлены реальной
+  team-pair+time парой (все TIER2 pro-матчи с настоящим league_name, например
+  `9000343574.0` European Pro League 2025-2026 Season). Из 61 оставшейся
+  ошибки: 60 — команды формата `... Club` в лиге `WINLINE Star Series Season 4`
+  / `Winline Mixer Cup` (любительский онлайн-турнир букмекера, вне
+  `pro_heroes_data` корпуса в принципе — team_id этих команд не встречается ни
+  в одной паре `recent_completed_match_keys` снимка вообще, не только не в
+  допуске), 1 — синтетическая тестовая запись (`match_id=1700000000`,
+  «BoomBoys» vs «Nigma Galaxy», `league_id=None`, `league_name=""`), не
+  настоящий матч. Ветка «pair присутствует, но вне допуска» (contrary evidence
+  из задания) в реальных данных не встретилась ни разу — 0 из 65 записей имели
+  найденную пару вне допуска; все промахи — полное отсутствие пары.
+- **Харнесс/запуск:** пересборка (side-путь, НЕ боевой файл, ~11 мин):
+  `venv_catboost/bin/python3 ELO/live_team_strength.py --snapshot-path ELO/output/live_team_elo_snapshot_keys_test.json`
+  (лог `runtime/artifacts/elo/rebuild_keys_test_20260916.log`); классификация —
+  копия `classify_ledger.py` с `SNAPSHOT`, указывающим на side-путь, и
+  `recent_completed_keys=...` в вызове гварда → отчёт
+  `runtime/artifacts/elo/ledger_classification_keys_test_20260916.json`.
+  Регрессии: `venv_catboost/bin/python3 -m pytest ELO/tests -q -p no:cacheprovider`
+  — 152 passed (было 147 до правки; +5 новых тестов, 0 новых падений).
+- **Где искать ошибку:** side-снимок (753 МБ) не доставлен на serv1 и не
+  заменял боевой файл — прод не трогался. Оставшиеся 61 записей не проверены
+  вручную по каждой на предмет team_org_aliases-переименований — вывод «вне
+  корпуса» основан на паттерне лиги и team_id, отсутствующем во ВСЕХ парах
+  снимка, а не только рядом по времени; если team_org_aliases когда-нибудь
+  добавит алиас для этих `Club`-команд, повторную классификацию нужно
+  перезапускать. Плейсхолдерная запись `1700000000` — не баг рантайма, а
+  тестовые данные в копии ledger; на боевом ledger её может не быть вовсе.
+
+**Продолжение 16-17.09.2026 — третье доказательство «обе команды неизвестны базе».**
+60 из 61 оставшейся ошибки — именно те самые любительские `Club`-команды/лиги
+Winline: их team_id никогда не встретится ни в одной паре снимка, сколько ни
+жди, поэтому цепочка id → pair → order-gated replay каждый день блокировала
+бы одни и те же карты. Добавлено третье, приоритетное доказательство:
+`_known_team_ids_from_model_state(model_state)` (`ELO/live_team_strength.py`)
+разбирает `roster_ratings`/`player_current_org` снимка (единственные team-키
+поля в `model_state` — сырого `team_id` там нет, ключи это `org_key` из
+`resolve_org_key`/`roster_key`), пересобирает набор team_id через статический
+`TEAM_ID_TO_ORG_KEY` (`ELO/team_identity.py`) и передаётся в оба гварда как
+`known_team_ids: set[int] | None = None` (по умолчанию правило выключено).
+Если НИ ОДНА из двух команд карты не входит в `known_team_ids` — карта
+«replay»/«pending» без порядкового гейта: у неизвестных базе команд нет
+base-события, порядок с которым можно было бы нарушить. Если известна хотя
+бы одна сторона — прежняя цепочка без изменений. Пустой `known_team_ids`
+(снимок вообще без данных) трактуется как «нет доказательства», не как
+«все неизвестны» — иначе ломались фикстуры с пустым `model_state` в
+существующих тестах (7 регрессий были обнаружены и исправлены этим условием
+до принятия правки).
+- **Результат (та же side-снимок, тот же ledger):** covered 93, replay 5
+  (без изменений), **replay_unknown_teams 59** (новое), error **61→2**. Оба
+  оставшихся — `8998855174.0`/`8998987066.0`, лига European Pro League
+  2025-2026 Season, radiant `Inner Circle x Insanity` (id 10019843, `known=True`
+  — реально в базе), dire `Two Move` (id 10136133, `known=False`) — ровно
+  случай (b) «одна команда известна → правило не применяется», раскрытие
+  через существующий order-safety raise, генуинно недоказуемо сегодняшними
+  доказательствами (карта либо ещё не в корпусе, либо потеряна upstream).
+- **Харнесс/запуск:** та же пересборка, что выше (снимок не менялся повторно).
+  Классификация — вторая копия `classify_ledger_keys_test2.py` (добавляет
+  `known_team_ids=lts._known_team_ids_from_model_state(lts.full_model_state(snapshot))`
+  в вызов гварда) → `runtime/artifacts/elo/ledger_classification_keys_test2_20260916.json`.
+  Регрессии: `venv_catboost/bin/python3 -m pytest ELO/tests -q -p no:cacheprovider`
+  — 155 passed, 0 failed (было 152 после первого прохода; +3 теста на новое
+  правило, 0 новых падений после исправления пустого-`known_team_ids` случая).
+- **Где искать ошибку:** `known_team_ids` строится ОДИН раз на весь rebase из
+  `full_model_state(snapshot)`, поэтому команда, появившаяся в корпусе уже
+  ПОСЛЕ построения этого конкретного снимка, всё ещё будет «неизвестна» до
+  следующей пересборки — ожидаемое, а не ошибочное поведение. Правило не
+  проверялось на `_pending_entry_for_rebase` в реальных данных (в ledger была
+  только 1 pending-серия, без неизвестных команд) — только юнит-тестом (c).
+
+**Round 3 (independent review, 17.09.2026) — порядок доказательств и one-to-one
+consumption ключа.** Ревью потребовало: unknown-teams проверять ПОСЛЕ id/pair
+(иначе доказуемая по id/pair карта могла обойти их), `known_team_ids` = реестр
+∪ сырые id из `recent_completed_match_keys` (реестр неполон), и один ключ
+снимка доказывает НЕ БОЛЕЕ одной live-карты (`consumed`-set + ключ теперь
+`[match_id, radiant_id, dire_id, timestamp]`, applied-карты — в порядке
+`result_timestamp`).
+- **Результат:** covered 92, replay 5, replay_unknown_teams 59, error **3**
+  (было 93/5/59/2). Новая ошибка — `8996384883.0`, третья подряд карта серии
+  DIREBORN–Team Nemesis (интервалы ~77-78 мин, внутри допуска 3 ч): в round 2
+  она ошибочно делила ключ с соседней картой той же пары (double-use), теперь
+  one-to-one consumption отдаёт ключ более ранней карте по `result_timestamp`,
+  а третья карта честно недоказуема. Два прежних остатка (`8998855174.0`/
+  `8998987066.0`, одна команда известна) не изменились.
+- **Харнесс/запуск:** пересборка `venv_catboost/bin/python3 ELO/live_team_strength.py --snapshot-path ELO/output/live_team_elo_snapshot_keys_test.json`
+  (лог `runtime/artifacts/elo/rebuild_keys_test3_20260917.log`; оркестрация ожидания
+  памяти/локального Dota 2 — `runtime/artifacts/elo/round3_watch.sh`, его лог
+  `round3_watch.log`). Классификация — `classify_ledger_keys_test3.py`
+  (тот же вид, что test2, плюс `consumed`-set и сортировка по result_timestamp)
+  → `runtime/artifacts/elo/ledger_classification_keys_test3_20260916.json`.
+  Регрессии: `pytest ELO/tests -q -p no:cacheprovider` — 159 passed, 0 failed
+  (было 155; +4 теста FIX1-4, 0 новых падений).
+- **Где искать ошибку:** падение `covered` между прогонами на ОДНОМ и том же
+  снимке/ledger — сигнал double-use ключа, не регресс; смотреть, не делят ли
+  две карты одну пару команд внутри допуска. Предположение window-exactness
+  («не в keys ⇒ не в снимке») остаётся непроверенным для team_id, отсутствующих
+  в `recent_completed_match_keys` вовсе — для них пара всегда «не найдена»,
+  а не «найдена вне допуска», и это неотличимо от полного отсутствия в корпусе
+  без похода в сырые данные корпуса.

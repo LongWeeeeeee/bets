@@ -24,7 +24,7 @@ from ELO.domain import LeagueTier, MatchRecord
 from ELO.models import HybridPlayerRosterEloModel
 from ELO.replay import REPLAY_VERSION, replay_events, result_record
 from ELO.series_data import build_series_bundles
-from ELO.team_identity import resolve_org_key
+from ELO.team_identity import TEAM_ID_TO_ORG_KEY, resolve_org_key
 from ELO.tiering import attach_league_tiers_asof, get_known_team_tier
 from base.dota_patch_calendar import PATCH_RELEASES
 
@@ -54,6 +54,12 @@ DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtim
 # needlessly large; this bounded, exact tail covers the only interval in which
 # a stopped live process can overlap the next rebuild.
 SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS = 7 * SECONDS_PER_DAY
+#: A DLTV series id / placeholder can stand in for `match_id` in an old live
+#: ledger entry, so id-based membership silently fails for it.  The fallback
+#: proof matches team pair + a start timestamp instead; this is the default
+#: slack between a DLTV series registration time and the Valve match start
+#: (builder and guard must agree, hence the shared default below).
+SNAPSHOT_RECENT_COMPLETED_MATCH_KEYS_TOLERANCE_SECONDS = 3 * 60 * 60
 #: Живые обновления как ДЕЛЬТА поверх базовых массивов снимка (E-255).
 #: Прежнее полное состояние (`live_elo_model_state.json`, 519 МБ) перезаписывалось
 #: целиком после каждой карты ради ~70-100 изменившихся значений и требовало
@@ -778,6 +784,45 @@ def _progress_has_outstanding_work(payload: dict[str, Any] | None) -> bool:
     return bool(payload.get("pending_series")) or bool(payload.get("applied_maps"))
 
 
+def _recent_completed_match_meta(
+    matches: list[MatchRecord],
+    *,
+    coverage_since: int,
+    reference_timestamp: int,
+) -> dict[str, Any]:
+    """Build the two rebase membership proofs for `matches` in one pass.
+
+    `recent_completed_match_ids` is the exact-id proof (unchanged).
+    `recent_completed_match_keys` is the fallback team-pair+start-time proof
+    for entries whose stored `match_id` is a DLTV series id or a placeholder
+    rather than the Valve match id.  Both cover exactly the same window and
+    the same deduplicated set of matches (by `match_id`).  Each key entry is
+    `[match_id, radiant_team_id, dire_team_id, timestamp]`: `sorted(set[int])`
+    (numeric) and `sorted(list[list[int]])` (lexicographic-by-first-element)
+    do NOT produce the same order, so `match_id` is carried inside every key
+    row instead of being implied by row position — the reader/guards match
+    proofs to a specific corpus match by this id, not by index.
+    """
+    seen_match_ids: set[int] = set()
+    keys: list[list[int]] = []
+    for match in matches:
+        if match.result_timestamp is None:
+            continue
+        if not (coverage_since <= match.result_timestamp <= reference_timestamp):
+            continue
+        match_id = int(match.match_id)
+        if match_id in seen_match_ids:
+            continue
+        seen_match_ids.add(match_id)
+        if match.radiant_team_id is not None and match.dire_team_id is not None:
+            keys.append([match_id, int(match.radiant_team_id), int(match.dire_team_id), int(match.timestamp)])
+    return {
+        "recent_completed_match_ids": sorted(seen_match_ids),
+        "recent_completed_match_keys": sorted(keys),
+        "recent_completed_match_keys_tolerance_seconds": SNAPSHOT_RECENT_COMPLETED_MATCH_KEYS_TOLERANCE_SECONDS,
+    }
+
+
 def _snapshot_recent_completed_ids(snapshot: dict[str, Any]) -> tuple[int, set[int]] | None:
     meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
     try:
@@ -791,6 +836,123 @@ def _snapshot_recent_completed_ids(snapshot: dict[str, Any]) -> tuple[int, set[i
         return coverage_since, {int(match_id) for match_id in raw_ids}
     except (TypeError, ValueError):
         return None
+
+
+def _snapshot_recent_completed_keys(
+    snapshot: dict[str, Any],
+) -> tuple[int, dict[int, tuple[int, int, int]]] | None:
+    """Fallback membership proof: `match_id -> (radiant_id, dire_id, timestamp)`.
+
+    Returns `None` when the snapshot predates this proof (old snapshot with
+    no `recent_completed_match_keys`), so the guard can tell "no match found"
+    apart from "no proof available" and fall back to the original error.
+    Keyed by `match_id` (not team pair) so a caller can both look candidates
+    up by pair (`_snapshot_find_team_pair_key`) and mark one CONSUMED by id
+    once it has been used as proof for one ledger entry — one snapshot key
+    proves at most one ledger entry (E-294 review: two maps of the same
+    series ~40 min apart would otherwise both match the same key).
+    """
+    meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
+    try:
+        tolerance_seconds = int(
+            meta.get(
+                "recent_completed_match_keys_tolerance_seconds",
+                SNAPSHOT_RECENT_COMPLETED_MATCH_KEYS_TOLERANCE_SECONDS,
+            )
+        )
+    except (TypeError, ValueError):
+        tolerance_seconds = SNAPSHOT_RECENT_COMPLETED_MATCH_KEYS_TOLERANCE_SECONDS
+    raw_keys = meta.get("recent_completed_match_keys")
+    if not isinstance(raw_keys, list):
+        return None
+    entries: dict[int, tuple[int, int, int]] = {}
+    try:
+        for raw_key in raw_keys:
+            match_id, radiant_team_id, dire_team_id, timestamp = raw_key
+            entries[int(match_id)] = (int(radiant_team_id), int(dire_team_id), int(timestamp))
+    except (TypeError, ValueError):
+        return None
+    return tolerance_seconds, entries
+
+
+def _snapshot_find_team_pair_key(
+    recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None,
+    *,
+    radiant_team_id: int | None,
+    dire_team_id: int | None,
+    timestamp: int | None,
+    consumed: set[int],
+) -> int | None:
+    """Nearest UNCONSUMED key's `match_id` matching the pair within tolerance.
+
+    Picking the nearest (not merely any) candidate, and never returning an
+    already-`consumed` `match_id`, is what makes a fixed tolerance safe for
+    two same-pair maps close together: each can only claim its own key.
+    """
+    if recent_completed_keys is None or radiant_team_id is None or dire_team_id is None or timestamp is None:
+        return None
+    tolerance_seconds, entries = recent_completed_keys
+    pair = tuple(sorted((int(radiant_team_id), int(dire_team_id))))
+    best_match_id: int | None = None
+    best_diff: int | None = None
+    for match_id, (r, d, ts) in entries.items():
+        if match_id in consumed:
+            continue
+        if tuple(sorted((r, d))) != pair:
+            continue
+        diff = abs(ts - int(timestamp))
+        if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
+            best_diff = diff
+            best_match_id = match_id
+    return best_match_id
+
+
+def _known_team_ids_from_model_state(
+    model_state: dict[str, Any] | None,
+    recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None = None,
+) -> set[int]:
+    """Team ids the base has any trace of: registry-derived, PLUS raw corpus ids.
+
+    `model_state` never stores raw team ids (`ELO/models.py::export_state`):
+    ratings are keyed by `org_key` (`ELO/team_identity.py::resolve_org_key`)
+    embedded in `roster_key` (`"{org_key}::roster:{segment}"`, `ELO/roster.py`)
+    or as `player_current_org` values, so one leg is a small, STATIC
+    id->org_key lookup (`TEAM_ID_TO_ORG_KEY`; no per-entry guessing of an
+    unknown team's org_key from its display name).  That registry is
+    INCOMPLETE for real corpus teams missing from `base/id_to_names.py`, so
+    `recent_completed_keys` (raw `radiant_team_id`/`dire_team_id` straight
+    from the corpus) is unioned in as a second, independent leg — a team
+    present there has base rating history regardless of registry coverage,
+    and must veto the "both unknown" rule same as a registry hit would.
+    """
+    known: set[int] = set()
+    if isinstance(model_state, dict):
+        org_keys_in_state: set[str] = set()
+        roster_ratings = model_state.get("roster_ratings")
+        if isinstance(roster_ratings, dict):
+            for tier_store in roster_ratings.values():
+                if not isinstance(tier_store, dict):
+                    continue
+                for roster_key in tier_store:
+                    org_key = str(roster_key).split("::roster:", 1)[0]
+                    if org_key:
+                        org_keys_in_state.add(org_key)
+        player_current_org = model_state.get("player_current_org")
+        if isinstance(player_current_org, dict):
+            for org_key in player_current_org.values():
+                if isinstance(org_key, str) and org_key:
+                    org_keys_in_state.add(org_key)
+        if org_keys_in_state:
+            known.update(
+                team_id for team_id, org_key in TEAM_ID_TO_ORG_KEY.items()
+                if org_key in org_keys_in_state
+            )
+    if recent_completed_keys is not None:
+        _tolerance_seconds, entries = recent_completed_keys
+        for radiant_team_id, dire_team_id, _timestamp in entries.values():
+            known.add(radiant_team_id)
+            known.add(dire_team_id)
+    return known
 
 
 def _snapshot_covered_tombstone(
@@ -810,19 +972,51 @@ def _snapshot_covered_tombstone(
     return tombstone
 
 
+def _consume_key_for_match_id(
+    recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None,
+    consumed: set[int],
+    match_id: int | None,
+) -> None:
+    """Mark `match_id`'s snapshot key (if any) as used by an id-proven entry.
+
+    An exact-id proof does not itself need the key, but a LATER entry's
+    pair+time fallback must not be allowed to also claim it (E-294 review:
+    two same-pair maps close together would otherwise both match one key).
+    """
+    if recent_completed_keys is None or match_id is None:
+        return
+    _tolerance_seconds, entries = recent_completed_keys
+    if match_id in entries:
+        consumed.add(match_id)
+
+
 def _applied_entry_for_rebase(
     raw: Any,
     *,
     snapshot_reference: int,
     recent_completed_ids: tuple[int, set[int]] | None,
+    recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None = None,
+    known_team_ids: set[int] | None = None,
+    consumed: set[int] | None = None,
 ) -> tuple[str, MatchRecord | None, int | None]:
     """Classify an old live result as covered, replayable, or unsafe.
 
     `result_timestamp` is when live ELO processed a result, rather than proof
     of when the upstream corpus learned it.  We therefore use only an actual
     source finish (when available), a start after the snapshot cutoff, or the
-    snapshot's bounded exact id coverage to decide membership.
+    snapshot's bounded exact id coverage to decide membership.  Proof order:
+    exact id -> team-pair+time -> "both teams unknown to base" -> window-gated
+    replay -> raise.  `known_team_ids` (when given) backs the third proof: if
+    NEITHER side of the map has any trace in the base snapshot, there is no
+    base event of theirs to interleave with, so the map replays regardless of
+    `snapshot_reference` -- checked only AFTER id/pair proofs so a map that IS
+    identifiable is never downgraded to this looser rule.  `consumed` (when
+    given) is a set of snapshot key `match_id`s already used as proof for
+    another entry in this same rebase; the caller should share ONE such set
+    across every entry so a key proves at most one ledger row.
     """
+    if consumed is None:
+        consumed = set()
     if not isinstance(raw, dict):
         raise RuntimeRebaseError("некорректная запись применённой live-карты")
     match_id = _coerce_optional_int(raw.get("match_id"))
@@ -846,6 +1040,7 @@ def _applied_entry_for_rebase(
                 f"snapshot tombstone {match_id} не подтверждён новым снимком; "
                 "перебазировка отменена"
             )
+        _consume_key_for_match_id(recent_completed_keys, consumed, match_id)
         return "tombstone", None, None
     # Exact snapshot membership is sufficient even for an old compact ledger
     # entry that predates full replay context.
@@ -854,6 +1049,7 @@ def _applied_entry_for_rebase(
         covered_match = None
         if isinstance(raw.get("radiant_win"), bool) and isinstance(raw.get("match_record"), dict):
             covered_match = _deserialize_match_record(raw["match_record"], radiant_win=raw["radiant_win"])
+        _consume_key_for_match_id(recent_completed_keys, consumed, match_id)
         return "covered", covered_match, None
     radiant_win = raw.get("radiant_win")
     record_raw = raw.get("match_record")
@@ -888,19 +1084,60 @@ def _applied_entry_for_rebase(
     if match.timestamp > snapshot_reference:
         return _replay()
 
+    coverage_since: int | None = None
     if recent_completed_ids is not None:
         coverage_since, completed_ids = recent_completed_ids
         # Positive membership is exact even when live context had no map
         # duration (the common score-observation path).
         if match.match_id in completed_ids:
+            _consume_key_for_match_id(recent_completed_keys, consumed, match.match_id)
             return "covered", match, result_timestamp
-        if (source_result_timestamp is not None
-                and coverage_since <= source_result_timestamp <= snapshot_reference):
-            return _replay()
 
+    # `match_id` on an old ledger entry can be a DLTV series id or a fixed
+    # placeholder instead of the Valve match id, so exact-id membership
+    # always misses even though the snapshot contains the match.  Fall back
+    # to an unordered team-pair + start-time match within tolerance, picking
+    # (and consuming) the nearest still-unconsumed key.
+    found_match_id = _snapshot_find_team_pair_key(
+        recent_completed_keys,
+        radiant_team_id=match.radiant_team_id,
+        dire_team_id=match.dire_team_id,
+        timestamp=match.timestamp,
+        consumed=consumed,
+    )
+    if found_match_id is not None:
+        consumed.add(found_match_id)
+        return "covered", match, result_timestamp
+
+    if (known_team_ids and match.radiant_team_id is not None and match.dire_team_id is not None
+            and match.radiant_team_id not in known_team_ids
+            and match.dire_team_id not in known_team_ids):
+        # Обе команды отсутствуют в базе снимка — replay без порядкового
+        # гейта: у них нет ни одного base-события, порядок с которым мог бы
+        # быть нарушен, поэтому snapshot_reference здесь не проверяется.
+        # Checked only after id/pair proofs (E-294 review FIX 1): a map that
+        # IS identifiable by id or pair must never fall through to this
+        # looser rule.  An EMPTY `known_team_ids` (base has no team trace at
+        # all, e.g. a freshly bootstrapped/test snapshot) is treated as "no
+        # evidence either way", not as "every team is absent" — old
+        # behaviour applies.
+        return "replay_unknown_teams", match, result_timestamp
+
+    if (source_result_timestamp is not None and coverage_since is not None
+            and coverage_since <= source_result_timestamp <= snapshot_reference):
+        return _replay()
+    if (recent_completed_keys is not None and coverage_since is not None
+            and coverage_since <= result_timestamp <= snapshot_reference):
+        return _replay()
+
+    if recent_completed_keys is not None:
+        proof_note = "испробованы точный match_id и team-pair+время, совпадений нет"
+    else:
+        proof_note = "team-pair+время недоступен (снимок без recent_completed_match_keys)"
     raise RuntimeRebaseError(
         f"live-карта {match.match_id} пересекает cutoff {snapshot_reference}, "
         "а снимок не доказывает её membership; перебазировка отменена"
+        f" ({proof_note})"
     )
 
 
@@ -909,7 +1146,12 @@ def _pending_entry_for_rebase(
     *,
     snapshot_reference: int,
     recent_completed_ids: tuple[int, set[int]] | None,
+    recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None = None,
+    known_team_ids: set[int] | None = None,
+    consumed: set[int] | None = None,
 ) -> tuple[str, MatchRecord]:
+    if consumed is None:
+        consumed = set()
     if not isinstance(pending_map, dict):
         raise RuntimeRebaseError("некорректная pending live-карта")
     record_raw = pending_map.get("match_record")
@@ -925,16 +1167,54 @@ def _pending_entry_for_rebase(
         return "pending", match
     if match.timestamp > snapshot_reference:
         return "pending", match
+    coverage_since: int | None = None
     if recent_completed_ids is not None:
         coverage_since, completed_ids = recent_completed_ids
         if match.match_id in completed_ids:
+            _consume_key_for_match_id(recent_completed_keys, consumed, match.match_id)
             return "covered", match
-        if (source_result_timestamp is not None
-                and coverage_since <= source_result_timestamp <= snapshot_reference):
-            return "pending", match
+
+    # Same DLTV-series-id / placeholder problem as the applied-map guard: fall
+    # back to team-pair + start-time within tolerance before giving up,
+    # picking (and consuming) the nearest still-unconsumed key.
+    found_match_id = _snapshot_find_team_pair_key(
+        recent_completed_keys,
+        radiant_team_id=match.radiant_team_id,
+        dire_team_id=match.dire_team_id,
+        timestamp=match.timestamp,
+        consumed=consumed,
+    )
+    if found_match_id is not None:
+        consumed.add(found_match_id)
+        return "covered", match
+
+    if (known_team_ids and match.radiant_team_id is not None and match.dire_team_id is not None
+            and match.radiant_team_id not in known_team_ids
+            and match.dire_team_id not in known_team_ids):
+        # Обе команды отсутствуют в базе снимка — replay без порядкового
+        # гейта: ничьи base-события не нарушатся, оставаясь pending. Пустой
+        # `known_team_ids` (снимок вообще без данных о командах) — это
+        # отсутствие доказательства, а не «все команды отсутствуют». Проверяется
+        # только ПОСЛЕ id/pair-доказательств (E-294 review FIX 1).
+        return "pending_unknown_teams", match
+
+    registered_at = _coerce_optional_int(pending_map.get("registered_at"))
+    if (source_result_timestamp is not None and coverage_since is not None
+            and coverage_since <= source_result_timestamp <= snapshot_reference):
+        return "pending", match
+    if (recent_completed_keys is not None and coverage_since is not None
+            and registered_at is not None
+            and coverage_since <= registered_at <= snapshot_reference):
+        return "pending", match
+
+    if recent_completed_keys is not None:
+        proof_note = "испробованы точный match_id и team-pair+время, совпадений нет"
+    else:
+        proof_note = "team-pair+время недоступен (снимок без recent_completed_match_keys)"
     raise RuntimeRebaseError(
         f"pending live-карта {match.match_id} пересекает cutoff {snapshot_reference}, "
         "а снимок не доказывает её membership; перебазировка отменена"
+        f" ({proof_note})"
     )
 
 
@@ -1005,6 +1285,27 @@ def rebase_runtime_model_state(
     if not isinstance(base_state, dict):
         raise RuntimeRebaseError("в новом снимке нет model_state для перебазировки")
     recent_completed_ids = _snapshot_recent_completed_ids(snapshot)
+    recent_completed_keys = _snapshot_recent_completed_keys(snapshot)
+    # Derived once: a team absent here has no rating/roster trace in the base
+    # at all, so replaying its map cannot perturb any base team's ELO order.
+    # Registry-derived ids are unioned with the raw corpus ids in
+    # `recent_completed_keys` (E-294 review FIX 2): the static registry is
+    # incomplete for real corpus teams missing from `base/id_to_names.py`.
+    known_team_ids = _known_team_ids_from_model_state(base_state, recent_completed_keys)
+    unknown_teams_accepted = 0
+    # One snapshot key proves at most one ledger entry (E-294 review FIX 3);
+    # shared across the applied AND pending loops below.
+    consumed_keys: set[int] = set()
+
+    def _applied_sort_key(item: tuple[str, Any]) -> int:
+        _map_key, raw = item
+        ts = raw.get("result_timestamp") if isinstance(raw, dict) else None
+        if ts is None and isinstance(raw, dict):
+            ts = raw.get("applied_at")
+        try:
+            return int(ts)
+        except (TypeError, ValueError):
+            return 0
     old_applied = (progress_payload or {}).get("applied_maps") if isinstance(progress_payload, dict) else {}
     old_pending = (progress_payload or {}).get("pending_series") if isinstance(progress_payload, dict) else {}
     if not isinstance(old_applied, dict) or not isinstance(old_pending, dict):
@@ -1019,11 +1320,18 @@ def rebase_runtime_model_state(
 
     replay_rows: list[tuple[int, int, str, dict[str, Any], MatchRecord]] = []
     rebased_applied: dict[str, Any] = {}
-    for insertion_order, (map_key, raw) in enumerate(old_applied.items()):
+    # Chronological order (E-294 review FIX 3) so an entry with a real,
+    # exact-id proof reserves its own snapshot key before a LATER, only
+    # pair-provable entry could otherwise claim it by proximity.
+    ordered_applied = sorted(old_applied.items(), key=_applied_sort_key)
+    for insertion_order, (map_key, raw) in enumerate(ordered_applied):
         action, match, result_timestamp = _applied_entry_for_rebase(
             raw,
             snapshot_reference=want_reference,
             recent_completed_ids=recent_completed_ids,
+            recent_completed_keys=recent_completed_keys,
+            known_team_ids=known_team_ids,
+            consumed=consumed_keys,
         )
         if action == "tombstone":
             rebased_applied[str(map_key)] = dict(raw)
@@ -1036,8 +1344,10 @@ def rebase_runtime_model_state(
             rebased_applied[str(map_key)] = _snapshot_covered_tombstone(
                 match_id, snapshot_reference=want_reference, match=match
             )
-        elif action == "replay":
+        elif action in ("replay", "replay_unknown_teams"):
             assert match is not None and result_timestamp is not None
+            if action == "replay_unknown_teams":
+                unknown_teams_accepted += 1
             replay_rows.append((result_timestamp, insertion_order, str(map_key), dict(raw), match))
 
     # A pending map that the snapshot now definitely includes becomes a
@@ -1056,8 +1366,14 @@ def rebase_runtime_model_state(
                 pending_map,
                 snapshot_reference=want_reference,
                 recent_completed_ids=recent_completed_ids,
+                recent_completed_keys=recent_completed_keys,
+                known_team_ids=known_team_ids,
+                consumed=consumed_keys,
             )
-            if action == "pending":
+            if action == "pending_unknown_teams":
+                unknown_teams_accepted += 1
+                retained.append(pending_map)
+            elif action == "pending":
                 retained.append(pending_map)
             else:
                 map_key = str(pending_map.get("map_key") or "").strip()
@@ -1088,6 +1404,13 @@ def rebase_runtime_model_state(
         copied["applied_at"] = int(result_timestamp)
         copied["match_record"] = _serialize_match_record(match)
         rebased_applied[map_key] = copied
+
+    if unknown_teams_accepted:
+        print(
+            f"[ELO] rebase: {unknown_teams_accepted} live-карт(а) приняты правилом "
+            "«обе команды отсутствуют в базе снимка — replay без порядкового гейта»",
+            flush=True,
+        )
 
     rebased_progress = {
         "base_reference_timestamp": want_reference,
@@ -1894,12 +2217,12 @@ def _build_snapshot_dict(
     recent_result_coverage_since = max(
         0, reference_timestamp - SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS
     )
-    recent_completed_match_ids = sorted({
-        int(match.match_id)
-        for match in matches
-        if match.result_timestamp is not None
-        and recent_result_coverage_since <= match.result_timestamp <= reference_timestamp
-    })
+    recent_completed_match_meta = _recent_completed_match_meta(
+        matches,
+        coverage_since=recent_result_coverage_since,
+        reference_timestamp=reference_timestamp,
+    )
+    recent_completed_match_ids = recent_completed_match_meta["recent_completed_match_ids"]
     cross_tier_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"series": 0, "strong_wins": 0}
     )
@@ -2034,6 +2357,13 @@ def _build_snapshot_dict(
             # cannot prove that a delayed upstream result made this rebuild.
             "recent_completed_match_ids": recent_completed_match_ids,
             "recent_completed_match_ids_coverage_since": recent_result_coverage_since,
+            # Fallback membership proof for ledger entries whose `match_id`
+            # is a DLTV series id / placeholder rather than the Valve match
+            # id (same coverage window and match set as the ids above).
+            "recent_completed_match_keys": recent_completed_match_meta["recent_completed_match_keys"],
+            "recent_completed_match_keys_tolerance_seconds": recent_completed_match_meta[
+                "recent_completed_match_keys_tolerance_seconds"
+            ],
             "active_cutoff_days": active_cutoff_days,
             "display_decay_half_life_days": display_decay_half_life_days,
             "loaded_matches": int(load_summary.get("loaded_matches", 0)),
