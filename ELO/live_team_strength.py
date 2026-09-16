@@ -1273,17 +1273,31 @@ def rebase_runtime_model_state(
 
     # The old full state supplied only its base header.  Do not retain its
     # large dictionaries while replaying and serializing the replacement.
+    old_config_signature = _model_config_signature(
+        state_payload.get("model_state") if isinstance(state_payload, dict) else None
+    )
     del state_payload
     has_work = _progress_has_outstanding_work(progress_payload)
-    if has_work and progress_base[1] != want_signature:
-        raise RuntimeRebaseError(
-            "подпись базового снимка изменилась при незавершённой live-работе; "
-            "перебазировка отменена"
-        )
 
     base_state = full_model_state(snapshot)
     if not isinstance(base_state, dict):
         raise RuntimeRebaseError("в новом снимке нет model_state для перебазировки")
+    # Guard на КОНФИГ модели, а не на подпись базы. `meta.model_config_signature`
+    # снимка — это `_rating_history_signature`: хэш всей истории матчей, он
+    # меняется с каждой ночной сборкой, и сравнение с ним запрещало перебазировку
+    # любой незавершённой работы по построению (12–16.09.2026 ни один ночной
+    # прогон не прошёл, E-294). Перенос live-результатов на новую историю — и
+    # есть задача rebase; запрещён он только при смене ПАРАМЕТРОВ модели, когда
+    # старые события несопоставимы с новой базой. Оба хэша считаются от
+    # `model_state.config` уже загруженных состояний, новых полей не нужно.
+    new_config_signature = _model_config_signature(base_state)
+    if (has_work and old_config_signature and new_config_signature
+            and old_config_signature != new_config_signature):
+        raise RuntimeRebaseError(
+            "конфиг модели изменился при незавершённой live-работе "
+            f"({old_config_signature[:12]}… → {new_config_signature[:12]}…); "
+            "перебазировка отменена"
+        )
     recent_completed_ids = _snapshot_recent_completed_ids(snapshot)
     recent_completed_keys = _snapshot_recent_completed_keys(snapshot)
     # Derived once: a team absent here has no rating/roster trace in the base

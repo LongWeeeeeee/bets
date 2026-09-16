@@ -395,3 +395,72 @@ def test_team_present_in_keys_but_absent_from_registry_counts_as_known() -> None
             recent_completed_keys=recent_completed_keys,
             known_team_ids=known,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Config-hash guard (E-294 follow-up, 17.09.2026): `meta.model_config_signature`
+# is `_rating_history_signature` (hash of ALL matches) and changes on every
+# nightly rebuild by design, so comparing it against outstanding live work
+# blocked every rebase 12-16.09.2026.  The guard now compares
+# `_model_config_signature(model_state.config)` of the old runtime state vs
+# the new snapshot instead, and only raises when the MODEL config (not the
+# match history) actually changed.
+# --------------------------------------------------------------------------- #
+
+def test_config_hash_guard_allows_rebase_when_only_history_signature_changed(tmp_path) -> None:
+    old_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    new_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    completed = _live_record(9_600_001, start=500)
+
+    snapshot_path = tmp_path / "snapshot.json"
+    _write(snapshot_path, {
+        "meta": {"reference_timestamp": 2_000, "model_config_signature": "new-history-signature",
+                 "recent_completed_match_ids_coverage_since": 0,
+                 "recent_completed_match_ids": [9_600_001]},
+        "model_state": new_state,
+    })
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "old-history-signature",
+                        "model_state": old_state})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "old-history-signature",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(completed, observed_at=1_500)}})
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    new_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert new_progress["base_reference_timestamp"] == 2_000
+    assert new_progress["base_model_config_signature"] == "new-history-signature"
+
+
+def test_config_hash_guard_blocks_rebase_when_model_config_changed(tmp_path, capsys) -> None:
+    old_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    new_state = HybridPlayerRosterEloModel(HybridEloConfig(elo_scale=999.0)).export_state()
+    completed = _live_record(9_600_002, start=500)
+
+    snapshot_path = tmp_path / "snapshot.json"
+    _write(snapshot_path, {
+        "meta": {"reference_timestamp": 2_000, "model_config_signature": "new-history-signature-2",
+                 "recent_completed_match_ids_coverage_since": 0,
+                 "recent_completed_match_ids": [9_600_002]},
+        "model_state": new_state,
+    })
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "old-history-signature-2",
+                        "model_state": old_state})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "old-history-signature-2",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(completed, observed_at=1_500)}})
+    before = state_path.read_bytes(), progress_path.read_bytes()
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 1
+    err = capsys.readouterr().err
+    assert "конфиг модели изменился" in err
+    assert (state_path.read_bytes(), progress_path.read_bytes()) == before

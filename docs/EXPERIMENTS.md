@@ -1057,4 +1057,11 @@ consumption ключа.** Ревью потребовало: unknown-teams пр�
   («не в keys ⇒ не в снимке») остаётся непроверенным для team_id, отсутствующих
   в `recent_completed_match_keys` вовсе — для них пара всегда «не найдена»,
   а не «найдена вне допуска», и это неотличимо от полного отсутствия в корпусе
-  без похода в сырые данные корпуса.
+  без похода в сырые данные корпуса. Установка на serv1 (попытка 2) прошла
+  успешно (59 карт через unknown-teams правило, снимок в проде) после замены
+  гейта `has_work and progress_base[1] != want_signature` (блокировал каждую
+  ночную пересборку, т.к. `model_config_signature` снимка — это хэш всей
+  истории матчей, меняющийся по конструкции) на сравнение
+  `_model_config_signature(model_state.config)` старого и нового состояния —
+  закреплено тестами `test_config_hash_guard_allows_rebase_when_only_history_signature_changed`/
+  `test_config_hash_guard_blocks_rebase_when_model_config_changed`.
