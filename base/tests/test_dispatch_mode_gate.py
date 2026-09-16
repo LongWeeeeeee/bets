@@ -10,7 +10,10 @@ swirling-giggling-kurzweil.md.
 """
 from __future__ import annotations
 
+import ast
 import sys
+
+import pytest
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -522,3 +525,140 @@ def test_ml_min_odds_unknown_price_passes_when_odds_pipeline_off(monkeypatch, ca
     below = "СТАВКА НА Dawn Bulls x1\nКэф Winline: 1.40\n"
     decision = C._ml_dispatch_min_odds_reject_for_delivery(below, ML_WIN_CTX)
     assert decision is not None and decision["price"] == 1.40
+
+
+@pytest.mark.parametrize("rule", ["underdog", "late_conflict"])
+@pytest.mark.parametrize("team_ids,require_tier1,allowed", [
+    ((111, 222), True, False),  # neither team qualifies
+    ((101, 222), True, True),  # only Radiant is Tier-1
+    ((111, 101), True, True),  # only Dire is Tier-1
+    ((0, None), True, False),  # missing IDs fail closed
+    ((111, 222), False, True),  # existing explicit opt-out
+])
+def test_ml_early_kills_tier_gate_before_delivery(
+    monkeypatch, rule, team_ids, require_tier1, allowed,
+):
+    import id_to_names
+
+    monkeypatch.setenv("DISPATCH_MODE", "ml")
+    monkeypatch.setattr(C, "KILLS_REQUIRE_TIER1_TEAM", require_tier1)
+    monkeypatch.setattr(C, "_ensure_dynamic_tier2_overlay", lambda: None)
+    monkeypatch.setattr(C, "_auto_added_tier2_ids", set())
+    monkeypatch.setattr(id_to_names, "tier_one_teams", {"Tier1": {101}})
+    monkeypatch.setattr(id_to_names, "tier_two_teams", {"DIREBORN": 111, "Team Nemesis": 222})
+    delivered, logged, ledger = [], [], _FakeLedger()
+    _patch_ml_dispatch_tick_deps(
+        monkeypatch, delivered_calls=delivered, logged=logged, ledger=ledger,
+    )
+    details = {"early_win": {"side": "Radiant", "confidence": 0.65}}
+    if rule == "late_conflict":
+        details["late"] = {"side": "Dire", "confidence": 0.70}
+    monkeypatch.setattr(C, "_ml_dispatch_extract_index_details", lambda *a: (5.0, details))
+    monkeypatch.setattr(
+        _laning_serving_module, "verdicts",
+        lambda *a, **k: {"all": {"side": "Radiant", "confidence": 0.65}, "lane": None},
+    )
+    monkeypatch.setattr(
+        C, "_team_elo_base_rating_for_side",
+        lambda meta, side: 1400.0 if rule == "late_conflict" or side == "radiant" else 1600.0,
+    )
+    monkeypatch.setattr(C.win_model_veto, "last_kills30", lambda i: {"radiant": 0.99})
+    C._ml_dispatch_tick(
+        match_key="dltv.org/matches/direborn-tier-regression.0",
+        radiant_team_name="DIREBORN", dire_team_name="Team Nemesis",
+        radiant_team_id=team_ids[0], dire_team_id=team_ids[1],
+        live_league={}, top="", mid="", bot="", protracker_payload=None,
+        team_elo_block="", team_elo_meta={}, game_time_seconds=0, radiant_lead=0,
+        radiant_heroes_and_pos={}, dire_heroes_and_pos={},
+        full_message_text=("DIREBORN VS Team Nemesis\n"
+                           "🔴 окно 5-15: Dire 64%\nKills_window: 5_15: +0.25"),
+    )
+    assert len(logged) == 1
+    windows = [d for d in logged[0]["decisions"] if d["market"] == "kills_window"]
+    assert bool(windows) is allowed
+    sent_markets = [kwargs["stake_multiplier_context"]["ml_market"] for _, kwargs in delivered]
+    assert ("kills_window" in sent_markets) is allowed
+    assert "kills_total" in sent_markets  # unchanged market, same ML evidence
+    blocked = [s for s in logged[0]["skipped"] if s["reason"] == "kills_requires_tier1_team"]
+    assert bool(blocked) is (not allowed)
+    assert any(k[2] == "kills_window" for k in ledger.as_set()) is allowed
+    if allowed:
+        assert windows[0]["target_side"] == "Radiant"
+        assert windows[0]["reasons"][-1] == "window=5_15"
+
+
+def test_every_ml_dispatch_callsite_passes_resolved_team_ids():
+    tree = ast.parse(Path(C.__file__).read_text())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name)
+             and node.func.id == "_ml_dispatch_tick_once_per_cycle"]
+    assert len(calls) == 4
+    for call in calls:
+        args = {kw.arg: kw.value for kw in call.keywords}
+        for name in ("radiant_team_id", "dire_team_id"):
+            assert isinstance(args.get(name), ast.Name)
+            assert args[name].id == name
+
+
+@pytest.mark.parametrize("nemesis_tier,allowed", [(1, True), (2, False)])
+def test_direborn_map4_incident_replay_respects_team_tier(monkeypatch, nemesis_tier, allowed):
+    # serv1 ml_dispatch_decisions.jsonl:478, 2026-09-16T10:09:04Z.
+    # The sent rule used Early Win, despite the panel window favoring Dire.
+    from base import ml_dispatch as md
+
+    monkeypatch.setenv("DISPATCH_MODE", "ml")
+    monkeypatch.setattr(C, "KILLS_REQUIRE_TIER1_TEAM", True)
+    monkeypatch.setattr(C, "_get_team_tier", lambda team_id: nemesis_tier if team_id == 9691969 else 2)
+    delivered, logged, ledger = [], [], _FakeLedger()
+    _patch_ml_dispatch_tick_deps(
+        monkeypatch, delivered_calls=delivered, logged=logged, ledger=ledger,
+    )
+    details = {
+        "early_nw": {"side": "Dire", "confidence": 0.5364},
+        "early_win": {"side": "Radiant", "confidence": 0.625102},
+        "late": {"side": "Radiant", "confidence": 0.5302},
+    }
+    monkeypatch.setattr(C, "_ml_dispatch_extract_index_details", lambda *a: (-22.99, details))
+    monkeypatch.setattr(C, "_ml_dispatch_prematch_source", lambda *a: C.win_model_veto.SOURCE_PREMATCH)
+    monkeypatch.setattr(
+        _laning_serving_module, "verdicts", lambda *a, **k: {
+            "all": {"side": "Radiant", "confidence": 0.5784},
+            "lane": {"side": "Radiant", "confidence": 0.6672},
+        },
+    )
+    monkeypatch.setattr(
+        C, "_team_elo_base_rating_for_side",
+        lambda meta, side: 2037.802445754411 if side == "radiant" else 2172.694518987726,
+    )
+    monkeypatch.setattr(C.win_model_veto, "last_kills30", lambda i: {
+        "radiant": 0.5383362133942335, "dire": 0.3798063135879572,
+        "total": 0.4155635242327326,
+    })
+    original_evaluate = md.evaluate
+    raw_decisions = []
+
+    def capture_raw_decisions(ctx, cfg):
+        result = original_evaluate(ctx, cfg)
+        raw_decisions.extend(result.decisions)
+        return result
+
+    monkeypatch.setattr(md, "evaluate", capture_raw_decisions)
+    C._ml_dispatch_tick(
+        match_key="dltv.org/matches/9001373364.0",
+        radiant_team_id=10150434, dire_team_id=9691969,
+        radiant_team_name="DIREBORN", dire_team_name="Team Nemesis",
+        live_league={}, top="", mid="", bot="", protracker_payload=None,
+        team_elo_block="", team_elo_meta={}, game_time_seconds=-79, radiant_lead=0,
+        radiant_heroes_and_pos={}, dire_heroes_and_pos={},
+        full_message_text="DIREBORN VS Team Nemesis\n1-2",
+    )
+    assert [(d.market, d.target_side, d.rule) for d in raw_decisions] == [
+        ("kills_window", "Radiant", "kills_underdog_early_window"),
+    ]
+    assert raw_decisions[0].models_for == ["early_win"]
+    assert raw_decisions[0].reasons[-1] == "window=5_15"
+    assert len(logged) == 1
+    assert bool(logged[0]["decisions"]) is allowed
+    assert any(s["reason"] == "kills_requires_tier1_team" for s in logged[0]["skipped"]) is (not allowed)
+    assert bool(delivered) is allowed
+    assert bool(ledger.as_set()) is allowed

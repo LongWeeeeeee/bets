@@ -1763,6 +1763,16 @@ draft_model=...)` — экспортирует те же два вердикта
   ДО появления `Decision`, повторная проверка предматчевой/late-модели здесь
   избыточна.
 
+Ранние kills-окна ML-диспатча проходят тот же Tier-1 gate, что и legacy:
+все четыре вызова `_ml_dispatch_tick_once_per_cycle` передают разрешённые
+`radiant_team_id`/`dire_team_id` в `_ml_dispatch_tick` (неизвестные ID = 0).
+После `evaluate`, до журнала и доставки, `_match_has_tier1_team` отсекает
+`kills_window`, если ни одна команда не Tier-1; в `skipped` пишется
+`kills_requires_tier1_team` с ID обеих сторон. Достаточно одной команды Tier-1
+на любой стороне. `KILLS_REQUIRE_TIER1_TEAM=0` сохраняет явный opt-out.
+Проверка охватывает underdog и late-conflict правила; `win`/`kills_total`
+не меняются. Инцидент DIREBORN проверяется в `test_dispatch_mode_gate.py`.
+
 `_ml_dispatch_tick(...)` (~12052) — один тик одной карты: собирает `Ctx` (ELO
 из `team_elo_meta`, пять вердиктов из `early_output/mid_output/all_output` +
 `laning_serving.verdicts`, открытые kills-окна из

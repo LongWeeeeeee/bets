@@ -12609,6 +12609,8 @@ def _ml_dispatch_tick(
     ml_laning_line: str = "",
     all_model_line: str = "",
     laning_timestamp: Any = None,
+    radiant_team_id: Any = 0,
+    dire_team_id: Any = 0,
 ) -> None:
     """Один тик одной карты: оценить шесть моделей, залогировать решение,
     при ``DISPATCH_MODE=ml`` — отправить ``Decision``ы с ``timing=="now"``.
@@ -12708,6 +12710,19 @@ def _ml_dispatch_tick(
             radiant_networth_lead=networth_lead_value,
         )
         result = _md.evaluate(ctx, cfg)
+        # Apply the same Tier-1 requirement as the legacy early-kills senders
+        # before audit/delivery, including both ML rules that emit windows.
+        if not _match_has_tier1_team(radiant_team_id, dire_team_id):
+            allowed_decisions = []
+            for decision in result.decisions:
+                if decision.market == "kills_window":
+                    result.skipped.append(_md.Skipped(
+                        "kills_window", decision.target_side, "kills_requires_tier1_team",
+                        f"radiant_team_id={radiant_team_id}, dire_team_id={dire_team_id}",
+                    ))
+                else:
+                    allowed_decisions.append(decision)
+            result.decisions = allowed_decisions
 
         def _verdict_view(v):
             if v is None:
@@ -40379,6 +40394,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 except Exception:
                     _cov_elo_block, _cov_elo_meta = "", None
                 _ml_dispatch_tick_once_per_cycle(
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
                     match_key=check_uniq_url,
                     radiant_team_name=radiant_team_name_original or radiant_team_name,
                     dire_team_name=dire_team_name_original or dire_team_name,
@@ -40548,6 +40565,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # же _deliver_and_persist_signal. Не влияет на STAR-путь выше —
             # own try/except внутри, тик карты не падает из-за нового пути.
             _ml_dispatch_tick_once_per_cycle(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
@@ -42971,6 +42990,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
             # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
             _ml_dispatch_tick_once_per_cycle(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
@@ -46554,6 +46575,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # не вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
             # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
             _ml_dispatch_tick_once_per_cycle(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
