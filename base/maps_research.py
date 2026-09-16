@@ -13,6 +13,7 @@ except Exception:
     ijson = None
 import orjson
 import os
+import sys
 from pathlib import Path
 from keys import STRATZ_PROXY_MAP, start_date_time, start_date_time_739, start_date_time_736
 try:
@@ -42,7 +43,7 @@ except Exception:
 import requests
 from curl_cffi import requests as cf_requests
 from collections import deque, Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import urllib3
 urllib3.disable_warnings()
@@ -53,6 +54,12 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
 ANALYSE_PUB_DIR = PROJECT_ROOT / "bets_data" / "analise_pub_matches"
 PUBS_SOURCE_DIR = ANALYSE_PUB_DIR / "json_parts_split_from_object"
+#: Персистентный набор pub steam id игроков (см. build/load/save_pub_player_ids
+#: и get_pubs() ниже). serv1 после 16.09.2026 не держит 36 ГБ part-файлов
+#: корпуса — этот файл и есть замена скану корпуса на каждый прогон.
+PUBS_PLAYER_IDS_FILE = Path(
+    os.getenv("PUBS_PLAYER_IDS_FILE", str(ANALYSE_PUB_DIR / "pub_player_steam_ids.json"))
+)
 
 # Загрузка валидных позиций героев
 HERO_VALID_POSITIONS = {}
@@ -1123,6 +1130,31 @@ async def get_maps_new(ids, mkdir,
         print(f"💾 Сохранены вспомогательные файлы: player_ids, all_teams, trash_maps, processed_ids_to_graph")
     else:
         print(f"⏭️  Пропущено сохранение вспомогательных файлов (skip_auxiliary_files=True)")
+
+    # Персистентный набор pub player id (serv1 после 16.09.2026 не держит корпус
+    # part-файлов, поэтому этот файл — единственный источник id для следующего
+    # get_pubs()). Только для pub-обхода (не pro) и не для live-обновлений.
+    # Делается ДО merge_temp_files_by_patch: если merge упадёт, набор id этого
+    # прогона всё равно не потеряется. player_ids уже отфильтрован от
+    # isAnonymous/смурфов в proceed_get_maps_with_data — переотбирать не нужно.
+    # Никогда не роняет обход: любая ошибка здесь — предупреждение, не исключение.
+    if not skip_auxiliary_files and not pro:
+        try:
+            merged_player_ids = set(int(pid) for pid in player_ids)
+            previous_ids = load_pub_player_ids()
+            if previous_ids is not None:
+                prev_ids, _prev_meta = previous_ids
+                merged_player_ids |= prev_ids
+            save_pub_player_ids(
+                merged_player_ids,
+                last_crawl_completed_utc=datetime.now(timezone.utc).isoformat(),
+            )
+            print(
+                f"💾 pub_player_steam_ids.json обновлён: {len(merged_player_ids)} id "
+                f"(+{len(player_ids)} из этого прогона)"
+            )
+        except Exception as e:
+            print(f"⚠️ Не удалось обновить pub_player_steam_ids.json: {e}")
 
     # Удаление файла состояния после успешного завершения
     clear_get_maps_state(maps_to_save)
@@ -2390,6 +2422,61 @@ def _file_stamp(path):
     return [int(st.st_size), int(st.st_mtime)]
 
 
+def _load_part_counters(output_dir) -> dict:
+    """part_counters.json = {patch_name: наибольший part-номер, КОГДА-ЛИБО записанный}.
+
+    ЗАЧЕМ. После переноса pub-корпуса на Mac (16.09.2026) part-файлы
+    `<patch>_partNNN.json` на serv1 удаляются вслед за переносом, и скан
+    диска (`max_part` по glob) снова стартует с 0 — следующий merge на serv1
+    перезаписал бы номера частей, уже отправленные на Mac. Счётчик переживает
+    удаление файлов на serv1 и хранит максимум за всё время.
+    """
+    path = Path(output_dir) / "part_counters.json"
+    if not path.exists():
+        return {}
+    try:
+        data = orjson.loads(path.read_bytes())
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items()}
+    except Exception as e:
+        print(f"⚠️ Не удалось прочитать part_counters.json: {e}")
+    return {}
+
+
+def _save_part_counters(output_dir, counters) -> None:
+    """Атомарная запись part_counters.json (rebuild-then-replace)."""
+    path = Path(output_dir) / "part_counters.json"
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "wb") as f:
+        f.write(orjson.dumps(
+            {str(k): int(v) for k, v in counters.items()},
+            option=orjson.OPT_INDENT_2,
+        ))
+    os.replace(tmp_path, path)
+
+
+def _next_part_numbers(output_dir, patch_names, counters) -> dict:
+    """Следующий part-номер на патч = max(максимум на диске, счётчик) + 1.
+
+    Диск может быть пуст (part-файлы перенесены на Mac и удалены на serv1) —
+    тогда единственный источник правды это counters. counters может отставать
+    (первый запуск после появления part_counters.json) — тогда источник это
+    диск. Берём максимум из двух, чтобы никогда не перезаписать part-файл,
+    когда-либо существовавший на serv1 или на Mac.
+    """
+    output_dir = Path(output_dir)
+    result = {}
+    for patch_name in patch_names:
+        max_part = 0
+        for path in output_dir.glob(f"{patch_name}_part*.json"):
+            match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
+            if match:
+                max_part = max(max_part, int(match.group(1)))
+        counter_value = int(counters.get(str(patch_name), 0))
+        result[str(patch_name)] = max(max_part, counter_value) + 1
+    return result
+
+
 def merge_temp_files_by_patch_streaming(
     mkdir,
     max_size_mb=500,
@@ -2548,14 +2635,12 @@ def merge_temp_files_by_patch_streaming(
     patch_names_all = [str(p[0]) for p in patch_specs]
     if not MERGE_DROP_OUTSIDE_PATCH and OUTSIDE_PATCH_BUCKET not in patch_names_all:
         patch_names_all.append(OUTSIDE_PATCH_BUCKET)   # бакет «вне патчей»
-    patch_part_numbers = {}
-    for patch_name in patch_names_all:
-        max_part = 0
-        for path in output_dir.glob(f"{patch_name}_part*.json"):
-            match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
-            if match:
-                max_part = max(max_part, int(match.group(1)))
-        patch_part_numbers[str(patch_name)] = max_part + 1
+    # part_counters.json переживает удаление part-файлов на serv1 после переноса
+    # корпуса на Mac — без него нумерация после переноса начиналась бы заново
+    # с 001 и совпадала бы с именами файлов, уже лежащими на Mac (см. описание
+    # у _next_part_numbers выше).
+    part_counters = _load_part_counters(output_dir)
+    patch_part_numbers = _next_part_numbers(output_dir, patch_names_all, part_counters)
     duplicates_count = 0
     invalid_id_count = 0
     skipped_outside_patch = 0
@@ -2698,6 +2783,18 @@ def merge_temp_files_by_patch_streaming(
     finally:
         for patch_name in sorted(states, key=_patch_sort_key):
             _close_part(patch_name)
+
+        # Счётчик сохраняется В finally, ДО processed_ids.txt/summary: он должен
+        # пережить даже сбой на последующих шагах, иначе следующий merge на serv1
+        # (без part-файлов на диске) снова начал бы нумерацию с 001.
+        updated_part_counters = dict(part_counters)
+        for _patch_name, _state in states.items():
+            if _state["written_files"] > 0:
+                updated_part_counters[_patch_name] = max(
+                    int(updated_part_counters.get(_patch_name, 0)), _state["part_number"] - 1
+                )
+        if updated_part_counters != part_counters:
+            _save_part_counters(output_dir, updated_part_counters)
 
     with open(processed_ids_file, "wb") as f:
         f.write(orjson.dumps(sorted(processed_ids)))
@@ -3646,14 +3743,32 @@ def get_pros_playback(max_age_days=85, out_dir=None, limit=None):
     return asyncio.run(get_playback_new(ids=ids, out_dir=out_dir))
 
 
-def get_pubs():
+PUB_PLAYER_IDS_SCHEMA = "pub-player-steam-ids-v1"
+#: Служебные json в каталоге корпуса — не матчи; скан игроков и раннер
+#: (runtime/experiments/pubs-rebuild/run_full_recrawl.py) их пропускают.
+PUBS_CORPUS_SIDECAR_FILES = frozenset({
+    "processed_ids.txt", "merge_patch_summary.json", "scan_manifest.json", "part_counters.json",
+})
+
+
+def build_pub_player_ids_from_corpus(json_dir=None):
+    """Сканирует part-файлы корпуса и строит множество non-anonymous steam id.
+
+    Вынесено из get_pubs() (было единственным способом получить набор id):
+    тот же выбор файлов, тот же ProcessPoolExecutor и та же _process_json_file
+    (обязана остаться module-level функцией — иначе не пиклится в дочерние
+    процессы). Требует наличия 36 ГБ корпуса на диске (Mac); на serv1 после
+    16.09.2026 корпуса нет — там нужен режим PUBS_IDS_MODE=file.
+
+    Возвращает (ids, provenance) — provenance описывает источник (каталог,
+    число файлов, самый свежий файл) для записи в pub_player_steam_ids.json.
+    """
     from concurrent.futures import ProcessPoolExecutor
     import multiprocessing
 
-    json_dir = os.getenv(
-        "PUBS_IDS_SOURCE_DIR",
-        str(PUBS_SOURCE_DIR),
-    )
+    if json_dir is None:
+        json_dir = os.getenv("PUBS_IDS_SOURCE_DIR", str(PUBS_SOURCE_DIR))
+    json_dir = str(json_dir)
     if not os.path.isdir(json_dir):
         raise FileNotFoundError(f"PUBS ids source dir not found: {json_dir}")
 
@@ -3666,22 +3781,179 @@ def get_pubs():
         files = [
             os.path.join(json_dir, f)
             for f in os.listdir(json_dir)
-            if f.endswith('.json') and f not in {'processed_ids.txt', 'merge_patch_summary.json'}
+            if f.endswith('.json') and f not in PUBS_CORPUS_SIDECAR_FILES
         ]
     if not files:
         raise RuntimeError(f"No source json files found in PUBS ids source dir: {json_dir}")
 
     print(f"📂 PUB ids source dir: {json_dir}")
     print(f"📄 PUB ids source files: {len(files)}")
-    
+
     num_workers = min(multiprocessing.cpu_count(), len(files))
-    
+
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
         results = executor.map(_process_json_file, files)
-    
+
     ids = set()
     for result in results:
         ids.update(result)
+
+    newest_path = max(files, key=lambda f: os.stat(f).st_mtime)
+    newest_stat = os.stat(newest_path)
+    provenance = {
+        "corpus_dir": json_dir,
+        "files_scanned": len(files),
+        "newest_source_file": os.path.basename(newest_path),
+        "newest_source_mtime_utc": datetime.fromtimestamp(
+            newest_stat.st_mtime, tz=timezone.utc
+        ).isoformat(),
+    }
+    return ids, provenance
+
+
+def load_pub_player_ids(path=None):
+    """Читает pub_player_steam_ids.json. Возвращает (ids: set[int], meta: dict)
+    или None, если файла нет либо он повреждён (печатает причину, не падает)."""
+    if path is None:
+        path = PUBS_PLAYER_IDS_FILE
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        data = orjson.loads(path.read_bytes())
+    except Exception as e:
+        print(f"⚠️ pub_player_steam_ids.json повреждён, не читается ({path}): {e}")
+        return None
+    if not isinstance(data, dict) or "ids" not in data:
+        print(f"⚠️ pub_player_steam_ids.json: неожиданный формат ({path})")
+        return None
+    try:
+        ids = set(int(x) for x in (data.get("ids") or []))
+    except Exception as e:
+        print(f"⚠️ pub_player_steam_ids.json: не удалось разобрать ids ({path}): {e}")
+        return None
+    meta = {k: v for k, v in data.items() if k != "ids"}
+    return ids, meta
+
+
+def save_pub_player_ids(ids, path=None, *, source=None, last_crawl_completed_utc=None,
+                         preserve_meta_from=None):
+    """Атомарно сохраняет множество pub player id (rebuild-then-replace: .tmp + os.replace).
+
+    `last_crawl_completed_utc`/`source`, если не заданы явно, наследуются из
+    предыдущего файла (через `preserve_meta_from`, если передан, иначе через
+    повторное чтение `path` с диска) — обновление набора id корпусом не должно
+    стирать отметку последнего завершённого обхода.
+    """
+    if path is None:
+        path = PUBS_PLAYER_IDS_FILE
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    prev_last_crawl = None
+    prev_source = None
+    if preserve_meta_from is not None:
+        prev_last_crawl = preserve_meta_from.get("last_crawl_completed_utc")
+        prev_source = preserve_meta_from.get("source")
+    elif path.exists():
+        previous = load_pub_player_ids(path)
+        if previous is not None:
+            _prev_ids, prev_meta = previous
+            prev_last_crawl = prev_meta.get("last_crawl_completed_utc")
+            prev_source = prev_meta.get("source")
+
+    if last_crawl_completed_utc is None:
+        last_crawl_completed_utc = prev_last_crawl
+    if source is None:
+        source = prev_source
+
+    sorted_ids = sorted(int(x) for x in ids)
+    payload = {
+        "schema": PUB_PLAYER_IDS_SCHEMA,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "count": len(sorted_ids),
+        "source": source,
+        "last_crawl_completed_utc": last_crawl_completed_utc,
+        "ids": sorted_ids,
+    }
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "wb") as f:
+        f.write(orjson.dumps(payload))
+    os.replace(tmp_path, path)
+    return path
+
+
+def get_pubs():
+    """Собирает pub-матчи через get_maps_new(); источник player id — см.
+    PUBS_IDS_MODE. serv1 после 16.09.2026 не держит 36 ГБ part-файлов
+    корпуса, поэтому скан корпуса (`build_pub_player_ids_from_corpus`) —
+    только один из трёх режимов, а не единственный путь получить id.
+
+    PUBS_IDS_MODE:
+      auto   (default) — есть pub_player_steam_ids.json → берём его без скана
+             корпуса; нет файла → сканируем корпус и СОХРАНЯЕМ файл.
+      file   — только файл; нет файла/повреждён → FileNotFoundError с подсказкой.
+      corpus — принудительный скан корпуса, результат объединяется (union) с
+             уже сохранённым набором id и перезаписывает файл.
+    PUBS_MAX_PLAYERS (int, default 0 = без ограничения) — для smoke-прогонов:
+      берёт первые N id (по возрастанию) ПОСЛЕ вычитания id, уже обойдённых
+      (processed_ids_to_graph.txt), чтобы прогон реально что-то обошёл.
+    """
+    mode = str(os.getenv("PUBS_IDS_MODE", "auto") or "auto").strip().lower()
+    if mode not in {"auto", "file", "corpus"}:
+        print(f"⚠️ Неизвестный PUBS_IDS_MODE={mode!r}, использую auto")
+        mode = "auto"
+
+    if mode == "file":
+        loaded = load_pub_player_ids()
+        if loaded is None:
+            raise FileNotFoundError(
+                f"PUBS_IDS_MODE=file, но {PUBS_PLAYER_IDS_FILE} не найден или повреждён; "
+                f"соберите его: python3 base/maps_research.py --build-player-ids"
+            )
+        ids, _meta = loaded
+        source_desc = str(PUBS_PLAYER_IDS_FILE)
+    elif mode == "corpus":
+        ids, provenance = build_pub_player_ids_from_corpus()
+        previous = load_pub_player_ids()
+        if previous is not None:
+            prev_ids, _prev_meta = previous
+            ids = ids | prev_ids
+        save_pub_player_ids(ids, source=provenance)
+        source_desc = f"corpus:{provenance.get('corpus_dir')}"
+    else:  # auto
+        loaded = load_pub_player_ids()
+        if loaded is not None:
+            ids, _meta = loaded
+            source_desc = str(PUBS_PLAYER_IDS_FILE)
+        else:
+            ids, provenance = build_pub_player_ids_from_corpus()
+            save_pub_player_ids(ids, source=provenance)
+            source_desc = f"corpus:{provenance.get('corpus_dir')}"
+
+    print(f"📇 PUB player ids: mode={mode}, source={source_desc}, ids={len(ids)}")
+
+    try:
+        max_players = int(os.getenv("PUBS_MAX_PLAYERS", "0") or "0")
+    except Exception:
+        max_players = 0
+    if max_players > 0:
+        processed_graph_ids_file = Path(ANALYSE_PUB_DIR) / "processed_ids_to_graph.txt"
+        already_graphed = set()
+        if processed_graph_ids_file.exists():
+            try:
+                loaded_graph_ids = orjson.loads(processed_graph_ids_file.read_bytes())
+                already_graphed = set(int(x) for x in loaded_graph_ids)
+            except Exception as e:
+                print(f"⚠️ PUBS_MAX_PLAYERS: не удалось прочитать processed_ids_to_graph.txt: {e}")
+        remaining = sorted(ids - already_graphed)
+        capped = set(remaining[:max_players])
+        print(
+            f"✂️ PUBS_MAX_PLAYERS={max_players}: выбрано {len(capped)} из {len(ids)} "
+            f"(уже обойдённых исключено: {len(already_graphed)})"
+        )
+        ids = capped
 
     batch_size = 5
     # Ограничиваем параллелизм числом доступных Stratz-прокси, но не более 10
@@ -3729,23 +4001,55 @@ def update_my_protracker(show_prints=True, num_workers=1, concurrent_requests=5)
 
 
 if __name__ == "__main__":
-    # with open('teams_stat_dict.txt', 'r+') as f:
-    #     data = json.load(f)
-    # teams_ids = set()
-    # for team in data:
-    #     id = data[team]['id']
-    #     if id > 0:
-    #         teams_ids.add(id)
-    # set(teams_ids)
-    # pass
-    # with open('./all_teams/1722505765_top600_output.json', 'r+') as f:
-    #     data = json.load(f)
-    # with open('./pro_heroes_data/pro_output.txt', 'r') as f:
-    #     to_be_merged = json.load(f)
-    # for map_id in to_be_merged:
-    #     if map_id not in data:
-    #         data[map_id] = to_be_merged[map_id]
-    # with open('./all_teams/1722505765_top600_output.json', 'w') as f:
-    #     json.dump(data, f)
-    
-    update_my_protracker(show_prints=True)
+    if sys.argv[1:]:
+        # Флаги — только когда явно переданы аргументы, чтобы не менять
+        # поведение старого `python3 maps_research.py` без флагов (ниже).
+        import argparse
+
+        _cli_parser = argparse.ArgumentParser(description="maps_research CLI")
+        _cli_parser.add_argument(
+            "--build-player-ids", action="store_true",
+            help="Построить/обновить pub_player_steam_ids.json сканом корпуса",
+        )
+        _cli_parser.add_argument(
+            "--source-dir", default=None,
+            help="Каталог part-файлов корпуса для скана (по умолчанию PUBS_SOURCE_DIR)",
+        )
+        _cli_parser.add_argument(
+            "--out", default=None,
+            help="Куда сохранить ids-файл (по умолчанию PUBS_PLAYER_IDS_FILE)",
+        )
+        _cli_args = _cli_parser.parse_args()
+
+        if _cli_args.build_player_ids:
+            _cli_ids, _cli_provenance = build_pub_player_ids_from_corpus(_cli_args.source_dir)
+            _cli_out_path = Path(_cli_args.out) if _cli_args.out else PUBS_PLAYER_IDS_FILE
+            _cli_previous = load_pub_player_ids(_cli_out_path)
+            if _cli_previous is not None:
+                _cli_prev_ids, _cli_prev_meta = _cli_previous
+                _cli_ids = _cli_ids | _cli_prev_ids
+            _cli_saved_path = save_pub_player_ids(_cli_ids, path=_cli_out_path, source=_cli_provenance)
+            print(f"💾 {len(_cli_ids)} player id сохранено в {_cli_saved_path}")
+        else:
+            _cli_parser.print_help()
+    else:
+        # with open('teams_stat_dict.txt', 'r+') as f:
+        #     data = json.load(f)
+        # teams_ids = set()
+        # for team in data:
+        #     id = data[team]['id']
+        #     if id > 0:
+        #         teams_ids.add(id)
+        # set(teams_ids)
+        # pass
+        # with open('./all_teams/1722505765_top600_output.json', 'r+') as f:
+        #     data = json.load(f)
+        # with open('./pro_heroes_data/pro_output.txt', 'r') as f:
+        #     to_be_merged = json.load(f)
+        # for map_id in to_be_merged:
+        #     if map_id not in data:
+        #         data[map_id] = to_be_merged[map_id]
+        # with open('./all_teams/1722505765_top600_output.json', 'w') as f:
+        #     json.dump(data, f)
+
+        update_my_protracker(show_prints=True)

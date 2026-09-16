@@ -128,6 +128,7 @@ ssh serv1 'grep -a "панель молчит\|не готов\|ошибка з�
 | `base/keys.py`, `/root/.config/dota_probe/*`, юниты systemd, `xray/config.json`, `telemt.toml` | КБ | **не закрыто** — сделать отдельно |
 | живое состояние `runtime/` (очереди, `*_telegram_sent.jsonl`, elo state) | МБ | **не закрыто** |
 | база `diary_bot` | 150 КБ | `diary-bot-backup.timer`, ежедневно |
+| `bets_data/analise_pub_matches/json_parts_split_from_object/*_partNNN.json` — корпус паблик-карт | ~36 ГБ, 103 файла | **только на Mac** с 2026-09-16; на serv1 после этой даты их нет, только `pub_player_steam_ids.json` + `processed_ids.txt` + `part_counters.json` (см. `docs/CODE_MAP.md` → `maps_research.py`) |
 
 ```bash
 bash scripts/ops/backup-heavy.sh --dry-run   # что и куда поедет
