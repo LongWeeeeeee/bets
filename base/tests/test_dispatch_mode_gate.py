@@ -662,3 +662,14 @@ def test_direborn_map4_incident_replay_respects_team_tier(monkeypatch, nemesis_t
     assert any(s["reason"] == "kills_requires_tier1_team" for s in logged[0]["skipped"]) is (not allowed)
     assert bool(delivered) is allowed
     assert bool(ledger.as_set()) is allowed
+
+
+def test_team_nemesis_is_tier2_and_direborn_pair_cannot_send_early_kills(monkeypatch):
+    # User correction 2026-09-16: real IDs, real source lists, no tier mock.
+    monkeypatch.setattr(C, "KILLS_REQUIRE_TIER1_TEAM", True)
+    monkeypatch.setattr(C, "_ensure_dynamic_tier2_overlay", lambda: None)
+    monkeypatch.setattr(C, "_auto_added_tier2_ids", set())
+    assert C._get_team_tier(9691969) == 2
+    assert C._get_team_tier(10150434) != 1
+    assert C._match_has_tier1_team(10150434, 9691969) is False
+    assert C._match_has_tier1_team(9691969, 10150434) is False
