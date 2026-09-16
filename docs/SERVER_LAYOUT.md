@@ -128,7 +128,7 @@ ssh serv1 'grep -a "панель молчит\|не готов\|ошибка з�
 | `base/keys.py`, `/root/.config/dota_probe/*`, юниты systemd, `xray/config.json`, `telemt.toml` | КБ | **не закрыто** — сделать отдельно |
 | живое состояние `runtime/` (очереди, `*_telegram_sent.jsonl`, elo state) | МБ | **не закрыто** |
 | база `diary_bot` | 150 КБ | `diary-bot-backup.timer`, ежедневно |
-| `bets_data/analise_pub_matches/json_parts_split_from_object/*_partNNN.json` — корпус паблик-карт | ~36 ГБ, 103 файла | **только на Mac** с 2026-09-16; на serv1 после этой даты их нет, только `pub_player_steam_ids.json` + `processed_ids.txt` + `part_counters.json` (см. `docs/CODE_MAP.md` → `maps_research.py`) |
+| `bets_data/analise_pub_matches/json_parts_split_from_object/*_partNNN.json` — корпус паблик-карт | ~36 ГБ, 101 файл | **только на Mac** с 2026-09-16 (удалены на serv1 после md5-сверки 104/104 и двух пробных обходов); на serv1 остались `pub_player_steam_ids.json` + `processed_ids.txt` + `part_counters.json` (см. `docs/CODE_MAP.md` → `maps_research.py`). Следствия: `scripts/run/rebuild_dicts.sh` (`explore_database.py`) на serv1 больше не запустить — словари пересобирать на Mac и переливать sqlite; новые части, которые обход дописывает на serv1, переносить на Mac (`rsync` part-файлов + `processed_ids.txt`, `part_counters.json`, `pub_player_steam_ids.json`), затем удалять на serv1 |
 
 ```bash
 bash scripts/ops/backup-heavy.sh --dry-run   # что и куда поедет
