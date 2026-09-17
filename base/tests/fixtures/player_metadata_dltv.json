@@ -1,0 +1,151 @@
+{
+  "source_url": "https://dltv.org/matches/427986/kalmychata-vs-uralan-european-pro-league-season-40",
+  "observed_at": 1789681690.5353322,
+  "series_item": {
+    "id": 427986,
+    "first_team_id": 7119,
+    "second_team_id": 6493,
+    "series_players": [
+      {
+        "team_id": 7119,
+        "player_id": 23571,
+        "role": 2,
+        "player": {
+          "id": 23571,
+          "steam_id": 323562138,
+          "title": "xn丶e",
+          "slug": "xne",
+          "rank": 354,
+          "rank_updated_at": "2026-09-15T01:20:00.000000Z",
+          "prizes": 37430
+        }
+      },
+      {
+        "team_id": 7119,
+        "player_id": 40772,
+        "role": 3,
+        "player": {
+          "id": 40772,
+          "steam_id": 102472862,
+          "title": "Ankou",
+          "slug": "ankou",
+          "rank": 0,
+          "rank_updated_at": "2026-09-17T01:13:50.000000Z",
+          "prizes": 19660
+        }
+      },
+      {
+        "team_id": 7119,
+        "player_id": 40865,
+        "role": 5,
+        "player": {
+          "id": 40865,
+          "steam_id": 285282252,
+          "title": "JANTER",
+          "slug": "janter",
+          "rank": 147,
+          "rank_updated_at": "2026-09-15T01:20:00.000000Z",
+          "prizes": 17220
+        }
+      },
+      {
+        "team_id": 7119,
+        "player_id": 41348,
+        "role": 4,
+        "player": {
+          "id": 41348,
+          "steam_id": 435139370,
+          "title": "ani-san",
+          "slug": "ani-san",
+          "rank": 422,
+          "rank_updated_at": "2026-09-15T01:20:00.000000Z",
+          "prizes": 10970
+        }
+      },
+      {
+        "team_id": 7119,
+        "player_id": 42292,
+        "role": 1,
+        "player": {
+          "id": 42292,
+          "steam_id": 234119750,
+          "title": "yowaai",
+          "slug": "yowaai",
+          "rank": 1006,
+          "rank_updated_at": "2026-09-10T12:00:24.000000Z",
+          "prizes": 20100
+        }
+      },
+      {
+        "team_id": 6493,
+        "player_id": 40111,
+        "role": 2,
+        "player": {
+          "id": 40111,
+          "steam_id": 196481318,
+          "title": "pandachertq",
+          "slug": "pandachertq",
+          "rank": 361,
+          "rank_updated_at": "2026-09-16T01:11:52.000000Z",
+          "prizes": 7395
+        }
+      },
+      {
+        "team_id": 6493,
+        "player_id": 40756,
+        "role": 3,
+        "player": {
+          "id": 40756,
+          "steam_id": 383361785,
+          "title": "Miyaoo",
+          "slug": "miyaoo",
+          "rank": 151,
+          "rank_updated_at": "2026-09-14T01:23:58.000000Z",
+          "prizes": 4690
+        }
+      },
+      {
+        "team_id": 6493,
+        "player_id": 42372,
+        "role": 4,
+        "player": {
+          "id": 42372,
+          "steam_id": 156485213,
+          "title": "waveformn",
+          "slug": "waveformn",
+          "rank": 202,
+          "rank_updated_at": "2026-09-10T18:09:29.000000Z",
+          "prizes": 10684
+        }
+      },
+      {
+        "team_id": 6493,
+        "player_id": 42709,
+        "role": 1,
+        "player": {
+          "id": 42709,
+          "steam_id": 256444993,
+          "title": "cutie",
+          "slug": "cutie",
+          "rank": 74,
+          "rank_updated_at": "2026-09-14T01:25:02.000000Z",
+          "prizes": 700
+        }
+      },
+      {
+        "team_id": 6493,
+        "player_id": 43117,
+        "role": 5,
+        "player": {
+          "id": 43117,
+          "steam_id": 169516760,
+          "title": "monodrama",
+          "slug": "monodrama",
+          "rank": 201,
+          "rank_updated_at": "2026-09-14T01:25:02.000000Z",
+          "prizes": 3100
+        }
+      }
+    ]
+  }
+}

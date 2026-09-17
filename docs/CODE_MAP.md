@@ -1872,3 +1872,23 @@ draft_model=...)` — экспортирует те же два вердикта
 попадает в `model_line`, `_build_prematch_model_bet_message` вставляет его в
 тело перед `_deliver_and_persist_signal`. Тесты:
 `base/tests/test_prematch_refusal_fallback.py`.
+
+## Player earnings / regional rank — offline preparation (E-295)
+
+`base/player_metadata.py`: `parse_dltv_match` extracts DLTV match roster account IDs,
+positions, earnings and timestamped ranks; `PlayerHistory.features(rad5, dire5,
+asof=map_start_ts)` exports team/core/support/position features and missing masks.
+Strict observation cutoff; earnings TTL 30 days, rank TTL 7 days. Rank needs an
+explicit division and source; country/nickname never supplies it. DLTV currently
+provides no confirmed division. Account arrays must follow positions 1..5 of the
+actual map, and DLTV team IDs are not Dota team IDs. No scorer or weights change.
+
+`base/tools/player_metadata.py collect --url https://dltv.org/matches/... --output DIR`
+saves immutable source HTML + `DIR/<timestamp-series>/snapshot.json`;
+`export --snapshots DIR --matches INPUT.jsonl --output OUTPUT.jsonl` joins only
+prior observations and verifies snapshots against retained source HTML. Input:
+`match_id`, `start_ts`, `radiant_players[5]`, `dire_players[5]` with explicit
+`{account_id, position}` entries (unique positions 1..5); output: side features,
+129 candidate columns, coverage and diagnostics. Network is confined to explicit
+collection, never scoring.
+Full contract, commands and validation limits: [E-295](experiments/E-295-player-rank-earnings.md).
