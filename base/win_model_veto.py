@@ -115,6 +115,17 @@ _PREMATCH_BET_BRANCHES = tuple(
     x.strip() for x in os.getenv("WIN_MODEL_VETO_PREMATCH_BRANCHES",
                                  "full,no_org").split(",") if x.strip())
 
+# Ветка `no_account_no_org` (7 колонок, офлайн-качество 0.6852) не входит в
+# `_PREMATCH_BET_BRANCHES`, но до 18.09.2026 сама оценка `_prematch_index` этого
+# не знала: индекс возвращался как обычно, и панель/вето/журнал вели себя так,
+# будто это полноценный сигнал. Замер прод-журнала 17.09+: 52 из 497 карт на
+# этой ветке ушли с `bet=True` и уверенностью 0.62-0.66 при полном отсутствии
+# учётных данных игроков и организации. Владелец решил: ветка не даёт сигнала
+# вовсе, как явный отказ модели. Снимается PREMATCH_ML_NO_ACCOUNT_NO_ORG_BET=1
+# (старое поведение — индекс и ставка как у остальных веток).
+_NO_ACCOUNT_NO_ORG_BET_ENABLED = os.getenv(
+    "PREMATCH_ML_NO_ACCOUNT_NO_ORG_BET", "0") == "1"
+
 # --- Поправка «сюрприз серии» (s_sum) ------------------------------------------
 # Замер 22.08.2026 (`runtime/artifacts/misc/prematch_calibration_audit.md`,
 # 25 892 боевых вердикта скорера): на первых картах серии модель занижает
@@ -1143,6 +1154,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         _late_rec = _LAST_FILL.get("late") or {}
         _early_nw_rec = _LAST_FILL.get("early_nw") or {}
         _early_win_rec = _LAST_FILL.get("early_win") or {}
+        _no_acc_no_org_block = (_branch == "no_account_no_org"
+                                and not _NO_ACCOUNT_NO_ORG_BET_ENABLED)
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
                       **context,
@@ -1182,8 +1195,25 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                       wr=(None if _LAST_FILL.get("wr") is None
                           or _LAST_FILL["wr"] != _LAST_FILL["wr"]
                           else round(float(_LAST_FILL["wr"]), 4)),
-                      bet=abs(_idx) >= _PREMATCH_MIN_INDEX,
-                      reason="ok")
+                      bet=(False if _no_acc_no_org_block
+                           else abs(_idx) >= _PREMATCH_MIN_INDEX),
+                      reason=("no_account_no_org_blocked" if _no_acc_no_org_block
+                              else "ok"))
+        if _no_acc_no_org_block:
+            # Тот же контракт, что у отказа в except ниже: `win_prediction_ex`
+            # видит index=None и уходит в ветку `_LAST_REFUSAL`, а
+            # `functions.py` строит fallback (early_nw/early_win/late без
+            # предматчевой модели) и печатает предупреждение в карточке —
+            # ровно то поведение, которого просил владелец («сигнала нет
+            # вовсе»), вместо отдельной ветки логики здесь.
+            _LAST_REFUSAL.update({
+                "reason": "ветка no_account_no_org — сигнал заблокирован",
+                "details": [],
+                "position_mismatch": None,
+            })
+            print(f"[win_model] no_account_no_org: сигнал заблокирован "
+                  f"(map_key={context.get('map_key')!r})", flush=True)
+            return None
         return _idx
     except Exception as _exc:                     # noqa: BLE001
         # Причина отказа больше не теряется: без неё нельзя отличить
