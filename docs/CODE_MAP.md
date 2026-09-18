@@ -1512,6 +1512,8 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 - **Pub player id без корпуса (serv1 после 16.09.2026, E-pubs-rebuild).** 36 ГБ `bets_data/analise_pub_matches/json_parts_split_from_object/*_partNNN.json` живут только на Mac; serv1 держит `pub_player_steam_ids.json` + `processed_ids.txt` + `part_counters.json`. `build_pub_player_ids_from_corpus(json_dir=None)` — вынесенный из `get_pubs()` ProcessPoolExecutor-скан корпуса (нужен файловый корпус на диске). `load_pub_player_ids(path=None)` / `save_pub_player_ids(ids, path=None, *, source=None, last_crawl_completed_utc=None, preserve_meta_from=None)` — атомарное (`.tmp`+`os.replace`) чтение/запись `PUBS_PLAYER_IDS_FILE` (env `PUBS_PLAYER_IDS_FILE`, по умолчанию `ANALYSE_PUB_DIR/pub_player_steam_ids.json`; схема `pub-player-steam-ids-v1` с `ids`, `count`, `source`, `last_crawl_completed_utc`).
 - `get_pubs()` берёт id по `PUBS_IDS_MODE` (`auto` по умолчанию: файл если есть, иначе скан корпуса + запись файла; `file`: только файл, иначе `FileNotFoundError`; `corpus`: принудительный скан, union с уже сохранённым и перезапись). `PUBS_MAX_PLAYERS` (default 0 = без лимита) режет id для smoke-прогонов — детерминированно, первые N ПОСЛЕ вычитания `processed_ids_to_graph.txt`. `get_maps_new()` в конце pub-обхода (не pro, не `skip_auxiliary_files`) сам объединяет вновь найденных игроков в `pub_player_steam_ids.json` и обновляет `last_crawl_completed_utc`, до `merge_temp_files_by_patch`, не роняя обход при сбое. CLI: `python3 base/maps_research.py --build-player-ids [--source-dir DIR] [--out FILE]` (без флагов поведение `__main__` не изменилось).
 - **Monotonic part-нумерация.** `merge_temp_files_by_patch_streaming` больше не нумерует part-файлы только по диску: `output_dir/part_counters.json` = `{patch_name: наибольший part-номер за всё время}`, следующий номер = `max(диск, счётчик) + 1` (`_next_part_numbers`, `_load_part_counters`, `_save_part_counters`). Нужно потому, что part-файлы на serv1 удаляются после переноса на Mac — без счётчика нумерация начиналась бы заново с 001 и совпала бы с именами, уже занятыми на Mac.
+- **Сиды команд для top-up корпуса (с 18.09.2026).** `_seed_team_ids()` (используется top-up'ом корпуса) теперь сливает team id не только из статики, но и из динамического tier2-overlay: `tier_dynamic_overlay.overlay_path()` → `id_to_names_dynamic_tier2.json`, чтение через `load_entries`; отсутствующий/битый overlay-файл не роняет функцию, сиды остаются только статическими. Печатает `🌱 сиды команд: статика N, overlay добавил M`. Причина: рантайм-онбордженные tier2-команды (Uralan, клубы WINLINE Star Series) не были сидами корпуса, поэтому их карты не попадали в top-up — 67 из 191 живых карт содержали команду, неизвестную ELO-базе; с overlay сиды выросли с 642 до 674.
+- `scripts/run/rebuild_prematch_snapshot.sh` перед top-up корпуса забирает этот overlay с serv1 через `scp` (`.tmp` → `mv`, ошибка не фатальна, печатает «ВНИМАНИЕ: overlay tier2 с serv1 не получен; сиды только статические»).
 
 ### `opendota_research.py` — сбор разобранных матчей из OpenDota
 
@@ -1902,6 +1904,19 @@ within each UTC ISO week. Rank division evidence is still required. Backfill fro
 later observations is explicitly marked by `retrospective_assumption`, policy,
 and per-field timestamps/backfill flags. No cross-period carry; strict remains
 the default. Such exports are approximate retrospective data, not causal replay.
+
+`python -m base.tools.expand_player_metadata` expands and evaluates the offline
+cohort: `collect --dates YYYY-MM-DD ... --limit N --output NEW_DIR` accepts at
+most 10 dates / 300 match URLs, spaces requests by one second, stops on 403/429
+or five transport failures, and records rejected lineups. `--exclude-collection
+PRIOR_COLLECTION_JSON` skips already attempted URLs without replacing receipts.
+`prepare --plan PLAN --snapshots DIR ... --output NEW_DIR` verifies all frozen
+input hashes (including account rows), validates retained snapshot source bytes,
+and writes aligned metadata.npz plus coverage.json. `evaluate --plan PLAN
+--output NEW_DIR --threads N` reproduces the frozen baseline, appends only
+training-variable metadata columns, fits full/no_org with unchanged C/splits,
+and saves research-only weights/predictions and paired series-bootstrap metrics.
+Fully covered subset metrics are descriptive; no serving selection is made.
 
 `python -m base.tools.compare_prematch_refits --plan PROTOCOL.json --output-dir NEW_DIR
 --threads N` reuses frozen causal E-287 matrices for fixed-C full/no_org refits.
