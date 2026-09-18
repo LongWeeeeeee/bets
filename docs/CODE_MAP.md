@@ -1892,3 +1892,11 @@ prior observations and verifies snapshots against retained source HTML. Input:
 129 candidate columns, coverage and diagnostics. Network is confined to explicit
 collection, never scoring.
 Full contract, commands and validation limits: [E-295](experiments/E-295-player-rank-earnings.md).
+
+`python -m base.tools.compare_prematch_refits --plan PROTOCOL.json --output-dir NEW_DIR
+--threads N` reuses frozen causal E-287 matrices for fixed-C full/no_org refits.
+Verifies input SHA, map/label alignment, split and baseline replay; outputs
+weights_C_*.npz, predictions.npz and summary.json with paired series intervals.
+Audits zero historical metadata coverage by observation time; overlapping history
+requires a separately aligned export. This is offline sensitivity analysis on
+an already studied test, with no model selection, production admission or activation.

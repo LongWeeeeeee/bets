@@ -1,13 +1,14 @@
 # E-295 — призовые и региональный ранг игроков для общей prematch ML
 
-Дата: 18.09.2026. Статус: **сборщик и offline-признаки; улучшение модели не доказано**.
+Дата: 18.09.2026. Статус: **три offline-переобучения выполнены; улучшение не доказано**.
 Связанные задачи: `ingame-enwj`, аудит общей модели E-292 / `ingame-gr3t`.
 
 ## STATUS
 
-BLOCKED для переобучения/активации: нет проверенной истории призовых и
-региональных рангов, доступной до целевых матчей. Локальная реализация сбора и
-выгрузки признаков завершена. Serving, веса, пороги и production не менялись.
+DONE для сравнения трёх фиксированных переобучений существующих 35 признаков.
+BLOCKED для обучения новых признаков: нет проверенной истории призовых и
+региональных рангов, доступной до целевых матчей. Serving, боевые веса, пороги
+и production не менялись; отдельные исследовательские веса сохранены.
 
 ## SUMMARY
 
@@ -48,10 +49,70 @@ DERIVED:
   гипотеза для ablation. Сейчас четыре региона представлены раздельно;
   коэффициенты преимущества не выдуманы, остальные регионы не удалены.
 
-NOT_CHECKED: прирост log loss/Brier/калибровки, реальные ставки/доходность,
+NOT_CHECKED: прирост от призовых/рангов, калибровка, реальные ставки/доходность,
 покрытие всех будущих составов, production-интеграция, автообновление по расписанию.
 
+### Переобучение по запросу «переобучи попробуй и сравни»
+
+OBSERVED: замороженный E-287 корпус: 17 604 карты, 15 243 пригодны;
+обучение full на 15 205 картах, no_org на 7 614. Общий test: 38 карт / 28 серий
+(24 full, 14 no_org), временная граница 05.09.2026 UTC, embargo 1 час.
+Три фиксированных C сравниваются на одних и тех же картах, без выбора победителя
+для serving. Исходные веса E-287: SHA-256
+`361b48af9437742cc429398d2ad7550026660547035b5b614db8d3fc6ee07fdf`.
+Текущий удалённый runtime в этом прогоне не инспектировался.
+
+| Вариант | Верных | Accuracy | Log loss ↓ | Brier ↓ |
+|---|---:|---:|---:|---:|
+| E-287 baseline / повтор C=0.1 | 26/38 | 68.42% | 0.641190 | 0.218578 |
+| Сильнее регуляризация C=0.03 | 27/38 | 71.05% | 0.641515 | 0.218276 |
+| Слабее регуляризация C=0.3 | 26/38 | 68.42% | 0.641009 | 0.218664 |
+
+Baseline replay и повторное обучение C=0.1 совпали с сохранёнными прогнозами
+точно: max absolute probability difference = 0. Для C=0.03 paired Δlogloss
+`+0.000326`, series-bootstrap 95% `[-0.007275,+0.008710]`; C=0.3:
+`-0.000180`, `[-0.003255,+0.002515]`. 5 000 повторов, seed 295, целые серии
+выбираются с возвращением, итог взвешен по картам. Это описательные интервалы
+на уже изучавшемся test, без поправки на множественные сравнения.
+
+DERIVED: дополнительный верный исход у C=0.03 не доказывает улучшение вероятностей:
+log loss ухудшился, оба интервала включают ноль. C не выбран для активации.
+Внутренний временной подбор отклонён: фиксированный draft backbone обучен до
+04.09 и достигает ранних train-строк. Независимой ранней validation здесь нет.
+
+OBSERVED: последний старт карты `1789168030` раньше первого снимка
+`1789682093.7371168`. Поэтому покрытие метаданных **0/17 604** независимо от
+account/position join. Модель с новыми 129 признаками не обучалась: константный
+нулевой блок не измеряет их пользу. Свежие значения не подставлялись в прошлое.
+
 ## CHANGED
+
+### Повторяемое сравнение существующей модели
+
+`base/tools/compare_prematch_refits.py` — offline CLI:
+`python -m base.tools.compare_prematch_refits --plan PROTOCOL.json
+--output-dir NEW_DIR --threads N`. Протокол содержит пути matrix/split/reference/
+weights/snapshots, SHA-256 входов, C_values, baseline_C, test_cutoff, embargo_seconds.
+Проверяет map/label identity, split, source HTML и replay <1e-6; использует
+существующий `retrain_prematch_general.retrain`, сохраняя четыре fallback-ветви.
+Выход: `weights_C_*.npz`, `predictions.npz`, `summary.json`. Не меняет serving.
+Если снимки пересекают карты по времени, zero-coverage audit отказывается от
+расчёта: требуется отдельный проверенный account/position join.
+
+Запуск через неизменяемый снимок общего executor:
+
+```bash
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/misc/player_metadata_refit_20260918/campaign.json
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/misc/player_metadata_refit_20260918/campaign.json --background
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources status --run run-f933ff0141360c7c47d5c868
+```
+
+Единственный enabled host local: один job completed, exit 0; 14 входных файлов,
+hash verification до/после расчёта. Изначальная попытка завершилась до обучения
+с PermissionError (macOS rename read-only directory). Снимок подготовлен с
+rename перед chmod, исходники executor не менялись. Терминальная неудачная
+receipt сохранена, отсутствие supervisor проверено, тот же campaign возобновлён;
+детали `runtime/artifacts/misc/player_metadata_refit_20260918/recovery.json`.
 
 ### Контракт данных и признаков
 
@@ -121,6 +182,12 @@ cutoff, признаки, обе стороны и диагностику; од�
 
 ## CHECKS
 
+Переобучение: 23 tests (`test_compare_prematch_refits.py` +
+`test_player_metadata.py`) и 5 существующих `test_retrain_prematch_general.py`
+прошли с `--noconftest`, изолированно от чужих правок conftest. Проверяются
+поздний DLTV-снимок, отказ при пересечении времён, карта/метка reference,
+метрики и кластерный paired расчёт. Все шесть fits converged; max gradient <3e-8.
+
 ```bash
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_player_metadata.py -q
 ```
@@ -133,6 +200,11 @@ missing/нулевые призовые, устаревший ранг, неиз
 покрытие: ожидаемый отказ подставлять будущее в прошлое.
 
 ## POINTERS
+
+- Протокол и SHA входов: `runtime/artifacts/misc/player_metadata_refit_20260918/`.
+- Результаты: `.orchestra/jobs/run-f933ff0141360c7c47d5c868/paired-refits/output/summary.json`,
+  `predictions.npz`, три `weights_C_*.npz`; receipt на уровень выше, state и
+  collected-artifacts в `.orchestra/campaigns/run-f933ff0141360c7c47d5c868/`.
 
 - Артефакты: `runtime/artifacts/misc/player_metadata_20260918/`:
   `match427986.html`, source receipts, `valve_europe.json`,
@@ -157,6 +229,10 @@ missing/нулевые призовые, устаревший ранг, неиз
   например `country flag`, не принимается как `rank_region_source`.
 5. TTL не валидирован как оптимальный. Re-fetch не омолаживает `rank_updated_at`.
 6. Тесты сборщика не доказывают качество модели, историчность данных или live delivery.
+7. При расхождении нового сравнения сначала проверять SHA матрицы/весов,
+   массивы mids/y/sids в split/reference, replay baseline, routed populations,
+   C и training-only scaler. 38 ранее изученных карт не являются новым holdout;
+   не выбирать гиперпараметры по таблице и не считать accuracy калибровкой.
 
 ## NEXT
 
