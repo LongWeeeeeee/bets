@@ -772,3 +772,84 @@ def test_live_registration_rebases_advanced_reference_before_loading_progress(tm
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
     assert "previous" in progress["applied_maps"]
     assert progress["base_reference_timestamp"] == 1_000
+
+
+def test_rebase_collapses_alias_twin_applied_within_window(tmp_path, capsys) -> None:
+    """Two sourcetv alias ids for ONE physical map must be applied once (E-294 follow-up).
+
+    A now-fixed enqueue bug (dafbec37) produced ledger twins such as
+    `…9003417257.0` and `…9003417257.60`: same `match_id`, same teams,
+    `result_timestamp` a few minutes apart. Replaying both double-counts the
+    map's result in the rebased model state.
+    """
+    snapshot_path, snapshot = _ledger_snapshot(tmp_path)
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    twin_a = _live_record(9001, start=1_010)
+    twin_b = _live_record(9001, start=1_010)
+    _write(state_path, {
+        "base_reference_timestamp": 900,
+        "base_model_config_signature": "same-history-signature",
+        "model_state": HybridPlayerRosterEloModel(HybridEloConfig()).export_state(),
+    })
+    _write(progress_path, {
+        "base_reference_timestamp": 900,
+        "base_model_config_signature": "same-history-signature",
+        "pending_series": {},
+        "applied_maps": {
+            "map-1": _applied_entry(twin_a, observed_at=1_080),
+            "map-2": _applied_entry(twin_b, observed_at=1_080 + 200),
+        },
+    })
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+
+    expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
+    expected.process_match(result_record(twin_a, 1_080))
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["model_state"] == expected.export_state()
+
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    # The kept twin is applied normally; the skipped one still stays in the
+    # ledger (unchanged rebase semantics for a later run), just without a
+    # second `process_match` call behind it.
+    assert progress["applied_maps"]["map-1"]["result_timestamp"] == 1_080
+    assert "map-2" in progress["applied_maps"]
+    assert "дубликат" in capsys.readouterr().out
+
+
+def test_rebase_keeps_far_apart_same_match_id_maps_as_two_applications(tmp_path) -> None:
+    """A legacy series that reuses an alias match_id across two REAL maps must not collapse."""
+    snapshot_path, snapshot = _ledger_snapshot(tmp_path)
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    map_a = _live_record(9002, start=1_010)
+    map_b = _live_record(9002, start=1_010)
+    _write(state_path, {
+        "base_reference_timestamp": 900,
+        "base_model_config_signature": "same-history-signature",
+        "model_state": HybridPlayerRosterEloModel(HybridEloConfig()).export_state(),
+    })
+    _write(progress_path, {
+        "base_reference_timestamp": 900,
+        "base_model_config_signature": "same-history-signature",
+        "pending_series": {},
+        "applied_maps": {
+            "map-1": _applied_entry(map_a, observed_at=1_080),
+            "map-2": _applied_entry(map_b, observed_at=1_080 + 1_200),
+        },
+    })
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+
+    expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
+    expected.process_match(result_record(map_a, 1_080))
+    expected.process_match(result_record(map_b, 1_080 + 1_200))
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload["model_state"] == expected.export_state()
+
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert progress["applied_maps"]["map-1"]["result_timestamp"] == 1_080
+    assert progress["applied_maps"]["map-2"]["result_timestamp"] == 1_080 + 1_200

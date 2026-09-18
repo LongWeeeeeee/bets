@@ -1447,15 +1447,61 @@ def rebase_runtime_model_state(
             copied["pending_map"] = retained[0]
             rebased_pending[str(series_key)] = copied
 
+    # Alias twins: two ledger entries for the SAME physical map, enqueued
+    # under different sourcetv ids sharing one series-level match_id (E-294
+    # follow-up, dafbec37). Applying both would double-count one map's result
+    # in the rebased model state. `_applied_kept` holds (match_id, team pair,
+    # result_timestamp) of every row already kept, in replay order, so a
+    # later twin within the window is skipped while the ledger entry itself
+    # is still recorded in `rebased_applied` unchanged (legacy semantics for
+    # a future rebase are preserved).
+    _applied_kept: list[tuple[int, frozenset[int], int]] = []
+    alias_twins_skipped = 0
+
+    def _is_alias_twin(match_id: int, team_pair: frozenset[int], result_timestamp: int) -> bool:
+        for kept_match_id, kept_pair, kept_ts in _applied_kept:
+            if (
+                kept_match_id == match_id
+                and kept_pair == team_pair
+                and abs(kept_ts - result_timestamp) <= LIVE_ELO_ALIAS_TWIN_WINDOW_SECONDS
+            ):
+                return True
+        return False
+
     model = HybridPlayerRosterEloModel.from_state(base_state) if replay_rows else None
     for result_timestamp, _order, map_key, raw, match in sorted(replay_rows):
         assert model is not None
-        model.process_match(result_record(match, result_timestamp))
+        match_id = _coerce_optional_int(match.match_id)
+        team_pair = None
+        if (
+            match_id is not None
+            and match_id > 0
+            and match.radiant_team_id is not None
+            and match.dire_team_id is not None
+        ):
+            team_pair = frozenset((int(match.radiant_team_id), int(match.dire_team_id)))
+        is_twin = team_pair is not None and _is_alias_twin(match_id, team_pair, result_timestamp)
+        if is_twin:
+            alias_twins_skipped += 1
+        elif team_pair is not None:
+            _applied_kept.append((match_id, team_pair, result_timestamp))
+        if not is_twin:
+            model.process_match(result_record(match, result_timestamp))
+        # The ledger entry itself is recorded either way (`rebased_applied`
+        # semantics for a future rebase do not change for a skipped twin);
+        # only the model application above is skipped for it.
         copied = dict(raw)
         copied["result_timestamp"] = int(result_timestamp)
         copied["applied_at"] = int(result_timestamp)
         copied["match_record"] = _serialize_match_record(match)
         rebased_applied[map_key] = copied
+
+    if alias_twins_skipped:
+        print(
+            f"[ELO] rebase: {alias_twins_skipped} дубликат(ов) alias-карт пропущено "
+            "(тот же match_id и команды, результат в пределах 600 с)",
+            flush=True,
+        )
 
     if unknown_teams_accepted:
         print(
@@ -1795,6 +1841,19 @@ _MAX_PENDING_MAPS = 6
 # duplicate when the caller supplies a game time at or past this threshold.
 LIVE_ELO_ALIAS_DUPLICATE_MIN_GAME_TIME_SECONDS = int(
     os.getenv("LIVE_ELO_ALIAS_DUP_MIN_GAME_TIME") or 600
+)
+
+# sourcetv can enqueue the SAME physical map twice under alias sourcetv ids
+# that share one series-level `match_id` (e.g. `…9003417257.0` and
+# `…9003417257.60`), a few minutes apart -- a now-fixed enqueue bug
+# (dafbec37) produced 9 such twins in 68 replayed rows of the prod ledger.
+# Two DIFFERENT maps of a real series can never finish within this window of
+# each other, so collapsing rows with the same match_id, the same unordered
+# team pair, and a `result_timestamp` this close can only ever drop a twin,
+# never a genuine map. A legacy series that reuses an alias id across two
+# real maps has results far apart in time and is untouched by this window.
+LIVE_ELO_ALIAS_TWIN_WINDOW_SECONDS = int(
+    os.getenv("LIVE_ELO_ALIAS_TWIN_WINDOW") or 600
 )
 
 
