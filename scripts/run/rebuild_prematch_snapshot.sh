@@ -37,6 +37,17 @@ SERV1=root@23.26.193.167
 run_chain() {
   ELO_SNAPSHOT_STAGED=0
   echo "=== $(date '+%F %T') пересборка снимка предматчевой модели ==="
+  # Overlay динамического tier2-onboarding'а (см. base/tier_dynamic_overlay.py)
+  # пишется рантаймом ТОЛЬКО на serv1: локальный добор без него не видит
+  # команды, онбордженные после 02.09.2026 (Uralan, клубы WINLINE Star Series),
+  # и никогда не берёт их карты как сиды. Забор ограничен по времени и
+  # некритичен: падение оставляет локальный overlay как есть (или отсутствующим)
+  # — `_seed_team_ids()` тогда отдаёт только статические сиды, без падения.
+  TIER2_OVERLAY_LOCAL="base/id_to_names_dynamic_tier2.json"
+  scp -q -o ConnectTimeout=15 "$SERV1:/root/main/base/id_to_names_dynamic_tier2.json" \
+      "$TIER2_OVERLAY_LOCAL.tmp" \
+    && mv "$TIER2_OVERLAY_LOCAL.tmp" "$TIER2_OVERLAY_LOCAL" \
+    || echo "ВНИМАНИЕ: overlay tier2 с serv1 не получен; сиды только статические"
   # Страховка от молчащего добора: 25.08–01.09.2026 launchd не запускал 04:30-джобу
   # 8 ночей, и снимок уезжал на прод с корпусом 23.08 (sha1 не менялся). Если за
   # 20 ч лога добора нет — добираем здесь; падение добора пересборку не останавливает.

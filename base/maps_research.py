@@ -3207,7 +3207,14 @@ PRO_VISITED_TEAMS_FILE = "visited_teams.json"
 
 
 def _seed_team_ids():
-    """Стартовый набор: команды из tier_one_teams / tier_two_teams."""
+    """Стартовый набор: команды из tier_one_teams / tier_two_teams + overlay.
+
+    С 02.09.2026 рантайм на проде онбордит новые tier2-команды не в статический
+    `id_to_names.py` (заморожен), а в JSON-overlay рядом со справочником — см.
+    `base/tier_dynamic_overlay.py`. Без учёта overlay такие команды (например
+    Uralan, клубы WINLINE Star Series) никогда не становятся сидами добора,
+    их карты не попадают в корпус, а ELO база считает обе команды неизвестными.
+    """
     from id_to_names import tier_one_teams, tier_two_teams
     out = []
     for mapping in (tier_one_teams, tier_two_teams):
@@ -3216,6 +3223,23 @@ def _seed_team_ids():
                 out.extend(int(v) for v in value if isinstance(v, int))
             elif isinstance(value, int):
                 out.append(int(value))
+    static_count = len(set(out))
+
+    overlay_count = 0
+    try:
+        from tier_dynamic_overlay import overlay_path, load_entries
+        entries = load_entries(overlay_path())
+        for ids in entries.values():
+            for team_id in ids:
+                try:
+                    out.append(int(team_id))
+                except (TypeError, ValueError):
+                    continue
+        overlay_count = len(set(out)) - static_count
+    except Exception as e:
+        print(f"⚠️ overlay tier2 не прочитан ({e}) — сиды только статические")
+
+    print(f"🌱 сиды команд: статика {static_count:,}, overlay добавил {overlay_count:,}")
     return sorted(set(out))
 
 
