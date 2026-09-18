@@ -1019,7 +1019,12 @@ def _applied_entry_for_rebase(
     source finish (when available), a start after the snapshot cutoff, or the
     snapshot's bounded exact id coverage to decide membership.  Proof order:
     exact id -> team-pair+time -> "both teams unknown to base" -> window-gated
-    replay -> raise.  `known_team_ids` (when given) backs the third proof: if
+    replay -> lenient late replay (default) or raise (`LIVE_ELO_REBASE_STRICT_ORDER`).
+    A map absent from the snapshot whose `result_timestamp` is not after
+    `snapshot_reference` replays anyway by default, with a stderr warning and
+    action "replay_late", because refusing it cannot restore ELO event order,
+    only freeze prod on a stale base; set `LIVE_ELO_REBASE_STRICT_ORDER` to
+    restore the old hard refusal.  `known_team_ids` (when given) backs the third proof: if
     NEITHER side of the map has any trace in the base snapshot, there is no
     base event of theirs to interleave with, so the map replays regardless of
     `snapshot_reference` -- checked only AFTER id/pair proofs so a map that IS
@@ -1102,11 +1107,20 @@ def _applied_entry_for_rebase(
 
     def _replay() -> tuple[str, MatchRecord, int]:
         if result_timestamp <= snapshot_reference:
-            raise RuntimeRebaseError(
-                f"live-карта {match.match_id} отсутствует в snapshot, но её result timestamp "
-                f"({result_timestamp}) не позже cutoff ({snapshot_reference}); "
-                "перебазировка отменена без изменения порядка ELO-событий"
+            if LIVE_ELO_REBASE_STRICT_ORDER:
+                raise RuntimeRebaseError(
+                    f"live-карта {match.match_id} отсутствует в snapshot, но её result timestamp "
+                    f"({result_timestamp}) не позже cutoff ({snapshot_reference}); "
+                    "перебазировка отменена без изменения порядка ELO-событий"
+                )
+            print(
+                f"[ELO] live-карта {match.match_id} отсутствует в snapshot; result timestamp "
+                f"({result_timestamp}) не позже cutoff ({snapshot_reference}) — replay после "
+                "среза, порядок ELO-событий нарушен",
+                file=sys.stderr,
+                flush=True,
             )
+            return "replay_late", match, result_timestamp
         return "replay", match, result_timestamp
 
     source_result_timestamp = match.result_timestamp
@@ -1338,6 +1352,7 @@ def rebase_runtime_model_state(
     # incomplete for real corpus teams missing from `base/id_to_names.py`.
     known_team_ids = _known_team_ids_from_model_state(base_state, recent_completed_keys)
     unknown_teams_accepted = 0
+    late_replays_accepted = 0
     # One snapshot key proves at most one ledger entry (E-294 review FIX 3);
     # shared across the applied AND pending loops below.
     consumed_keys: set[int] = set()
@@ -1393,10 +1408,12 @@ def rebase_runtime_model_state(
                 match_id, snapshot_reference=want_reference, match=match,
                 proof_match_id=proof_match_id,
             )
-        elif action in ("replay", "replay_unknown_teams"):
+        elif action in ("replay", "replay_unknown_teams", "replay_late"):
             assert match is not None and result_timestamp is not None
             if action == "replay_unknown_teams":
                 unknown_teams_accepted += 1
+            elif action == "replay_late":
+                late_replays_accepted += 1
             replay_rows.append((result_timestamp, insertion_order, str(map_key), dict(raw), match))
 
     # A pending map that the snapshot now definitely includes becomes a
@@ -1507,6 +1524,13 @@ def rebase_runtime_model_state(
         print(
             f"[ELO] rebase: {unknown_teams_accepted} live-карт(а) приняты правилом "
             "«обе команды отсутствуют в базе снимка — replay без порядкового гейта»",
+            flush=True,
+        )
+
+    if late_replays_accepted:
+        print(
+            f"[ELO] rebase: {late_replays_accepted} live-карт(а) отсутствуют в снимке и "
+            "replay'нуты после среза (порядок событий нарушен)",
             flush=True,
         )
 
@@ -1854,6 +1878,18 @@ LIVE_ELO_ALIAS_DUPLICATE_MIN_GAME_TIME_SECONDS = int(
 # real maps has results far apart in time and is untouched by this window.
 LIVE_ELO_ALIAS_TWIN_WINDOW_SECONDS = int(
     os.getenv("LIVE_ELO_ALIAS_TWIN_WINDOW") or 600
+)
+
+# A ledger map absent from the new snapshot, whose `result_timestamp` is not
+# after `snapshot_reference`, used to be refused outright (RuntimeRebaseError)
+# because replaying it cannot be proven to preserve ELO event order. In prod
+# (18.09) 7 tier-2 maps the corpus top-up never ingests hit exactly this
+# branch and blocked EVERY nightly rebase; refusing does not restore
+# ordering, it only freezes prod on a stale base. Default is therefore
+# lenient: replay with a stderr warning ("replay_late"). Set this env var to
+# restore the old hard refusal.
+LIVE_ELO_REBASE_STRICT_ORDER = (os.getenv("LIVE_ELO_REBASE_STRICT_ORDER") or "0").strip() not in (
+    "", "0", "false", "no",
 )
 
 

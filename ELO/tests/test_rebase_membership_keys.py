@@ -110,7 +110,8 @@ def test_placeholder_id_entry_is_covered_by_team_pair_and_time(tmp_path) -> None
     }
 
 
-def test_pair_outside_tolerance_but_inside_window_attempts_unsafe_replay(tmp_path, capsys) -> None:
+def test_pair_outside_tolerance_but_inside_window_attempts_unsafe_replay(
+        tmp_path, capsys, monkeypatch) -> None:
     # Same team pair as the snapshot key, but 200s away while the snapshot's
     # tolerance is only 60s: the pair proof must not fire.  The entry's own
     # result_timestamp (750) then lies inside [coverage_since, snapshot_reference]
@@ -118,9 +119,10 @@ def test_pair_outside_tolerance_but_inside_window_attempts_unsafe_replay(tmp_pat
     # this into the same replay path as an exact-id absence proof instead of
     # the generic "unprovable membership" raise.  Replaying an event whose
     # own processing timestamp predates the new baseline would still corrupt
-    # ELO event order, so the existing, unchanged order-safety guard is what
-    # actually stops it here -- with its own more specific message, proving
-    # the fallback was tried rather than skipped.
+    # ELO event order under the strict (opt-in) order guard, so this test
+    # forces strict mode to keep asserting the refusal -- default behaviour
+    # is now lenient late replay (LIVE_ELO_REBASE_STRICT_ORDER).
+    monkeypatch.setattr(lts, "LIVE_ELO_REBASE_STRICT_ORDER", True)
     record = _live_record(1_700_000_002, start=700, duration=None)
     snapshot_path, _snapshot = _ledger_snapshot(
         tmp_path, coverage_since=0, completed_ids=[],
@@ -338,7 +340,7 @@ def test_id_proof_wins_over_unknown_teams_rule() -> None:
     assert action == "covered"
 
 
-def test_two_maps_of_one_pair_forty_minutes_apart_consume_key_once() -> None:
+def test_two_maps_of_one_pair_forty_minutes_apart_consume_key_once(monkeypatch) -> None:
     # FIX 3 + FIX 4(b): the snapshot lists only the FIRST real map's key for
     # pair (101, 202); the second real map (2400s = 40 min later, well
     # inside the 10800s tolerance) has no key of its own -- e.g. it hadn't
@@ -346,7 +348,10 @@ def test_two_maps_of_one_pair_forty_minutes_apart_consume_key_once() -> None:
     # the second entry would ALSO match the first map's key by proximity
     # (2400s <= 10800s), wrongly marking it "covered".  Sharing one
     # `consumed` set across both calls (as `rebase_runtime_model_state`
-    # does) is what makes a single fixed tolerance safe here.
+    # does) is what makes a single fixed tolerance safe here. Strict mode is
+    # forced so the second, still-unprovable entry keeps raising instead of
+    # the new default lenient late replay (LIVE_ELO_REBASE_STRICT_ORDER).
+    monkeypatch.setattr(lts, "LIVE_ELO_REBASE_STRICT_ORDER", True)
     recent_completed_keys = (10_800, {9_999_000_010: (101, 202, 1_000)})
     recent_completed_ids = (0, set())
     consumed: set[int] = set()

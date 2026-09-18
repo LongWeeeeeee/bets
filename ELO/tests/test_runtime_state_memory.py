@@ -534,9 +534,14 @@ def test_rebase_deduplicates_legacy_entry_by_exact_snapshot_id(tmp_path) -> None
     }
 
 
-def test_rebase_refuses_absent_delayed_row_with_pre_cutoff_live_timestamp(tmp_path, capsys) -> None:
+def test_rebase_refuses_absent_delayed_row_with_pre_cutoff_live_timestamp_when_strict(
+        tmp_path, capsys, monkeypatch) -> None:
     # Exact recent coverage proves this source row is absent, but moving its
-    # ELO event backwards behind the rebuilt baseline is not valid replay.
+    # ELO event backwards behind the rebuilt baseline is not valid replay
+    # under the strict (opt-in) order guard. Default behaviour is now lenient
+    # late replay -- see
+    # test_rebase_replays_absent_delayed_row_with_pre_cutoff_live_timestamp_by_default.
+    monkeypatch.setattr(lts, "LIVE_ELO_REBASE_STRICT_ORDER", True)
     record = _live_record(9997, start=920, duration=60)
     snapshot_path, _snapshot = _ledger_snapshot(tmp_path, completed_ids=[])
     state_path = tmp_path / "state.json"
@@ -554,6 +559,38 @@ def test_rebase_refuses_absent_delayed_row_with_pre_cutoff_live_timestamp(tmp_pa
                         "--progress", str(progress_path)]) == 1
     assert "без изменения порядка" in capsys.readouterr().err
     assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+
+
+def test_rebase_replays_absent_delayed_row_with_pre_cutoff_live_timestamp_by_default(
+        tmp_path, capsys) -> None:
+    # Default (lenient) mode: the same absent, pre-cutoff row is replayed
+    # with a stderr warning instead of blocking every nightly rebase (E-18
+    # follow-up: 7 tier-2 maps the corpus top-up never ingests used to freeze
+    # prod on a stale base here).
+    record = _live_record(9997, start=920, duration=60)
+    snapshot_path, snapshot = _ledger_snapshot(tmp_path, completed_ids=[])
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "same-history-signature",
+                        "model_state": {"legacy": True}})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "same-history-signature",
+                           "pending_series": {},
+                           "applied_maps": {"delayed": _applied_entry(record, observed_at=980)}})
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    err = capsys.readouterr().err
+    assert "replay после среза" in err
+
+    rebased_state = json.loads(state_path.read_text(encoding="utf-8"))["model_state"]
+    assert rebased_state != snapshot["model_state"]
+
+    rebased_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    applied = rebased_progress["applied_maps"]["delayed"]
+    assert applied["match_id"] == 9997
+    assert applied["result_timestamp"] == 980
 
 
 def test_rebase_rolls_back_both_runtime_files_when_progress_replace_fails(tmp_path, monkeypatch, capsys) -> None:
