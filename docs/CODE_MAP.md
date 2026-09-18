@@ -1897,6 +1897,17 @@ prior observations and verifies snapshots against retained source HTML. Input:
 collection, never scoring.
 Full contract, commands and validation limits: [E-295](experiments/E-295-player-rank-earnings.md).
 
+`python -m base.tools.collect_rank_snapshots --output DIR` archives all returned
+rows from the four official Valve divisions (no top-500 cropping). Each immutable
+`DIR/<run-ns>/<division>/` contains `source.json` and validated `snapshot.json`;
+`collection.json` records per-region failures and completion. It performs four
+bounded GETs, pauses one second between requests and stops on 403/429. Partial
+runs exit nonzero. Snapshots retain source publication time, observation time and
+SHA256; `verify_snapshot(path)` reparses the retained source and compares fields.
+Valve does not expose account IDs: these archives explicitly retain unresolved
+identity and are not directly accepted as account-bound ML metadata. Tied ranks
+and duplicate nicknames are retained, never silently resolved by name/country.
+
 User-authorized offline approximation: `PlayerHistory.features(...,
 time_policy="calendar_period")` / export `--time-policy calendar_period` uses
 latest earnings observation within each UTC calendar month and latest rank update
