@@ -51,12 +51,12 @@ def test_panel_places_early_win_immediately_under_early_nw(available):
     env = {'win_model_veto': fake}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), '<panel>', 'exec'), env)
     lines = env['_format_win_model_line']({'index': -5.4}).splitlines()
-    nw = lines.index('🕐 Early NW ML-модель: Dire 55.4%')
+    nw = lines.index('🕐 Early NW ML-модель (нетворт-маркер 20–28 мин): Dire 55.4%')
     if available:
-        assert lines[nw+1] == '🏁 Early Win ML-модель: Dire 55.4%'
-        assert lines[nw+2] == '🕑 Late ML-модель: Dire 55.4%'
+        assert lines[nw+1] == '🏁 Early Win ML-модель (карта 20–34 мин): Dire 55.4%'
+        assert lines[nw+2] == '🕑 Late ML-модель (карта ≥36 мин): Dire 55.4%'
     else:
-        assert lines[nw+1] == '🕑 Late ML-модель: Dire 55.4%'
+        assert lines[nw+1] == '🕑 Late ML-модель (карта ≥36 мин): Dire 55.4%'
         assert not any('Early Win' in line for line in lines)
 
 

@@ -99,10 +99,10 @@ def test_format_win_model_line_renders_four_lines_with_stars(monkeypatch):
     early_output = {win_model_veto.DETAILS_KEY: details}
     text = C._format_win_model_line(early_output, {}, {}, all_model_line="🌐 All ML-модель: Radiant 62.2%")
     lines = text.splitlines()
-    assert lines[0] == "\U0001F550 Early NW ML-модель: Dire 61.0% ★"
-    assert lines[1] == "\U0001F3C1 Early Win ML-модель: Radiant 72.0% ★"
+    assert lines[0] == "\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): Dire 61.0% ★"
+    assert lines[1] == "\U0001F3C1 Early Win ML-модель (карта 20–34 мин): Radiant 72.0% ★"
     assert lines[2] == "🌐 All ML-модель: Radiant 62.2%"
-    assert lines[3] == "\U0001F551 Late ML-модель: Dire 65.5% ★"
+    assert lines[3] == "\U0001F551 Late ML-модель (карта ≥36 мин): Dire 65.5% ★"
     assert lines[4] == details["refusal_warning_line"]
 
 
@@ -112,7 +112,7 @@ def test_format_win_model_line_no_star_below_threshold(monkeypatch):
                "refusal_reason": "x", "refusal_warning_line": ""}
     early_output = {win_model_veto.DETAILS_KEY: details}
     text = C._format_win_model_line(early_output, {}, {})
-    assert text.splitlines()[0] == "\U0001F550 Early NW ML-модель: Dire 55.0%"
+    assert text.splitlines()[0] == "\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): Dire 55.0%"
 
 
 def test_format_win_model_line_unaffected_when_index_present():

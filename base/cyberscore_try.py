@@ -7954,13 +7954,13 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
         if _fb_early_nw:
             _fb_c = float(_fb_early_nw["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
-            _fb_lines.append(f"\U0001F550 Early NW ML-модель: "
+            _fb_lines.append(f"\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): "
                              f"{_fb_early_nw['side']} {_fb_c * 100:.1f}%{_fb_star}")
         _fb_early_win = _fb_details.get("early_win")
         if _fb_early_win:
             _fb_c = float(_fb_early_win["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
-            _fb_lines.append(f"\U0001F3C1 Early Win ML-модель: "
+            _fb_lines.append(f"\U0001F3C1 Early Win ML-модель (карта 20–34 мин): "
                              f"{_fb_early_win['side']} {_fb_c * 100:.1f}%{_fb_star}")
         if standalone_all_line:
             _fb_lines.append(standalone_all_line)
@@ -7968,7 +7968,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
         if _fb_late:
             _fb_c = float(_fb_late["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
-            _fb_lines.append(f"\U0001F551 Late ML-модель: "
+            _fb_lines.append(f"\U0001F551 Late ML-модель (карта ≥36 мин): "
                              f"{_fb_late['side']} {_fb_c * 100:.1f}%{_fb_star}")
         _fb_warning = str(_fb_details.get("refusal_warning_line") or "").strip()
         if _fb_warning:
@@ -8036,6 +8036,16 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     # раннего перевеса по нетворту (маркер словаря early_dict, окно 20-28 минут).
     # Стоит ВЫШЕ late-строки: раньше по игровому времени. Отказ молчаливый, как
     # у late, — нет оценки, нет строки, карточка выглядит ровно как раньше.
+    #
+    # Подписи в скобках у трёх строк (с 18.09.2026) — популяция обучения каждой
+    # модели, чтобы в TG было видно, ЧТО именно оценивается:
+    #   Early NW  — первый нетворт-маркер в окне EARLY_LEAD_WINDOW = (20, 28)
+    #               (`is_early_nw_match`, base/analise_database.py);
+    #   Early Win — победитель среди карт 20–34 мин (E-260, 1200–2040 с вкл.);
+    #   Late      — победитель среди карт >= LATE_MIN_DURATION = 36 мин (E-240).
+    # Литералы продублированы в fallback-ветке выше (та же функция, exec()
+    # без общих констант). Скобки у Late-строки обязаны проходить
+    # `_LATE_WIN_MODEL_PANEL_RE` — по ней работает гейт `late_model_against`.
     # ★-порог читается инлайново (не отдельной функцией): `_format_win_model_line`
     # исполняется тестами в изолированном exec() без остального модуля
     # (test_early_win_model.py), где имя внешнего хелпера было бы NameError.
@@ -8050,7 +8060,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _early_nw:
         _early_nw_conf = float(_early_nw['confidence'])
         _early_nw_star = " ★" if _early_nw_conf >= _ml_star_min_conf else ""
-        line += (f"\n\U0001F550 Early NW ML-модель: "
+        line += (f"\n\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): "
                  f"{_early_nw['side']} {_early_nw_conf * 100:.1f}%{_early_nw_star}")
     # Display-only winner estimate for the 20–34 minute population.
     try:
@@ -8060,7 +8070,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _early_win:
         _early_win_conf = float(_early_win['confidence'])
         _early_win_star = " ★" if _early_win_conf >= _ml_star_min_conf else ""
-        line += (f"\n\U0001F3C1 Early Win ML-модель: "
+        line += (f"\n\U0001F3C1 Early Win ML-модель (карта 20–34 мин): "
                  f"{_early_win['side']} {_early_win_conf * 100:.1f}%{_early_win_star}")
     if standalone_all_line:
         line += f"\n{standalone_all_line}"
@@ -8075,7 +8085,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _late:
         _late_conf = float(_late['confidence'])
         _late_star = " ★" if _late_conf >= _ml_star_min_conf else ""
-        line += (f"\n\U0001F551 Late ML-\u043c\u043e\u0434\u0435\u043b\u044c: "
+        line += (f"\n\U0001F551 Late ML-\u043c\u043e\u0434\u0435\u043b\u044c (\u043a\u0430\u0440\u0442\u0430 \u226536 \u043c\u0438\u043d): "
                  f"{_late['side']} {_late_conf * 100:.1f}%{_late_star}")
     # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
     # тогда выглядит ровно как раньше.
@@ -12944,11 +12954,13 @@ _WIN_MODEL_PANEL_RE = re.compile(
     r"^\s*\U0001F916\s*ML-\u043c\u043e\u0434\u0435\u043b\u044c:\s*(?P<side>Radiant|Dire)\b",
     re.M,
 )
-# "🕑 Late ML-модель: Dire 56.0%" — сторона late-модели.
-# Строку печатает `_build_win_model_line` (см. ~5846); отказ модели молчаливый,
-# тогда строки просто нет.
+# "🕑 Late ML-модель (карта ≥36 мин): Dire 56.0%" — сторона late-модели.
+# Строку печатает `_format_win_model_line`; отказ модели молчаливый, тогда
+# строки просто нет. Подпись в скобках (популяция обучения, с 18.09.2026)
+# необязательна: delayed-записи, собранные до деплоя, и текст, пересобранный
+# из `stake_multiplier_context["late_model_side"]`, несут строку без неё.
 _LATE_WIN_MODEL_PANEL_RE = re.compile(
-    r"^\s*\U0001F551\s*Late ML-модель:\s*(?P<side>Radiant|Dire)\b",
+    r"^\s*\U0001F551\s*Late ML-модель(?:\s*\([^)]*\))?:\s*(?P<side>Radiant|Dire)\b",
     re.M,
 )
 # "All: <team> WR≈65.0% от кэфа 1.54" из блока «Оценка WR». Одноимённый

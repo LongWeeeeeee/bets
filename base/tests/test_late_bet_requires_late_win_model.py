@@ -17,11 +17,13 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import cyberscore_try as C  # noqa: E402
 
-# Формат строки задаёт `_build_win_model_line` (base/cyberscore_try.py, ~5846):
-# "\n\U0001F551 Late ML-модель: {side} {confidence}%". Часы U+1F551 обязательны —
-# `late_win_model.panel_line()` их не ставит, панель добавляет сама.
-LATE_FOR_RADIANT = "🕑 Late ML-модель: Radiant 56.0%"
-LATE_FOR_DIRE = "🕑 Late ML-модель: Dire 56.0%"
+# Формат строки задаёт `_format_win_model_line` (base/cyberscore_try.py):
+# "\n\U0001F551 Late ML-модель (карта ≥36 мин): {side} {confidence}%". Часы
+# U+1F551 обязательны — `late_win_model.panel_line()` их не ставит, панель
+# добавляет сама. Подпись в скобках — популяция обучения (LATE_MIN_DURATION);
+# `_LATE_WIN_MODEL_PANEL_RE` принимает строку и с ней, и без неё.
+LATE_FOR_RADIANT = "🕑 Late ML-модель (карта ≥36 мин): Radiant 56.0%"
+LATE_FOR_DIRE = "🕑 Late ML-модель (карта ≥36 мин): Dire 56.0%"
 
 # Сторону задаёт late-звезда, early того же знака её не подтверждает.
 LATE_DRIVEN_RADIANT_CTX = {

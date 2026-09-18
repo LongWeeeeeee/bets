@@ -153,11 +153,14 @@ def test_terminal_reject_drops_delayed_queue_entry(monkeypatch) -> None:
 
 
 def test_late_star_line_still_matches_panel_regex() -> None:
-    """★-суффикс на строке Late ML-модель не должен ломать `_LATE_WIN_MODEL_PANEL_RE`."""
-    text = "\U0001F551 Late ML-модель: Radiant 65.0% ★"
+    """★-суффикс и подпись фильтра в скобках не должны ломать `_LATE_WIN_MODEL_PANEL_RE`."""
+    text = "\U0001F551 Late ML-модель (карта ≥36 мин): Radiant 65.0% ★"
     match = C._LATE_WIN_MODEL_PANEL_RE.search(text)
     assert match is not None
     assert match.group("side") == "Radiant"
+    # Старый формат без подписи (delayed-записи, собранные до деплоя) читается по-прежнему.
+    legacy = C._LATE_WIN_MODEL_PANEL_RE.search("\U0001F551 Late ML-модель: Dire 56.0%")
+    assert legacy is not None and legacy.group("side") == "Dire"
 
 
 # --- _ml_dispatch_tick: shadow logs only, ml delivers once with dedup -------

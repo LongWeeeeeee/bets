@@ -44,9 +44,9 @@ def test_all_model_follows_early_win_and_survives_missing_ensemble_index():
     format_line = _compiled("_format_win_model_line", {"win_model_veto": veto})
     all_line = "🌐 All ML-модель: Radiant 62.0%"
     lines = format_line({"index": -5.4}, all_model_line=all_line).splitlines()
-    early_win = lines.index("🏁 Early Win ML-модель: Dire 55.4%")
+    early_win = lines.index("🏁 Early Win ML-модель (карта 20–34 мин): Dire 55.4%")
     assert lines[early_win + 1] == all_line
-    assert lines[early_win + 2] == "🕑 Late ML-модель: Dire 55.4%"
+    assert lines[early_win + 2] == "🕑 Late ML-модель (карта ≥36 мин): Dire 55.4%"
     assert format_line({}, all_model_line=all_line) == all_line + "\n"
 
 

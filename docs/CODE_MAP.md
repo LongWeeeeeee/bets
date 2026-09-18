@@ -738,7 +738,7 @@ Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL
 
 Env: `LATE_WIN_MODEL_DIR` (каталог артефакта), `LATE_WIN_MODEL_ENABLED` (1; `0` гасит строку без деплоя).
 
-В карточке: `_format_win_model_line` печатает `🕑 Late ML-модель: Dire 52.7%` строкой ПОД `🤖 ML-модель`. В `tail_log` строка приезжает внутри готового `bet_message`.
+В карточке: `_format_win_model_line` печатает `🕑 Late ML-модель (карта ≥36 мин): Dire 52.7%` строкой ПОД `🤖 ML-модель` (подпись в скобках — популяция обучения, `LATE_MIN_DURATION`; с 18.09.2026). `_LATE_WIN_MODEL_PANEL_RE` читает сторону и со скобками, и без них (старые delayed-записи). В `tail_log` строка приезжает внутри готового `bet_message`.
 
 ## `base/refresh_public_draft_model.py` — переобучение по патчу + ворота промоута
 
@@ -1543,7 +1543,7 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 
 ## Подключение draft phase моделей в действующие readers
 
-`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win подключён через `base/early_win_model.py` и `last_early_win(index)` к строке `🏁 Early Win ML-модель` сразу под Early NW. Это только отображение победителя популяции 20–34 минуты; в decision gates не участвует. `EARLY_WIN_MODEL_DIR` переопределяет каталог `data/draft_phase_serving/2026-09-05_position_pairs/early_win`, `EARLY_WIN_MODEL_ENABLED=0` выключает строку. Ошибка изолирована и записывается в `early_win_error` журнала prematch, вердикт хранится в истории индекса. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
+`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win подключён через `base/early_win_model.py` и `last_early_win(index)` к строке `🏁 Early Win ML-модель (карта 20–34 мин)` сразу под Early NW. Это только отображение победителя популяции 20–34 минуты (E-260: 1200–2040 с включительно); в decision gates не участвует. `EARLY_WIN_MODEL_DIR` переопределяет каталог `data/draft_phase_serving/2026-09-05_position_pairs/early_win`, `EARLY_WIN_MODEL_ENABLED=0` выключает строку. Ошибка изолирована и записывается в `early_win_error` журнала prematch, вердикт хранится в истории индекса. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
 
 `base/tools/refit_prematch_draft_component.py` принимает явные `--matrix`, `--weights`, `--compact`, `--public-corpus`, `--draft-model`, `--output`, `--report`. Пересчитывает live draft_logit и два interaction-признака, обучает только зависимые ветки; проверяет All target/classes/width, исходные нормировки, mid, сходимость. Выход содержит только веса.
 
@@ -1867,10 +1867,15 @@ draft_model=...)` — экспортирует те же два вердикта
    None` ищет среди блоков `DETAILS_KEY`-словарь с `refusal_reason` (в
    try/except: функция гоняется тестами в изолированном `exec()` против
    `SimpleNamespace`-заглушек без атрибута `DETAILS_KEY`, что обязано молча
-   уйти на прежнюю ветку "нет индекса"). Печатает `🕐 Early NW`, `🏁 Early
-   Win`, `🌐 All` (`all_model_line`, как раньше), `🕑 Late`, затем строку
-   предупреждения — тем же ★-порогом `ML_DISPATCH_MIN_CONF`, что и обычная
-   ветка.
+   уйти на прежнюю ветку "нет индекса"). Печатает `🕐 Early NW ML-модель
+   (нетворт-маркер 20–28 мин)`, `🏁 Early Win ML-модель (карта 20–34 мин)`,
+   `🌐 All` (`all_model_line`, как раньше), `🕑 Late ML-модель (карта ≥36
+   мин)`, затем строку предупреждения — тем же ★-порогом
+   `ML_DISPATCH_MIN_CONF`, что и обычная ветка. Подписи в скобках (с
+   18.09.2026) — популяции обучения: `EARLY_LEAD_WINDOW` (20, 28) и
+   `is_early_nw_match`, E-260 `early_win` 1200–2040 с, `LATE_MIN_DURATION`
+   36; те же литералы в обеих ветках `_format_win_model_line` (функция
+   гоняется в изолированном `exec()`, общих констант ей не видно).
 7. `base/cyberscore_try.py:_ml_dispatch_extract_index_details` (~12023) — если
    ни у одного блока нет `INDEX_KEY`, ищет тот же `DETAILS_KEY`-маркер и
    возвращает `(None, fallback_details)` вместо `(None, {})`. Дальше код
