@@ -61,7 +61,8 @@ def load_snapshot(path):
     if (url.scheme != "https" or url.netloc != "dltv.org"
             or not url.path.startswith("/matches/" + str(snapshot["series_id"]) + "/")):
         raise ValueError("invalid DLTV snapshot source URL")
-    html = path.with_name("source.html").read_text()
+    # Keep source newlines byte-exact: read_text() folds CRLF before hashing.
+    html = path.with_name("source.html").read_bytes().decode("utf-8")
     if hashlib.sha256(html.encode()).hexdigest() != snapshot.get("source_sha256"):
         raise ValueError("snapshot source hash mismatch")
     expected = parse_dltv_match(html, source_url=snapshot["source_url"], observed_at=snapshot["observed_at"])

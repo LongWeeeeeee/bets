@@ -7,11 +7,42 @@
 
 DONE для сравнения трёх фиксированных переобучений существующих 35 признаков
 и реализации допущения постоянства призовых/рангов в пределах месяца/недели.
-BLOCKED для содержательного сравнения новых признаков: текущие 10 игроков
-дают покрытие только двух train-карт и ни одной test-карты даже с допущением.
+Расширенный сбор: 138 проверенных страниц, 300 игроков; призовые покрывают
+40 train-карт и 22/38 test-карты, полностью — 27 и 11 соответственно.
+DONE для augmented C=0.1 сравнения: кандидат ухудшил log loss и отклонён.
 Serving, боевые веса, пороги и production не менялись.
 
 ## SUMMARY
+
+### Последнее сравнение с расширенными призовыми
+
+| Вариант | Правильных карт | Accuracy | Log loss | Brier |
+|---|---:|---:|---:|---:|
+| Frozen baseline | 26/38 | 68.42% | 0.641190 | 0.218578 |
+| Baseline + earnings, C=0.1 | 26/38 | 68.42% | 1.457306 | 0.262364 |
+
+Парная разница log loss **+0.816116**, series-bootstrap 95% CI
+**[+0.114920; +1.655621]**, 28 серий, 5000 повторов, seed295. Это ухудшение
+на ранее изученном тесте, не доказательство качества на будущих матчах.
+На 11 полностью покрытых картах accuracy также не изменилась (7/11),
+log loss 0.658768 → 0.956361; subset — только описательная диагностика.
+
+В full добавились 33 train-variable earnings columns, в no_org — 29;
+остальные columns константны на train и исключены без просмотра test.
+Новые сведения доступны лишь на 40/15 205 тренировочных картах, но на 22/38
+тестовых: выраженный сдвиг покрытия. Недостаток данных/переобучение — возможное
+объяснение ухудшения, а не установленная отдельным экспериментом причина.
+Этот кандидат не принят, serving не изменён; по этому тесту параметры не подбирались.
+
+Shared executor: `run-c45a5a8b192dfdf0c32447d4`, job `augmented-refit`, local,
+exit0, 14 input hashes verified before/after; 3 outputs collected. Первый
+preflight ждал CPU budget; следующий разрешил 1 slot / 1 thread. Для известной
+ошибки macOS rename readonly directory снимок опубликован до chmod, затем
+запечатан и проверен штатным executor; runtime executor не изменялся.
+Артефакты: `.orchestra/jobs/run-c45a5a8b192dfdf0c32447d4/augmented-refit/output/`
+(`summary.json`, `predictions.npz`, `research_weights.npz`),
+`runtime/artifacts/misc/player_metadata_expand_20260918/prepared/coverage.json`,
+`verification.json`, `evaluate_plan.json`, `campaign.json` в родительском каталоге.
 
 OBSERVED:
 
@@ -107,6 +138,51 @@ producer `runtime/experiments/misc/pro_corpus_rich.py` сохраняет пор
 Radiant позиции 1..5, Dire позиции 1..5.
 
 ## CHANGED
+
+### Расширение на игроков корпуса, 18.09.2026
+
+Новый `base/tools/expand_player_metadata.py` объединяет bounded collection,
+account/position-aligned preparation и paired evaluation. Discovery: результаты
+DLTV на 05/12/18 сентября, 169 уникальных ссылок. Из них сохранены 138 полных
+валидных составов; 31 страница отклонена из-за отсутствующих/дублирующихся
+аккаунтов или позиций. Состав DLTV используется только для извлечения профилей;
+сторона и позиция признаков всегда берутся из самой карты корпуса.
+
+Подготовка проверяет SHA входов **до** чтения, включая `rows.npz` с аккаунтами,
+и совпадение `mids/ts/y/sids` с frozen matrix. Все HTML/снимки сохранены; исправлен
+ложный отказ SHA при CRLF: `load_snapshot` теперь читает исходные UTF-8 bytes
+без нормализации переводов строк. Регрессионный тест воспроизводит этот случай.
+
+Покрытие: train 40/15 205 карт хотя бы частично, 27 полностью, 384 player slots;
+test 22/38 карт частично, 11 полностью, 201/380 player slots. Более старые месяцы
+остаются missing. Проверенные региональные ранги всё ещё 0: Valve не возвращает
+account_id, а DLTV/OpenDota не предоставили подтверждённую division. Name/country
+join не применяется. Это ограничение источника, не нулевой ранг игрока.
+
+Команды (выходы должны быть новыми; collection_v2 и неуспешные запуски сохранены):
+
+```bash
+venv_catboost/bin/python3 -m base.tools.expand_player_metadata collect \
+  --dates 2026-09-05 2026-09-12 2026-09-18 --limit 200 \
+  --exclude-collection runtime/artifacts/misc/player_metadata_expand_20260918/collection_v2/collection.json \
+  --output runtime/artifacts/misc/player_metadata_expand_20260918/collection_v3
+venv_catboost/bin/python3 -m base.tools.expand_player_metadata prepare \
+  --plan runtime/artifacts/misc/player_metadata_expand_20260918/prepare_plan_v2.json \
+  --snapshots runtime/artifacts/misc/player_metadata_expand_20260918/collection_v2/snapshots \
+              runtime/artifacts/misc/player_metadata_expand_20260918/collection_v3/snapshots \
+  --output runtime/artifacts/misc/player_metadata_expand_20260918/prepared
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight \
+  --plan runtime/artifacts/misc/player_metadata_expand_20260918/campaign.json
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run \
+  --plan runtime/artifacts/misc/player_metadata_expand_20260918/campaign.json --background
+```
+
+Candidate: те же train/test masks, full/no_org populations, C=0.1 и исходные
+35/34 признака, плюс metadata columns с ненулевой variance **на train ветки**.
+Scaler также обучается только на train. Baseline воспроизводится до допуска
+candidate fit. Полная выборка 38 карт — основное paired сравнение; fully-covered
+subset выводится только описательно, без выбора модели по нему. Research weights
+имеют отдельный формат и не заменяют serving артефакт.
 
 ### Повторяемое сравнение существующей модели
 
@@ -229,6 +305,12 @@ cutoff, признаки, обе стороны и диагностику; од�
 
 ## CHECKS
 
+Расширенный сбор/подготовка: **34 tests passed** с `--noconftest` для
+`test_expand_player_metadata.py`, `test_player_metadata.py`,
+`test_compare_prematch_refits.py`. Проверяются discovery rate-limit receipt,
+лимит дат, неизменяемость output, обязательный SHA accounts, CRLF source hash,
+смена сторон/позиций, train-only отбор колонок и full/no_org routing.
+
 После добавления calendar_period: **27 tests passed** (`test_player_metadata.py`
 и `test_compare_prematch_refits.py`, `--noconftest`). Дополнительно проверены
 границы месяца, недели и ISO-года, источник по дате обновления ранга,
@@ -294,14 +376,15 @@ missing/нулевые призовые, устаревший ранг, неиз
 
 ## NEXT
 
-Для разрешённого приближённого эксперимента сначала расширить account-bound
-сбор призовых на игроков самой выборки: один пример DLTV покрывает лишь две
-train-карты. Регион ранга устанавливать отдельным проверяемым источником.
+Расширение и первое сравнение выполнены. Следующее ограничение — история
+призовых: 40 покрытых train-карт мало для 33 дополнительных признаков.
+Нужны снимки других месяцев либо новая накопленная выборка; затем отдельный,
+ещё не изученный тест. Регион ранга устанавливать проверяемым источником.
 
 1. Получить account-bound источник division+rank с временем обновления, разобрать
    расхождение DLTV/Valve/OpenDota; сохранять новые снимки до начала карт.
 2. Собрать проверенную историю призовых по выплатам/датам либо накопить будущую
-   выборку. Текущие карьерные суммы не backfill-ить в обучающие старые матчи.
+   выборку. Текущие карьерные суммы не переносить за разрешённый месяц.
 3. Зафиксировать block ablation, time/series-disjoint holdout, embargo и baseline
    на одинаковых картах; проверить log loss, Brier, калибровку и покрытие.
 4. Только после этого расширять schema обученного артефакта и serving с единым
