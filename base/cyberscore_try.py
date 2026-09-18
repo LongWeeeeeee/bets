@@ -27881,6 +27881,7 @@ def _register_completed_live_map_for_elo(
     league_name: str,
     series_type: Any,
     match_tier: Optional[int],
+    observed_game_time: Any = None,
 ) -> Optional[Dict[str, Any]]:
     if (
         not ELO_LIVE_SNAPSHOT_AVAILABLE
@@ -27951,6 +27952,12 @@ def _register_completed_live_map_for_elo(
             # покарточным путём было ровно ноль. Справка не бросает и на
             # неизвестном исходе возвращает None — тогда всё как было.
             winner_lookup=_live_elo_winner_lookup,
+            # Отличает отставшую строку ДОИГРАННОЙ sourcetv-карты (видна ~15
+            # мин под новым .<kills> ключом с тем же match_id-алиасом) от
+            # ГЕНУИННОЙ следующей карты серии под тем же алиасом: вторая
+            # регистрируется на драфте/раннем гейм-тайме, первая — намного
+            # позже (E-294 follow-up).
+            observed_game_time=observed_game_time,
         )
     except Exception:
         logger.exception("Failed to register live ELO map context for %s", normalized_map_key)
@@ -40217,6 +40224,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             league_name=league_name,
             series_type=series_type,
             match_tier=star_match_tier,
+            observed_game_time=game_time,
         )
         if isinstance(live_elo_registration, dict):
             _live_elo_applied_batch = _applied_updates_from_result(live_elo_registration)
@@ -40234,11 +40242,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 # знать чем: серия видится впервые или счёт не изменился.
                 # Строка только пишет в лог, решений не меняет.
                 logger.info(
-                    "LIVE_ELO_NOT_APPLIED series=%s map=%s scores=%s already_applied=%s",
+                    "LIVE_ELO_NOT_APPLIED series=%s map=%s scores=%s already_applied=%s duplicate_reason=%s",
                     live_elo_registration.get("series_key"),
                     live_elo_registration.get("map_key"),
                     live_elo_registration.get("current_scores"),
                     live_elo_registration.get("current_map_already_applied"),
+                    live_elo_registration.get("duplicate_reason"),
                 )
         elif live_elo_registration is None:
             logger.info(

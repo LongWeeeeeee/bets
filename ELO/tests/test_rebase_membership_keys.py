@@ -106,6 +106,7 @@ def test_placeholder_id_entry_is_covered_by_team_pair_and_time(tmp_path) -> None
         "match_id": 1_700_000_000,
         "snapshot_covered": True,
         "snapshot_covered_reference": 1_000,
+        "snapshot_covered_match_id": 9_999_000_001,
     }
 
 

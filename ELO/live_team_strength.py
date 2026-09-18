@@ -960,8 +960,19 @@ def _snapshot_covered_tombstone(
     *,
     snapshot_reference: int,
     match: MatchRecord | None = None,
+    proof_match_id: int | None = None,
 ) -> dict[str, Any]:
-    """Keep a bounded proof that a live map was already in a snapshot."""
+    """Keep a bounded proof that a live map was already in a snapshot.
+
+    `proof_match_id` is the snapshot key actually consumed to prove coverage.
+    The team-pair fallback (`_snapshot_find_team_pair_key`) consumes a
+    DIFFERENT snapshot key than the ledger's own `match_id` (a DLTV series id
+    or a fixed placeholder, never a real Valve match id) -- storing it here
+    lets a LATER rebase re-confirm this tombstone by the key that was
+    actually proven, instead of forever demanding the ledger's own id, which
+    never appears in any snapshot (E-294: 18/92 tombstones on serv1 could
+    never be reconfirmed and blocked every nightly rebase).
+    """
     tombstone: dict[str, Any] = {
         "match_id": int(match_id),
         "snapshot_covered": True,
@@ -969,6 +980,8 @@ def _snapshot_covered_tombstone(
     }
     if match is not None and match.result_timestamp is not None:
         tombstone["snapshot_covered_result_timestamp"] = int(match.result_timestamp)
+    if proof_match_id is not None and int(proof_match_id) != int(match_id):
+        tombstone["snapshot_covered_match_id"] = int(proof_match_id)
     return tombstone
 
 
@@ -1035,12 +1048,30 @@ def _applied_entry_for_rebase(
         retention_origin = result_timestamp if result_timestamp is not None else covered_reference
         if snapshot_reference > retention_origin + SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS:
             return "expired", None, None
-        if recent_completed_ids is None or match_id not in recent_completed_ids[1]:
-            raise RuntimeRebaseError(
-                f"snapshot tombstone {match_id} не подтверждён новым снимком; "
-                "перебазировка отменена"
+        # Confirm by the actually-consumed proof key when the tombstone carries
+        # one (team-pair fallback), else fall back to the ledger's own
+        # match_id (exact-id proof -- unchanged behaviour).
+        proof_match_id = _coerce_optional_int(raw.get("snapshot_covered_match_id"))
+        confirm_id = proof_match_id if proof_match_id is not None else match_id
+        confirmed = (
+            (recent_completed_ids is not None and confirm_id in recent_completed_ids[1])
+            or (recent_completed_keys is not None and confirm_id in recent_completed_keys[1])
+        )
+        if not confirmed:
+            # A tombstone carries no match_record, so refusing here cannot
+            # restore anything -- it only freezes prod on a stale base. The
+            # team-pair proof does not always survive under the same key in a
+            # LATER snapshot (E-294); the tombstone still expires after
+            # SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS (checked above), so an
+            # unconfirmed tombstone is kept, not fatal.
+            print(
+                f"[ELO] snapshot tombstone {match_id} не подтверждён новым снимком; "
+                "оставлен до истечения окна",
+                file=sys.stderr,
+                flush=True,
             )
-        _consume_key_for_match_id(recent_completed_keys, consumed, match_id)
+            return "tombstone", None, None
+        _consume_key_for_match_id(recent_completed_keys, consumed, confirm_id)
         return "tombstone", None, None
     # Exact snapshot membership is sufficient even for an old compact ledger
     # entry that predates full replay context.
@@ -1339,6 +1370,7 @@ def rebase_runtime_model_state(
     # pair-provable entry could otherwise claim it by proximity.
     ordered_applied = sorted(old_applied.items(), key=_applied_sort_key)
     for insertion_order, (map_key, raw) in enumerate(ordered_applied):
+        consumed_before = set(consumed_keys)
         action, match, result_timestamp = _applied_entry_for_rebase(
             raw,
             snapshot_reference=want_reference,
@@ -1355,8 +1387,11 @@ def rebase_runtime_model_state(
                 match_id = int(match.match_id)
             if match_id is None:
                 raise RuntimeRebaseError("covered live-карта не содержит match_id для tombstone")
+            newly_consumed = consumed_keys - consumed_before
+            proof_match_id = next(iter(newly_consumed), None)
             rebased_applied[str(map_key)] = _snapshot_covered_tombstone(
-                match_id, snapshot_reference=want_reference, match=match
+                match_id, snapshot_reference=want_reference, match=match,
+                proof_match_id=proof_match_id,
             )
         elif action in ("replay", "replay_unknown_teams"):
             assert match is not None and result_timestamp is not None
@@ -1374,8 +1409,9 @@ def rebase_runtime_model_state(
             raise RuntimeRebaseError("runtime progress содержит некорректную pending series")
         pending_maps = _pending_maps_list(series_state)
         retained: list[dict[str, Any]] = []
-        covered_maps: list[tuple[str, MatchRecord]] = []
+        covered_maps: list[tuple[str, MatchRecord, int | None]] = []
         for pending_map in pending_maps:
+            consumed_before = set(consumed_keys)
             action, match = _pending_entry_for_rebase(
                 pending_map,
                 snapshot_reference=want_reference,
@@ -1393,15 +1429,17 @@ def rebase_runtime_model_state(
                 map_key = str(pending_map.get("map_key") or "").strip()
                 if not map_key:
                     raise RuntimeRebaseError("covered pending live-карта не содержит map_key")
-                covered_maps.append((map_key, match))
+                newly_consumed = consumed_keys - consumed_before
+                covered_maps.append((map_key, match, next(iter(newly_consumed), None)))
         if covered_maps and retained:
             raise RuntimeRebaseError(
                 f"pending series {series_key} одновременно содержит covered и retained maps; "
                 "перебазировка отменена"
             )
-        for map_key, match in covered_maps:
+        for map_key, match, proof_match_id in covered_maps:
             rebased_applied[map_key] = _snapshot_covered_tombstone(
-                int(match.match_id), snapshot_reference=want_reference, match=match
+                int(match.match_id), snapshot_reference=want_reference, match=match,
+                proof_match_id=proof_match_id,
             )
         if retained:
             copied = dict(series_state)
@@ -1742,6 +1780,22 @@ def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
 # перезаписывался контекстом следующей карты раньше, чем счёт успевал
 # показать исход предыдущей — так недостающая карта терялась безвозвратно.
 _MAX_PENDING_MAPS = 6
+
+# sourcetv keeps a FINISHED map's row visible in the live feed for ~15 min
+# after its end, under a NEW `.<kills_sum>` map_key each poll. The score
+# advance already drains the real map into `applied_maps` the moment the
+# series score moves; this same lingering row must not re-enter the pending
+# queue and be applied a second time by the orphan sweep (29/162 series in
+# the prod ledger were applied twice this way, E-294 follow-up). A GENUINE
+# next map of a DLTV-style series can share the same alias id too (see
+# `test_series_level_match_id_does_not_block_the_next_map`), so match_id
+# alone can't distinguish the two cases -- a next map is registered at
+# draft/early game (`observed_game_time` small or negative), while the
+# finished-row echo is seen long after the map ended. Only treat it as a
+# duplicate when the caller supplies a game time at or past this threshold.
+LIVE_ELO_ALIAS_DUPLICATE_MIN_GAME_TIME_SECONDS = int(
+    os.getenv("LIVE_ELO_ALIAS_DUP_MIN_GAME_TIME") or 600
+)
 
 
 def _winner_slots_from_score_advance(
@@ -2931,6 +2985,7 @@ def register_live_map_context(
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
     runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
     winner_lookup: Any = None,
+    observed_game_time: float | int | None = None,
 ) -> dict[str, Any] | None:
     normalized_series_key = str(series_key or "").strip() or str(match_record.series_id or series_url or map_key)
     normalized_map_key = str(map_key or "").strip()
@@ -3023,6 +3078,40 @@ def register_live_map_context(
                 wrote_model_state = True
 
         current_map_already_applied = normalized_map_key in applied_maps
+        duplicate_reason: str | None = None
+        observed_game_time_value: float | None = None
+        if observed_game_time is not None:
+            try:
+                observed_game_time_value = float(observed_game_time)
+            except (TypeError, ValueError):
+                observed_game_time_value = None
+        if not current_map_already_applied and observed_game_time_value is not None:
+            alias_incoming_mid = int(getattr(match_record, "match_id", 0) or 0)
+            if alias_incoming_mid > 0 and _match_id_is_series(
+                alias_incoming_mid, normalized_series_key, getattr(match_record, "series_id", None)
+            ) and observed_game_time_value >= LIVE_ELO_ALIAS_DUPLICATE_MIN_GAME_TIME_SECONDS:
+                def _alias_entry_same_series(entry_map_key: str, entry: Any) -> bool:
+                    if not isinstance(entry, dict):
+                        return False
+                    if str(entry.get("series_key") or "").strip() == normalized_series_key:
+                        return True
+                    url_prefix = str(series_url or "").strip()
+                    return bool(url_prefix) and str(entry_map_key or "").startswith(f"{url_prefix}.")
+
+                if any(
+                    int((entry or {}).get("match_id") or 0) == alias_incoming_mid
+                    and _alias_entry_same_series(entry_map_key, entry)
+                    for entry_map_key, entry in applied_maps.items()
+                ):
+                    # Тот же match_id этой же серии уже применён -- в
+                    # sourcetv-режиме это alias (match_id == series_id), а не
+                    # уникальный id карты, но карта видна СПУСТЯ большое
+                    # игровое время (>= LIVE_ELO_ALIAS_DUPLICATE_MIN_GAME_TIME_
+                    # SECONDS) после конца, то есть это отставшая от score-
+                    # advance строка ДОИГРАННОЙ карты, а не следующая карта
+                    # серии (та регистрируется на драфте/раннем гейм-тайме).
+                    current_map_already_applied = True
+                    duplicate_reason = "alias_finished_map"
         if current_map_already_applied:
             # Score movement above may already have drained part of the queue;
             # persist what remains when this exact volatile map_key repeats.
@@ -3143,6 +3232,8 @@ def register_live_map_context(
         "map_key": normalized_map_key,
         "current_scores": current_scores,
         "current_map_already_applied": current_map_already_applied,
+        "duplicate_reason": duplicate_reason,
+        "observed_game_time": observed_game_time_value,
     }
 
 

@@ -1371,6 +1371,92 @@ def test_jumping_map_keys_do_not_replace_pending_until_applied(tmp_path) -> None
     assert applied["applied_update"]["map_key"] == "dltv.org/matches/425663.10"
 
 
+def _sourcetv_rec(match_id: int, radiant_win: bool = False):
+    """Как `_rec`, но `series_id` совпадает с `match_id` -- воспроизводит
+    sourcetv-алиас (match_id == series_id), а не DLTV placeholder 425663."""
+    return MatchRecord(
+        match_id=match_id, timestamp=1771153200, radiant_win=radiant_win,
+        radiant_team_id=1, radiant_team_name="Elegia",
+        dire_team_id=2, dire_team_name="Team Mariachi",
+        radiant_player_ids=(1, 2, 3, 4, 5), dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11, league_name="Test League", source_league_tier="TIER2",
+        series_id=match_id, series_type="1", derived_league_tier=LeagueTier.TIER2,
+    )
+
+
+def test_alias_duplicate_finished_map_is_not_reenqueued_when_seen_late(tmp_path) -> None:
+    """E-294 follow-up (prod: 29/162 series applied a map twice). sourcetv's
+    match_id == series_id alias makes the finished map's row stay visible
+    ~15 min after its end under a NEW `.<kills>` map_key. Score advance
+    already applies the map correctly here (map1 -> exactly one applied
+    update); the SAME call must not also re-enqueue the lingering row under
+    its new key, or the orphan sweep would apply it a second time. A late
+    `observed_game_time` is what tells the two apart from a genuine next map
+    -- see `test_series_level_match_id_does_not_block_the_next_map`, which
+    keeps applying twice when no game time is supplied at all (legacy path,
+    unaffected by this fix), and the early-game-time case right below."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="9003417257", series_url="dltv.org/matches/9003417257", **env)
+    series_mid = 9003417257
+
+    first = register_live_map_context(
+        map_key="dltv.org/matches/9003417257.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_sourcetv_rec(series_mid),
+        observed_game_time=-79, **common)
+    assert first["applied_update"] is None
+
+    late = register_live_map_context(
+        map_key="dltv.org/matches/9003417257.60", first_team_score=1, second_team_score=0,
+        first_team_is_radiant=True, match_record=_sourcetv_rec(series_mid),
+        observed_game_time=1870, **common)
+    assert late["applied_update"] is not None
+    assert late["applied_update"]["map_key"] == "dltv.org/matches/9003417257.0"
+    assert late["current_map_already_applied"] is True
+    assert late["duplicate_reason"] == "alias_finished_map"
+
+    progress_payload = json.loads(env["progress_path"].read_text(encoding="utf-8"))
+    assert "9003417257" not in progress_payload["pending_series"]
+
+    finalize_result = finalize_live_series_from_scores(
+        series_key="9003417257", series_url="dltv.org/matches/9003417257",
+        first_team_score=2, second_team_score=0, **env,
+    )
+    assert finalize_result is not None
+    assert finalize_result["applied_update"] is None
+
+    applied_maps = json.loads(env["progress_path"].read_text(encoding="utf-8"))["applied_maps"]
+    matching = [v for v in applied_maps.values() if isinstance(v, dict) and v.get("match_id") == series_mid]
+    assert len(matching) == 1
+
+
+def test_alias_duplicate_check_skipped_for_early_game_time_next_map(tmp_path) -> None:
+    """Same alias id, but `observed_game_time` is small/negative (draft or
+    early game of the NEXT map, not a lingering finished row) -- legacy
+    next-map semantics are preserved and the map IS enqueued."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="9003417257", series_url="dltv.org/matches/9003417257", **env)
+    series_mid = 9003417257
+
+    register_live_map_context(
+        map_key="dltv.org/matches/9003417257.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_sourcetv_rec(series_mid),
+        observed_game_time=-79, **common)
+    early = register_live_map_context(
+        map_key="dltv.org/matches/9003417257.60", first_team_score=1, second_team_score=0,
+        first_team_is_radiant=True, match_record=_sourcetv_rec(series_mid),
+        observed_game_time=-60, **common)
+
+    assert early["applied_update"] is not None  # map1, via score advance
+    assert early["current_map_already_applied"] is False
+    assert early["duplicate_reason"] is None
+
+    progress_payload = json.loads(env["progress_path"].read_text(encoding="utf-8"))
+    pending = progress_payload["pending_series"]["9003417257"]
+    assert pending["pending_maps"][0]["map_key"] == "dltv.org/matches/9003417257.60"
+
+
 def test_pending_queue_applies_every_map_in_order_across_polls(tmp_path) -> None:
     """E-224 регресс: обычный опрос по одной карте за раз не должен ничего терять.
 

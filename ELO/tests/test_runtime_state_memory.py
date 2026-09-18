@@ -234,17 +234,26 @@ def _live_record(match_id: int, *, start: int, duration: int | None = 60) -> Mat
 
 
 def _ledger_snapshot(tmp_path: Path, *, reference: int = 1_000,
-                     completed_ids: list[int] | None = None) -> tuple[Path, dict]:
+                     completed_ids: list[int] | None = None,
+                     keys: list[list[int]] | None = None,
+                     keys_tolerance: int | None = None) -> tuple[Path, dict]:
     state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
-    payload = {
-        "meta": {
-            "reference_timestamp": reference,
-            "model_config_signature": "same-history-signature",
-            "recent_completed_match_ids_coverage_since": reference - 7 * 86400,
-            "recent_completed_match_ids": completed_ids or [],
-        },
-        "model_state": state,
+    meta = {
+        "reference_timestamp": reference,
+        "model_config_signature": "same-history-signature",
+        "recent_completed_match_ids_coverage_since": reference - 7 * 86400,
+        "recent_completed_match_ids": completed_ids or [],
     }
+    # `keys`/`keys_tolerance` mirror the team-pair+time proof structure used by
+    # ELO/tests/test_rebase_membership_keys.py (`recent_completed_match_keys`):
+    # [[match_id, radiant_team_id, dire_team_id, timestamp], ...]. Optional and
+    # unused by default so every pre-existing caller keeps its old (ids-only)
+    # snapshot shape.
+    if keys is not None:
+        meta["recent_completed_match_keys"] = keys
+    if keys_tolerance is not None:
+        meta["recent_completed_match_keys_tolerance_seconds"] = keys_tolerance
+    payload = {"meta": meta, "model_state": state}
     path = tmp_path / "ledger_snapshot.json"
     _write(path, payload)
     return path, payload
@@ -386,31 +395,83 @@ def test_rebase_keeps_covered_pending_tombstone_across_next_advance(tmp_path) ->
 
 
 def test_rebase_tombstone_requires_current_proof_then_expires(tmp_path, capsys) -> None:
+    """E-294 follow-up: an unconfirmed tombstone is now RETAINED, not fatal.
+
+    A tombstone carries no match_record, so refusing to rebase past it cannot
+    restore anything -- it only freezes prod on a stale base forever, because
+    the ledger's own `match_id` (here a placeholder never proven by exact id)
+    can never appear in a later snapshot's recent ids. The tombstone still
+    expires on its own after SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS (the
+    second half of this test, unchanged).
+    """
     snapshot_path, snapshot = _ledger_snapshot(tmp_path, completed_ids=[])
     state_path = tmp_path / "state.json"
     progress_path = tmp_path / "progress.json"
     _write(state_path, {"base_reference_timestamp": 1_000,
                         "base_model_config_signature": "same-history-signature",
                         "model_state": snapshot["model_state"]})
+    tombstone = {"match_id": 9012, "snapshot_covered": True,
+                 "snapshot_covered_reference": 1_000}
     _write(progress_path, {"base_reference_timestamp": 1_000,
                            "base_model_config_signature": "same-history-signature",
-                           "pending_series": {}, "applied_maps": {
-                               "covered": {"match_id": 9012, "snapshot_covered": True,
-                                           "snapshot_covered_reference": 1_000}}})
+                           "pending_series": {}, "applied_maps": {"covered": dict(tombstone)}})
     snapshot["meta"]["reference_timestamp"] = 1_001
     _write(snapshot_path, snapshot)
-    before = state_path.read_bytes(), progress_path.read_bytes()
 
     assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
-                        "--progress", str(progress_path)]) == 1
+                        "--progress", str(progress_path)]) == 0
     assert "не подтверждён" in capsys.readouterr().err
-    assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+    unconfirmed = json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"]
+    assert unconfirmed["covered"] == tombstone
 
     snapshot["meta"]["reference_timestamp"] = 1_000 + 7 * 86400 + 1
     _write(snapshot_path, snapshot)
     assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
                         "--progress", str(progress_path)]) == 0
     assert json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"] == {}
+
+
+def test_rebase_pair_proven_tombstone_records_proof_and_reconfirms(tmp_path, capsys) -> None:
+    """E-294: a team-pair-proven tombstone must store the CONSUMED snapshot key,
+    not just the ledger's own (never-provable-again) placeholder match_id, so a
+    LATER rebase can re-confirm it -- see `_snapshot_covered_tombstone`'s
+    `proof_match_id` and the tombstone re-check in `_applied_entry_for_rebase`.
+    """
+    record = _live_record(1_700_000_555, start=900, duration=None)
+    snapshot_path, snapshot = _ledger_snapshot(
+        tmp_path, completed_ids=[], keys=[[9_999_000_555, 101, 202, 900]], keys_tolerance=10_800,
+    )
+    state_path = tmp_path / "state.json"
+    progress_path = tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "same-history-signature",
+                        "model_state": HybridPlayerRosterEloModel(HybridEloConfig()).export_state()})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "same-history-signature",
+                           "pending_series": {},
+                           "applied_maps": {"placeholder": _applied_entry(record, observed_at=950)}})
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    covered = json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"]
+    assert covered["placeholder"] == {
+        "match_id": 1_700_000_555,
+        "snapshot_covered": True,
+        "snapshot_covered_reference": 1_000,
+        "snapshot_covered_match_id": 9_999_000_555,
+    }
+    capsys.readouterr()
+
+    # Next rebase: same snapshot key still present, later cutoff. Must confirm
+    # via the stored proof id, with no "не подтверждён" warning.
+    snapshot["meta"]["reference_timestamp"] = 1_001
+    _write(snapshot_path, snapshot)
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    assert "не подтверждён" not in capsys.readouterr().err
+    second = json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"]
+    assert second["placeholder"]["snapshot_covered_match_id"] == 9_999_000_555
+    assert second["placeholder"]["snapshot_covered_reference"] == 1_000
 
 
 def test_rebase_refuses_legacy_post_cutoff_result_without_replay_context(tmp_path, capsys) -> None:
