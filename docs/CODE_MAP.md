@@ -1895,6 +1895,14 @@ prior observations and verifies snapshots against retained source HTML. Input:
 collection, never scoring.
 Full contract, commands and validation limits: [E-295](experiments/E-295-player-rank-earnings.md).
 
+User-authorized offline approximation: `PlayerHistory.features(...,
+time_policy="calendar_period")` / export `--time-policy calendar_period` uses
+latest earnings observation within each UTC calendar month and latest rank update
+within each UTC ISO week. Rank division evidence is still required. Backfill from
+later observations is explicitly marked by `retrospective_assumption`, policy,
+and per-field timestamps/backfill flags. No cross-period carry; strict remains
+the default. Such exports are approximate retrospective data, not causal replay.
+
 `python -m base.tools.compare_prematch_refits --plan PROTOCOL.json --output-dir NEW_DIR
 --threads N` reuses frozen causal E-287 matrices for fixed-C full/no_org refits.
 Verifies input SHA, map/label alignment, split and baseline replay; outputs

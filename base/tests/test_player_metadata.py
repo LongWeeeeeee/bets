@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from base.player_metadata import DAY, PlayerHistory, parse_dltv_match
+from base.player_metadata import DAY, PlayerHistory, parse_dltv_match, timestamp
 from base.tools.player_metadata import export, write_new, position_accounts, load_snapshot
 
 
@@ -73,6 +73,11 @@ def test_verified_regional_rank_keeps_regions_separate_and_expires():
     assert result["radiant"]["pos1_rank_se_asia_strength"] == pytest.approx(-math.log1p(10))
     assert result["radiant"]["pos1_rank_europe_coverage"] == 0
     assert result["features"]["pos1_rank_europe_coverage_joint"] == 0
+    equal = history.features(radiant, dire, asof=now, time_policy="calendar_period")
+    assert equal["radiant"]["pos1_rank_se_asia_coverage"] == 1
+    assert all(not p["earnings_backfilled"] and not p["rank_backfilled"]
+               for side in equal["diagnostics"] for p in side)
+    assert not any(history.features(radiant, dire, asof=now)["features"].values())
     stale = history.features(radiant, dire, asof=now + 7 * DAY + 1)
     assert not any(v for k, v in stale["features"].items() if "_rank_" in k)
     assert all(p["rank_status"] == "rank_stale" for side in stale["diagnostics"] for p in side)
@@ -167,6 +172,12 @@ def test_export_joins_real_lineups_by_id_and_preserves_output(tmp_path):
     output = tmp_path / "features.jsonl"
     assert export(directory.parent, matches, output)["rows"] == 1
     assert not any(json.loads(output.read_text())["features"].values())
+    approximate = tmp_path / "approximate.jsonl"
+    export(directory.parent, matches, approximate, time_policy="calendar_period")
+    result = json.loads(approximate.read_text())
+    assert result["time_policy"] == "calendar_period"
+    assert result["retrospective_assumption"] is True
+    assert result["features"]["team_earnings_coverage_joint"] == 1
     before = output.read_bytes()
     with pytest.raises(FileExistsError):
         write_new(output, "overwrite")
@@ -195,3 +206,68 @@ def test_country_string_cannot_authorize_region():
 def test_shell_or_javascript_is_never_executed():
     with pytest.raises(ValueError, match="missing JSON"):
         parse_dltv_match("series_item = fetch('/secret')", source_url="https://dltv.org", observed_at=100)
+
+
+def test_monthly_assumption_is_opt_in_and_never_crosses_utc_month():
+    snapshot = sample()
+    history = PlayerHistory([snapshot])
+    lineup = lineups(snapshot)
+    def at(date, policy="calendar_period"):
+        return history.features(*lineup, asof=timestamp(date), time_policy=policy)
+    first = at("2026-09-01T00:00:00Z")
+    assert first["features"]["team_earnings_coverage_joint"] == 1
+    assert first["retrospective_assumption"] is True
+    assert all(p["earnings_backfilled"] for side in first["diagnostics"] for p in side)
+    for boundary in ("2026-08-31T23:59:59Z", "2026-10-01T00:00:00Z"):
+        assert at(boundary)["features"]["team_earnings_coverage_joint"] == 0
+    assert not any(at("2026-09-01T00:00:00Z", "strict")["features"].values())
+    late = at("2026-09-30T23:59:59Z")
+    assert {k: v for k, v in first["features"].items() if "earnings" in k} == {
+        k: v for k, v in late["features"].items() if "earnings" in k}
+    assert not any(v for k, v in first["features"].items() if "rank" in k)
+
+
+def test_weekly_assumption_uses_update_week_but_requires_verified_region():
+    snapshot = sample()
+    radiant, dire = lineups(snapshot)
+    row = next(p for p in snapshot["players"] if p["account_id"] == radiant[0])
+    updated = timestamp("2026-09-10T12:00:00Z")
+    row.update(rank=100, rank_updated_at=updated, rank_region="europe", rank_region_source={
+        "url": "https://example.test/account", "sha256": "0" * 64,
+        "account_id": row["account_id"], "identity_method": "account_id",
+        "observed_at": snapshot["observed_at"], "region": "europe", "rank": 100,
+        "rank_updated_at": updated})
+    history = PlayerHistory([snapshot])
+    for date in ("2026-09-07T00:00:00Z", "2026-09-13T23:59:59Z"):
+        result = history.features(radiant, dire, asof=timestamp(date), time_policy="calendar_period")
+        assert result["radiant"]["pos1_rank_europe_strength"] == pytest.approx(-math.log1p(100))
+        assert result["diagnostics"][0][0]["rank_backfilled"] is True
+        assert result["diagnostics"][0][0]["rank_updated_at"] == updated
+    for date in ("2026-09-06T23:59:59Z", "2026-09-14T00:00:00Z"):
+        result = history.features(radiant, dire, asof=timestamp(date), time_policy="calendar_period")
+        assert result["radiant"]["pos1_rank_europe_coverage"] == 0
+
+
+def test_period_representative_is_latest_and_order_independent():
+    old = sample()
+    new = copy.deepcopy(old)
+    new["observed_at"] += DAY
+    for p in new["players"]:
+        p["observed_at"] = new["observed_at"]
+        p["earnings_usd"] = 1000000
+    cutoff = timestamp("2026-09-05T00:00:00Z")
+    left = PlayerHistory([old, new]).features(*lineups(old), asof=cutoff, time_policy="calendar_period")
+    right = PlayerHistory([new, old]).features(*lineups(old), asof=cutoff, time_policy="calendar_period")
+    assert left == right
+    assert left["radiant"]["team_earnings_log_mean"] == pytest.approx(math.log1p(1000000))
+    with pytest.raises(ValueError, match="time policy"):
+        PlayerHistory([old]).features(*lineups(old), asof=cutoff, time_policy="relaxed")
+
+
+def test_iso_week_key_crosses_calendar_year():
+    from base.player_metadata import calendar_keys
+    _, december = calendar_keys(timestamp("2026-12-31T23:00:00Z"))
+    _, january = calendar_keys(timestamp("2027-01-01T01:00:00Z"))
+    _, monday = calendar_keys(timestamp("2027-01-04T00:00:00Z"))
+    assert december == january == (2026, 53)
+    assert monday == (2027, 1)

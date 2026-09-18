@@ -8,7 +8,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from statistics import mean, pstdev
 from urllib.parse import urlparse
 
@@ -16,6 +16,12 @@ from urllib.parse import urlparse
 SCHEMA = "prematch-player-metadata-v1"
 REGIONS = ("europe", "se_asia", "americas", "china")
 DAY = 86400
+TIME_POLICIES = ("strict", "calendar_period")
+
+
+def calendar_keys(value):
+    date = datetime.fromtimestamp(value, timezone.utc)
+    return (date.year, date.month), tuple(date.isocalendar()[:2])
 
 
 def number(value, *, positive=False, integer=False):
@@ -143,21 +149,41 @@ class PlayerHistory:
                     raise ValueError("conflicting observations for same account/time")
                 rows[observed] = row
         self.times = {account: sorted(rows) for account, rows in self.records.items()}
+        self.monthly, self.weekly = {}, {}
+        for account, rows in self.records.items():
+            for observed in self.times[account]:
+                row = rows[observed]
+                month, _ = calendar_keys(observed)
+                self.monthly[account, month] = row
+                updated = row["rank_updated_at"]
+                if updated is not None:
+                    _, week = calendar_keys(updated)
+                    previous = self.weekly.get((account, week))
+                    if previous is None or (updated, observed) > (previous["rank_updated_at"], previous["observed_at"]):
+                        self.weekly[account, week] = row
 
     def at(self, account, asof):
         times = self.times.get(account, [])
         index = bisect.bisect_left(times, asof) - 1
         return self.records[account][times[index]] if index >= 0 else None
 
-    def features(self, radiant, dire, *, asof, rank_max_age_days=7, earnings_max_age_days=30):
+    def features(self, radiant, dire, *, asof, rank_max_age_days=7, earnings_max_age_days=30,
+                 time_policy="strict"):
         """Accounts MUST be supplied in current map position order (1..5).
 
         Returns side values, Radiant-minus-Dire differences and joint coverage.
         Zero fills always have explicit coverage. No pretrained weight is changed.
+        calendar_period is retrospective research: latest monthly earnings and
+        latest weekly rank may be observed AFTER the target match. UTC month /
+        ISO week boundaries apply; ranks are anchored to rank_updated_at.
         """
         asof = timestamp(asof)
         if not asof or len(radiant) != 5 or len(dire) != 5:
             raise ValueError("need cutoff and two five-account lineups")
+        if time_policy not in TIME_POLICIES:
+            raise ValueError("unsupported time policy")
+        approximate = time_policy == "calendar_period"
+        month, week = calendar_keys(asof)
         accounts = [number(a, positive=True, integer=True) for a in list(radiant) + list(dire)]
         if None in accounts or any(a >= 2**32 for a in accounts) or len(set(accounts)) != 10:
             raise ValueError("need ten distinct Dota account IDs")
@@ -169,29 +195,35 @@ class PlayerHistory:
             values, details = [], []
             for account in lineup:
                 row = self.at(account, asof)
+                earnings_row = self.monthly.get((account, month)) if approximate else row
+                rank_row = self.weekly.get((account, week)) if approximate else row
                 earning, rank_strength, region = None, None, None
-                reason = "no_prior_observation"
-                if row:
-                    age = asof - row["observed_at"]
-                    if age <= earnings_max_age_days * DAY:
-                        earning = row["earnings_usd"]
-                    updated = row.get("rank_updated_at")
-                    region = row.get("rank_region")
+                reason = "no_period_observation" if approximate else "no_prior_observation"
+                if earnings_row and (approximate or asof - earnings_row["observed_at"] <= earnings_max_age_days * DAY):
+                    earning = earnings_row["earnings_usd"]
+                if rank_row:
+                    updated = rank_row.get("rank_updated_at")
+                    region = rank_row.get("rank_region")
                     reason = "usable"
-                    if not row.get("rank"):
+                    if not rank_row.get("rank"):
                         reason = "rank_missing"
                     elif updated is None:
                         reason = "rank_time_unknown"
-                    elif asof - updated > rank_max_age_days * DAY:
+                    elif not approximate and asof - updated > rank_max_age_days * DAY:
                         reason = "rank_stale"
                     elif region not in REGIONS:
                         reason = "rank_region_unknown"
                     else:
-                        rank_strength = -math.log1p(row["rank"])
+                        rank_strength = -math.log1p(rank_row["rank"])
                 values.append((earning, rank_strength, region))
                 details.append({"account_id": account, "rank_status": reason,
-                                "observed_at": row["observed_at"] if row else None,
-                                "earnings_known": earning is not None})
+                                "observed_at": row["observed_at"] if row and not approximate else None,
+                                "earnings_known": earning is not None,
+                                "earnings_observed_at": earnings_row["observed_at"] if earnings_row else None,
+                                "rank_observed_at": rank_row["observed_at"] if rank_row else None,
+                                "rank_updated_at": rank_row["rank_updated_at"] if rank_row else None,
+                                "earnings_backfilled": earning is not None and earnings_row["observed_at"] > asof,
+                                "rank_backfilled": rank_strength is not None and rank_row["observed_at"] > asof})
             result = {}
             groups = {"team": range(5), "cores": range(3), "supports": range(3, 5)}
             groups.update({"pos" + str(i + 1): [i] for i in range(5)})
@@ -214,4 +246,6 @@ class PlayerHistory:
         features.update({key + "_joint": min(sides[0][key], sides[1][key])
                          for key in sides[0] if key.endswith("_coverage")})
         return {"schema": SCHEMA, "asof": asof, "features": features,
+                "time_policy": time_policy, "retrospective_assumption": approximate,
+                "period_timezone": "UTC" if approximate else None,
                 "radiant": sides[0], "dire": sides[1], "diagnostics": diagnostics}

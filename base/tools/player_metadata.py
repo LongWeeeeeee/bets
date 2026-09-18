@@ -10,7 +10,7 @@ import uuid
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from base.player_metadata import PlayerHistory, parse_dltv_match
+from base.player_metadata import PlayerHistory, TIME_POLICIES, parse_dltv_match
 
 
 def fsync_directory(path):
@@ -94,7 +94,7 @@ def collect(url, output):
             "regions_known": sum(p["rank_region"] is not None for p in snapshot["players"])}
 
 
-def export(snapshot_dir, matches, output):
+def export(snapshot_dir, matches, output, *, time_policy="strict"):
     paths = sorted(Path(snapshot_dir).glob("*/snapshot.json"))
     if not paths:
         raise ValueError("no player snapshots found")
@@ -109,13 +109,14 @@ def export(snapshot_dir, matches, output):
                 raise ValueError("duplicate match ID")
             ids.add(mid)
             result = history.features(position_accounts(match["radiant_players"]),
-                                      position_accounts(match["dire_players"]), asof=match["start_ts"])
+                                      position_accounts(match["dire_players"]), asof=match["start_ts"],
+                                      time_policy=time_policy)
             result["match_id"] = mid
             rows.append(json.dumps(result, ensure_ascii=False))
     if not rows:
         raise ValueError("no matches")
     write_new(output, "\n".join(rows) + "\n")
-    return {"rows": len(rows), "snapshots": len(paths), "output": str(output)}
+    return {"rows": len(rows), "snapshots": len(paths), "output": str(output), "time_policy": time_policy}
 
 
 def main():
@@ -128,9 +129,11 @@ def main():
     export_parser.add_argument("--snapshots", required=True)
     export_parser.add_argument("--matches", required=True)
     export_parser.add_argument("--output", required=True)
+    export_parser.add_argument("--time-policy", choices=TIME_POLICIES, default="strict",
+                               help="calendar_period assumes constant monthly earnings / weekly ranks (UTC); retrospective only")
     args = parser.parse_args()
     result = (collect(args.url, args.output) if args.command == "collect"
-              else export(args.snapshots, args.matches, args.output))
+              else export(args.snapshots, args.matches, args.output, time_policy=args.time_policy))
     print(json.dumps(result, ensure_ascii=False))
 
 
