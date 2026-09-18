@@ -589,7 +589,7 @@ Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 | `TOURNAMENT_TITLE_ALLOW_KEYWORDS` | токены названия лиги (`dreamleague`, `blast`, `pgl`, `epl`, …). Сравнение по `lower().split()`, а не по подстроке: одиночный `esports` намеренно убран — он ловил организаторов (`Being Esports`, `X Esports`). |
 | `TOURNAMENT_TITLE_ALLOW_PHRASES` | многословные фразы, сравнение по ПОДСТРОКЕ (`streamers battle`, `lunar snake`, `turbina`, `asgard`, …). Фразой, а не токеном, когда токен протащил бы чужие турниры. |
 | `TOURNAMENT_LEAGUE_ID_ALLOWLIST` | безусловный допуск точным Valve `league_id`, когда название не имеет ничего общего с турниром (19722 `Lunar Paw` → Asgard Championship). В sourcetv-режиме имя лиги берётся из справочника OpenDota по `league_id`, а не с сайта площадки или букмекера. |
-| `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` | УСЛОВНЫЙ допуск точным `league_id`: тикет пускается, только если хотя бы одна сторона уже известна как tier1/tier2 по team_id. Сейчас 10877 — общий ежедневный тикет Challengermode, на котором живут и открытые квалы BLAST Slam, и чужие турниры (E-267). Не должно пересекаться с безусловным множеством: пересечение делает условие мёртвым, непересечение держит тест. |
+| `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` | УСЛОВНЫЙ допуск точным `league_id`: тикет пускается, только если хотя бы одна сторона уже известна как tier1/tier2 по team_id. **Сейчас пусто.** 09.09–18.09.2026 здесь был 10877 — общий ежедневный тикет Challengermode, на котором живут и открытые квалы BLAST Slam, и чужие турниры (E-267); снят 18.09.2026 после карты Radiant [0] vs Team Zhir1t (match 9005102783): «известная» сторона была tier2 лишь по legacy-блоку авто-онбординга в `id_to_names.py`, и ставка ml_dispatch ушла на безымянный стек. Механизм и тесты остались (тесты подставляют тикет monkeypatch'ем множества). Не должно пересекаться с безусловным множеством: пересечение делает условие мёртвым, непересечение держит тест. |
 | `title_matches_allow_keywords(title)` | True, если название прошло токен- или фразовый allowlist. |
 | `league_matches_allowlist(league_id, title)` | True для безусловно разрешённого `league_id` ИЛИ разрешённого названия. |
 | `league_is_tier_gated(league_id)` | True для тикета из `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST`. Название намеренно не принимает. |
@@ -604,7 +604,7 @@ Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 сверяют **только team_id**: по имени нельзя, см. `docs/ARCHITECTURE.md` → «Как матч вообще попадает
 в tier 3».
 
-Тесты: `base/tests/test_league_keywords.py` (allowlist и закрытие 10877 безусловно),
+Тесты: `base/tests/test_league_keywords.py` (allowlist и закрытие 10877 — и безусловное, и условное),
 `base/tests/test_sourcetv_paths.py` (гейт в probe), `base/tests/test_tier_three_allowlist.py`
 (гейт в cyberscore и уход матча в tier 3).
 

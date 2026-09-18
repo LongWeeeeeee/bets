@@ -478,7 +478,7 @@ def test_weak_confirm_without_anchor_rejected(monkeypatch) -> None:
     assert runtime._winline_player_confirm("Radiant", "Dire", hint) is None  # noqa: SLF001
 
 
-def test_card_admits_gated_league_but_not_denied_or_foreign(monkeypatch) -> None:
+def test_card_admits_gated_league_but_not_denied_or_foreign(monkeypatch, gated_platform_ticket_10877) -> None:
     """E-270: карточка открывает league-фильтр только внутри разрешённого."""
     import time
 
@@ -500,7 +500,7 @@ def test_card_admits_gated_league_but_not_denied_or_foreign(monkeypatch) -> None
     assert runtime._winline_card_admits_league(no_league_hit, 10877) is False  # noqa: SLF001
 
 
-def test_weak_pair_flows_through_league_filter(monkeypatch, tmp_path) -> None:
+def test_weak_pair_flows_through_league_filter(monkeypatch, tmp_path, gated_platform_ticket_10877) -> None:
     """E-270 end-to-end admission: мост None–PlayTime + карточка → mock-нода.
 
     До фикса: probe не писал такой мост, а league-фильтр ронял его даже при

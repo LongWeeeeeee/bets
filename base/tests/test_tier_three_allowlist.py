@@ -134,9 +134,10 @@ def test_admitted_league_opens_the_gate_without_listing_every_team(
     assert runtime._classify_tier_three_sides(
         [0], "Radiant", [0], "Dire", league_id=19722
     ) == (0, 0)
-    # Лига НЕ впущена — прежнее поведение. 10877 теперь гейтовый тикет, но при
-    # заглушке tier=3 известной стороны нет, поэтому он по-прежнему закрыт
-    # (условный допуск разобран отдельным тестом ниже).
+    # Лига НЕ впущена — прежнее поведение. 18.09.2026: 10877 больше не гейтовый
+    # тикет вообще (боевое множество опустело), поэтому он закрыт уже на этом
+    # основании — условный допуск на нём больше не проверяем этой веткой
+    # (механизм на подменённом тикете разобран отдельным тестом ниже).
     assert runtime._classify_tier_three_sides(
         [0], "Radiant", [9111222], "Стек Без Словаря", league_id=10877
     ) is None
@@ -164,6 +165,7 @@ def test_known_teams_keep_their_own_tier_even_in_an_admitted_league(
 
 def test_platform_ticket_opens_only_for_a_known_tier12_side(
     monkeypatch: pytest.MonkeyPatch,
+    gated_platform_ticket_10877,
 ) -> None:
     """10877: общий тикет площадки пускается по известной tier1/2 стороне.
 
@@ -173,6 +175,10 @@ def test_platform_ticket_opens_only_for_a_known_tier12_side(
     сверка по имени не нашла бы ничего и гейт держится именно на id. Imperial
     power нет нигде, и матч обязан уйти в tier 3: авто-добавление неизвестной
     стороны в tier2 навсегда — ровно то, из-за чего тикет закрыли 06.09.2026.
+
+    18.09.2026: 10877 убран и из условного допуска (см. base/league_keywords.py
+    :112-119), поэтому тест проверяет МЕХАНИЗМ на тикете, подменённом фикстурой
+    ``gated_platform_ticket_10877``, а не боевое множество.
     """
     known = {9722899}
     monkeypatch.setattr(
@@ -198,6 +204,7 @@ def test_platform_ticket_opens_only_for_a_known_tier12_side(
 
 def test_platform_ticket_gate_ignores_team_name(
     monkeypatch: pytest.MonkeyPatch,
+    gated_platform_ticket_10877,
 ) -> None:
     """Гейт сверяет team_id, а не имя: 'Team Titan' не открывает тикет.
 
@@ -206,6 +213,11 @@ def test_platform_ticket_gate_ignores_team_name(
     общем ежедневном тикете любительский состав с таким названием реалистичен, и
     допуск по имени утащил бы чужой team_id в ELO/Stratz/tier. По той же причине
     ветка возвращает СЫРЫЕ кандидатские id, а не имя-резолв.
+
+    18.09.2026: 10877 убран из боевого условного допуска, поэтому тест держит
+    механизм на подменённом фикстурой `gated_platform_ticket_10877` тикете —
+    иначе обе проверки прошли бы даже без сверки имени, потому что гейт был бы
+    закрыт для любого состава.
     """
     monkeypatch.setattr(
         runtime, "_get_team_tier", lambda tid: 2 if int(tid or 0) == 9593627 else 3

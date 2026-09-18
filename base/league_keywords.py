@@ -108,9 +108,14 @@ TOURNAMENT_LEAGUE_ID_ALLOWLIST = frozenset({
 # Множество НЕ должно пересекаться с TOURNAMENT_LEAGUE_ID_ALLOWLIST: безусловный
 # допуск сильнее, и запись в обоих множествах сделала бы условие мертвым.
 # Пересечение держит тест в base/tests/test_league_keywords.py.
-TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST = frozenset({
-    10877,
-})
+#
+# 18.09.2026 условный допуск 10877 снят тоже (запрос alex): на тикете прошла
+# карта Radiant [0] vs Team Zhir1t (match 9005102783), где «известная» сторона
+# была tier2 лишь по legacy-блоку авто-онбординга в id_to_names.py, а ставка
+# ml_dispatch ушла на безымянный стек. Механизм гейта оставлен (probe и
+# cyberscore зовут ``league_is_tier_gated``), множество пустое; тесты механизма
+# подставляют тикет через monkeypatch этого множества.
+TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST = frozenset()
 
 # Сколько игроков стороны должны нести тег ОДНОЙ организации tier1/tier2, чтобы
 # анонимную карту гейтового тикета можно было опознать по составу.

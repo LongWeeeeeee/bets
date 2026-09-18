@@ -22,6 +22,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -71,6 +73,7 @@ def _live_entry(**overrides):
     return entry
 
 
+@pytest.mark.usefixtures("gated_platform_ticket_10877")
 class TestManualAdmissionHit:
     def test_hit_returns_names(self, tmp_path, monkeypatch):
         path = _write(tmp_path, {MATCH: _live_entry()})
@@ -110,6 +113,7 @@ class TestManualAdmissionHit:
         assert cs._manual_sourcetv_admission_for(MATCH, row) is None
 
 
+@pytest.mark.usefixtures("gated_platform_ticket_10877")
 class TestManualIdentityFill:
     def test_fills_placeholders_only(self, tmp_path, monkeypatch):
         path = _write(tmp_path, {MATCH: _live_entry()})

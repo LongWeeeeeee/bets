@@ -173,27 +173,43 @@ def test_challengermode_platform_ticket_is_not_admitted():
     assert 10877 not in lk.TOURNAMENT_LEAGUE_ID_ALLOWLIST
 
 
-def test_platform_ticket_is_tier_gated_not_unconditionally_allowed():
-    """10877 пускается только при известной tier1/2 стороне, а не всегда.
+def test_platform_ticket_is_not_in_the_gated_allowlist_anymore():
+    """18.09.2026 (запрос alex): 10877 убран и из условного допуска тоже.
 
-    09.09.2026 (запрос alex): на тикете шёл открытый квал BLAST Slam
-    'Imperial power vs ЯЧЁ123', а название Valve — 'Challengermode Daily
-    Tournaments', где токена allowlist'а нет и сравнить 'blast' не с чем.
-    Возвращать безусловный допуск id нельзя: вместе с квалами он вернул бы
-    авто-онбординг чужих команд в tier2, из-за которого тикет закрыли
-    06.09.2026. Поэтому правило звучит как «хотя бы одна сторона УЖЕ известна
-    как tier1/tier2», а сам матч уходит в tier 3 без дописывания в словарь.
+    На тикете прошла карта Radiant [0] vs Team Zhir1t (match 9005102783), где
+    «известная» tier1/2 сторона была tier2 лишь по legacy-блоку авто-
+    онбординга в id_to_names.py, а ставка ml_dispatch ушла на безымянный стек.
+    09.09.2026 тикет был условно впущен (следующий тест держит МЕХАНИЗМ этого
+    условного допуска на подменённом множестве); с 18.09.2026 сам тикет в
+    боевом множестве больше не значится — ни безусловно, ни условно.
     """
-    assert 10877 in lk.TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST
-    assert lk.league_is_tier_gated(10877) is True
-    assert lk.league_is_tier_gated("10877") is True
-    # Условный допуск НЕ означает безусловный: закрытие из теста выше держится.
+    assert 10877 not in lk.TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST
+    assert lk.league_is_tier_gated(10877) is False
+    assert lk.league_is_tier_gated("10877") is False
     assert lk.league_matches_allowlist(10877, "Challengermode Daily Tournaments") is False
     # Множества не пересекаются: безусловный допуск сильнее, и запись в обоих
-    # сделала бы условие мёртвым.
+    # сделала бы условие мёртвым. Держит инвариант и на пустом множестве.
     assert not (
         lk.TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST & lk.TOURNAMENT_LEAGUE_ID_ALLOWLIST
     )
+    assert lk.league_is_tier_gated(19722) is False
+
+
+def test_tier_gate_mechanism_still_works_for_a_gated_ticket(
+    gated_platform_ticket_10877,
+):
+    """Механизм условного гейта жив, даже когда боевое множество пусто.
+
+    18.09.2026: боевой набор `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` опустел
+    (см. предыдущий тест), но ``league_is_tier_gated`` и его вызовы из
+    cyberscore_try/sourcetv_probe обязаны продолжать работать для любого
+    тикета, который туда попадёт в будущем. Тикет подставляется фикстурой
+    ``gated_platform_ticket_10877`` (base/tests/conftest.py), а не боевым
+    множеством.
+    """
+    assert gated_platform_ticket_10877 == 10877
+    assert lk.league_is_tier_gated(10877) is True
+    assert lk.league_is_tier_gated("10877") is True
     assert lk.league_is_tier_gated(19722) is False
 
 

@@ -360,6 +360,7 @@ def test_rejected_league_is_written_to_log_once_per_hour() -> None:
 
 
 def test_platform_ticket_admitted_only_with_a_known_tier12_side(
+    gated_platform_ticket_10877,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """10877 в probe: допуск по team_id известной стороны и отказ во всех прочих случаях.
@@ -397,6 +398,7 @@ def test_platform_ticket_admitted_only_with_a_known_tier12_side(
 
 
 def test_platform_ticket_gate_ignores_team_name(
+    gated_platform_ticket_10877,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Гейт сверяет team_id, а не имя: 'Team Titan' не открывает тикет.
@@ -416,6 +418,7 @@ def test_platform_ticket_gate_ignores_team_name(
 
 
 def test_tier_dictionary_failure_closes_the_platform_ticket(
+    gated_platform_ticket_10877,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Битый overlay закрывает условный допуск, а не роняет опрос Steam.

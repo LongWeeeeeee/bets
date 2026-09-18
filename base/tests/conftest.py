@@ -157,3 +157,33 @@ def _isolate_tier2_dynamic_overlay(tmp_path, monkeypatch):
             monkeypatch.setattr(
                 module, "_dynamic_tier2_overlay_loaded", False, raising=False
             )
+
+
+@pytest.fixture
+def gated_platform_ticket_10877(monkeypatch):
+    """Временно кладёт 10877 в TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST.
+
+    18.09.2026 (запрос alex, см. base/league_keywords.py:112-119) боевое
+    множество опустело: 10877 больше не в нём ни при каких условиях (карта
+    Radiant [0] vs Team Zhir1t, match 9005102783, где «известная» сторона была
+    tier2 лишь по legacy-блоку авто-онбординга). Сам МЕХАНИЗМ условного гейта
+    (``league_is_tier_gated`` и его вызовы из cyberscore_try/sourcetv_probe)
+    остался и должен продолжать работать для ЛЮБОГО тикета, который туда
+    попадёт в будущем. Тесты, проверяющие этот механизм (а не факт закрытия
+    10877), подставляют тикет через эту фикстуру вместо того, чтобы полагаться
+    на боевое множество.
+
+    ``league_is_tier_gated`` читает ``TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST``
+    как модульный global на каждом вызове, а cyberscore_try/sourcetv_probe
+    импортируют саму ФУНКЦИЮ (``from league_keywords import league_is_tier_gated``),
+    не множество — поэтому патча атрибута модуля ``league_keywords`` достаточно
+    и для прямых вызовов, и через ре-экспортированную функцию.
+    """
+    import league_keywords
+
+    monkeypatch.setattr(
+        league_keywords,
+        "TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST",
+        frozenset({10877}),
+    )
+    return 10877
