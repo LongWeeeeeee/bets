@@ -716,6 +716,8 @@ below.
 
 Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`, `WIN_MODEL_VETO_PREMATCH_BRANCHES` (`full,no_org` — какие ветки предматчевой модели имеют право на ставку), `WIN_MODEL_SNAPSHOT_MAX_AGE_DAYS` (`30` — жёсткий порог «снимок мёртв»; добавлен 02.09.2026, дефолт сознательно НЕ снижен до 3, см. E-248; за качество на 3 сутках отвечает отдельное предупреждение `_SNAPSHOT_WARN_DAYS`).
 
+Ветка `no_account_no_org` (7 колонок, офлайн-качество 0.6852) в `_PREMATCH_BET_BRANCHES` не входит, но до 18.09.2026 `_prematch_index` это игнорировала и отдавала индекс как обычно. С 18.09.2026 (после 52/497 карт с `bet=True` при 0.62-0.66 без учётных данных игроков/организации) эта ветка — явный отказ модели: `bet=False`, `reason="no_account_no_org_blocked"` в журнале, `_LAST_REFUSAL.reason="ветка no_account_no_org — сигнал заблокирован"`, `_prematch_index` возвращает `None` — тот же путь fallback-вердиктов, что у обычного отказа (раздел ниже). Откат старого поведения — `PREMATCH_ML_NO_ACCOUNT_NO_ORG_BET=1`.
+
 С 02.09.2026 `_load()` вызывает стражи `draft_model_paths` — `check_width(encoder, model)` и `check_thresholds_catalog(MODEL_DIR)` — и печатает `model_fingerprint(MODEL_DIR)`; раньше они не вызывались нигде, и пара «кодировщик от одной сборки + модель от другой» (класс E-201) давала мусорный индекс молча. Отказ загрузки тоже печатается: `load_error()` для этой модели никто не зовёт. Направление отказа не изменилось — вето снимается (контракт «отказ всегда в сторону разрешения»), но теперь это видно в логе.
 
 В `cyberscore_try.py`: `_try_dispatch_prematch_model_bet(...)` — самостоятельная ставка на 00-й минуте на стороне модели, вызывается в трёх ветках (ранние локальные метрики, star-ветка, ветка без звёзд), идемпотентна по `match_key`. Тело сигнала берётся ГОТОВОЕ — переписывается только строка заголовка, все блоки остаются. Env: `PREMATCH_MODEL_BET_ENABLED` (1), `PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS` (180). Строка «ML от кэфа» печатается в `_format_win_model_line` только для предматчевого источника.
@@ -1813,6 +1815,12 @@ draft_model=...)` — экспортирует те же два вердикта
 отдельный вход, `laning_serving.panel_lines`/`verdicts` не зависят от
 предматчевой модели). Owner-решение: показывать все четыре строки и текст
 причины отказа даже тогда.
+
+С 18.09.2026 в тот же fallback-путь заведён и отдельный случай — ветка
+`no_account_no_org` (см. раздел про `WIN_MODEL_VETO_PREMATCH_BRANCHES` выше):
+`_prematch_index` явно возвращает `None` без исключения, `_LAST_REFUSAL`
+заполняется ДО `except`, и `win_prediction_ex`/`functions.py` обрабатывают
+это неотличимо от обычного отказа модели.
 
 **Единая оценка на панель и на ml_dispatch:**
 1. `base/prematch_scorer.py:MissingData(details, extra=None)` — `extra` несёт
