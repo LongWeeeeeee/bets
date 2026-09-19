@@ -4,11 +4,12 @@
 
 ## STATUS
 
-BLOCKED. Исправление проверено, протокол зафиксирован до rolling-оценки.
-Shared executor не разрешил старт из-за CPU budget; jobs не созданы.
-Ожидается свободный ресурс либо явное разрешение пользователя на временный
-однопоточный прогон с пониженным приоритетом и лимитом 30 минут.
-Offline; serving не меняется.
+DONE
+
+Четыре задания завершены exit0, прогнозы независимо проверены. Пользователь
+разрешил однопоточный прогон nice10 до 30 минут; 4 × timeout420s. Исходная
+конфигурация ресурсов восстановлена побайтно после первого dispatch.
+Offline; serving не менялся.
 
 ## SUMMARY
 
@@ -77,14 +78,52 @@ unsafe−causal; интервалы95/99%. Нет автоматического
 
 ```bash
 venv_catboost/bin/python3 -m pytest base/tests/test_end_time_prior.py -q
-venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/misc/duration43_rolling_20260919/campaign.json
-venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/misc/duration43_rolling_20260919/campaign.json --background
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/misc/duration43_rolling_20260919/campaign_approved.json
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/misc/duration43_rolling_20260919/campaign_approved.json --background
+```
+
+Результаты, log loss ниже — лучше:
+
+| Test | Карт | Draft | + causal history | + Platt | Causal AUC |
+|---|---:|---:|---:|---:|---:|
+| Май | 6817 | 0.644591 | 0.618393 | 0.617274 | 0.625968 |
+| Июнь | 6922 | 0.640875 | 0.606500 | 0.605328 | 0.649895 |
+| Июль | 4242 | 0.643533 | 0.604606 | 0.603840 | 0.649650 |
+| Август | 1983 | 0.658733 | 0.617313 | 0.617932 | 0.646061 |
+| Вместе | 19964 | 0.644482 | 0.611233 | 0.610343 | 0.641181 |
+
+OBSERVED: causal−draft LL = −0.033250; paired day-bootstrap95%
+[−0.037403, −0.029125], 99% [−0.038586, −0.028039], 123 UTC-дня.
+Brier 0.226035 → 0.213267 → 0.212902. Доля ≥43: 0.346123;
+средняя вероятность causal 0.367895, Platt 0.349946.
+Platt−causal = −0.000890; 95% [−0.001546, −0.000214],
+99% [−0.001715, +0.000001]; ухудшение в августе сохраняется в отчёте.
+Unsafe−causal = +0.000311; 95% [−0.000425, +0.000984].
+Этот контроль не показывает значимого выигрыша от раннего раскрытия исходов
+и не измеряет завышение старого AUC с другими признаками и другими утечками.
+
+Независимая проверка: 4 receipts exit0 и post-run input snapshots; 16 SHA256;
+метрики пересчитаны до 1e-12; target2580, временные границы и отсутствие
+пересечений test IDs подтверждены. Сохранены 12 моделей и 8 transformers.
+Во всех четырёх sklearn-калибровках были RuntimeWarning в matmul.
+Без повторного fitting проверены конечные коэффициенты, ручная sigmoid,
+совпадение прогнозов до 1e-12 и нормализованный градиент регуляризованной
+цели <1e-4 (максимум 1.31e-5). Предупреждения не скрыты; сырые CatBoost
+оценки от калибровки не зависят.
+
+```bash
+venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources collect --run run-2dcf60a5ff61532186ec2781
+venv_catboost/bin/python3 runtime/experiments/misc/verify_duration43_rolling.py --run run-2dcf60a5ff61532186ec2781 --output-dir runtime/artifacts/misc/duration43_rolling_20260919/completed
 ```
 
 ## POINTERS
 
 Харнесс и helper указаны выше; manifest и итоговые файлы:
 `runtime/artifacts/misc/duration43_rolling_20260919/`.
+Итог: `completed/rolling_summary.json`, `completed/pooled_predictions.npz`,
+`completed/model_inventory.json`; разрешение и восстановление: `resource_exception.json`.
+Run: `.orchestra/campaigns/run-2dcf60a5ff61532186ec2781/state.json`;
+модели и логи: `.orchestra/jobs/run-2dcf60a5ff61532186ec2781/<fold>/`.
 
 ## RISKS
 
@@ -97,76 +136,86 @@ as-of truth позиций отдельно не подтверждён. Сра�
 
 ## NEXT
 
-После допуска ресурса запустить четыре jobs, пересчитать метрики по сохранённым прогнозам и записать
-положительный или отрицательный результат без подбора на этих test-окнах.
-Текущие результаты E-298 не подменяют ещё не выполненный E-299.
+DERIVED: причинная история полезна относительно зафиксированного draft baseline
+во всех четырёх окнах. Калибровка — небольшой и неоднородный дополнительный эффект.
+До serving нужен отдельный проект сравнения с действующей моделью на общих
+доступных входах и проверка поступления признаков в реальном времени.
+Фазовые добавки E-298 пока не показали пользы; этот прогон их повторно не обучал.
+Никакие пороги ставок, deployment или profitability здесь не выбирались.
 
 ```orchestra-evidence-v1
 {
   "schema": "orchestra-evidence-v1",
   "constraints": [
-    "Offline-only duration>=43",
-    "Four retrospective monthly folds, no prospective claim",
-    "Do not change CPU policy without authorization"
+    "Offline duration>=43; four retrospective windows",
+    "One CPU thread nice10; four jobs timeout420s; configuration restored",
+    "No serving or production changes"
   ],
   "sources": [
     {
       "id": "S1",
+      "path": "runtime/artifacts/misc/duration43_rolling_20260919/completed/rolling_summary.json",
+      "sha256": "ff83ed7598faff66ca5c2734cd7bb98e300f3b9f4bf34e5d7c032b50ac6af799"
+    },
+    {
+      "id": "S2",
+      "path": "runtime/artifacts/misc/duration43_rolling_20260919/resource_exception.json",
+      "sha256": "aac08ebf6a38be7de190b0a03d075ec0c969180a104f8e42b89ccf764f73abd7"
+    },
+    {
+      "id": "S3",
+      "path": "runtime/artifacts/misc/duration43_rolling_20260919/completed/model_inventory.json",
+      "sha256": "e434888eddd201621c6eb07ea35feadf6c16464c9f0db711751aa16b2600afec"
+    },
+    {
+      "id": "S4",
       "path": "runtime/artifacts/misc/duration43_rolling_20260919/preflight_checks.json",
       "sha256": "4ac259dab8f4e7fe819c162471b2b56f18569686e4ddff3c72e912bc15a2bd4f"
     },
     {
-      "id": "S2",
-      "path": "runtime/artifacts/misc/duration43_rolling_20260919/blocked_preflight.json",
-      "sha256": "2b4460452c0f57e73eac2f74b2705b65e4f91e36286a6c87829c8bb391ba67c7"
-    },
-    {
-      "id": "S3",
-      "path": "base/end_time_prior.py",
-      "sha256": "d05a5c0d58d157fdd9322f3b63b3a6d9df6547f02e0c5055a78791cbfdbd07b9"
-    },
-    {
-      "id": "S4",
-      "path": "runtime/experiments/misc/catalog_features.py",
-      "sha256": "2c63150aeed6a36dce90d4c679c6637158df718d988dc26af82b8bc6de1ec770"
-    },
-    {
       "id": "S5",
-      "path": "runtime/artifacts/misc/duration43_rolling_20260919/campaign.json",
-      "sha256": "43ea5b8b38c06dc4a8b8ac223a34385b9fe0578a563bbeaecc279f0af13a48ea"
+      "path": ".orchestra/campaigns/run-2dcf60a5ff61532186ec2781/state.json",
+      "sha256": "6475b48e64ceda3dcaf08b9f39e92c8550333f8a5bb926ac91c99e68ebb2bf0b"
+    },
+    {
+      "id": "S6",
+      "path": "runtime/artifacts/misc/duration43_rolling_20260919/campaign_approved.json",
+      "sha256": "fa1b78201740daddec35c3b299a038bddcd63ced18b188678fbf14ee57c9ec6d"
     }
   ],
   "claims": [
     {
       "id": "F1",
       "kind": "OBSERVED",
-      "claim": "Keyed history queries strict end<start and uses fixed shrinkage references.",
-      "sources": [
-        "S3",
-        "S4"
-      ]
-    },
-    {
-      "id": "F2",
-      "kind": "OBSERVED",
-      "claim": "Vectorized history matches heap replay; legacy integration excludes future-label effects.",
+      "claim": "19964 test maps; draft LL .644482, causal .611233, Platt .610343; causal improves each month.",
       "sources": [
         "S1"
       ]
     },
     {
+      "id": "F2",
+      "kind": "OBSERVED",
+      "claim": "Four completed jobs; approved bounded exception and exact resource restoration recorded.",
+      "sources": [
+        "S2",
+        "S3",
+        "S5",
+        "S6"
+      ]
+    },
+    {
       "id": "F3",
       "kind": "OBSERVED",
-      "claim": "CPU preflight blocked; no jobs started.",
+      "claim": "All calibration numeric checks passed despite recorded runtime warnings.",
       "sources": [
-        "S2"
+        "S1"
       ]
     },
     {
       "id": "U1",
       "kind": "NOT_CHECKED",
-      "claim": "Rolling fold performance has not been measured.",
-      "scope": "All four planned May-Aug fold jobs"
+      "claim": "Superiority over current production model, prospective accuracy and profitability.",
+      "scope": "Old928 replay and live serving"
     }
   ],
   "checks": [
@@ -176,25 +225,24 @@ as-of truth позиций отдельно не подтверждён. Сра�
       "sources": [
         "S1"
       ],
-      "observed": "5 regression tests; heap parity max error1.91e-6; legacy integration invariant."
+      "observed": "Recomputed metrics, temporal targets, unique test IDs, 16 collected hashes, four calibration gradients and manual prediction parity."
     },
     {
       "id": "T2",
-      "status": "FAIL",
+      "status": "PASS",
       "sources": [
-        "S2"
+        "S4"
       ],
-      "observed": "no conservatively available CPU budget; no_jobs_started true"
+      "observed": "Five regression tests, heap parity and legacy integration future-label invariance."
     }
   ],
   "limitations": [
-    "Code fix verified, requested rolling evaluation pending",
-    "Old full928 matrix/cache causality not established",
-    "No production changes"
+    "Retrospective evaluation, not untouched prospective holdout",
+    "Role source as-of and arrival delay not established",
+    "Unsafe control is not an exact old928 leakage replay",
+    "Calibration worsened August and pooled99 interval crosses zero"
   ],
   "contradictions": [],
-  "decision_required": [
-    "Wait for normal CPU capacity or explicit user exception; do not infer approval from silence"
-  ]
+  "decision_required": []
 }
 ```
