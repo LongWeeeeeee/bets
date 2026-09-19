@@ -919,7 +919,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
 
             _vs = _panel.evaluate_map(rh, dh, ra, da,
                                       getattr(res, "features", None),
-                                      list(getattr(model, "features", ()) or ()))
+                                      list(getattr(model, "features", ()) or ()),
+                                      shadow_context=context)
             _wins = [v for v in _vs if str(v.key).startswith("w_")]
             _best = _mlp.best_of(_wins)
             _LAST_PANEL["verdicts"] = _vs

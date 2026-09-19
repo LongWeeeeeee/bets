@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,6 +77,8 @@ class PanelBundle:
     # Общий ноль годится только там, где признак центрирован; см. `assemble`.
     neutral_by_column: dict[str, float] = field(default_factory=dict)
 
+    artifact_hashes: dict[str, str] = field(default_factory=dict)
+
     @property
     def ready(self) -> bool:
         return bool(self.specs and self.columns and self.models)
@@ -116,6 +119,7 @@ def load_bundle(directory: Path | None = None) -> PanelBundle:
                 f"Модели позиционные, скорить по такому входу нельзя — "
                 f"пересобрать панель или вернуть прежний feature_names.json.")
     models: dict[str, Any] = {}
+    artifact_hashes: dict[str, str] = {}
     try:
         from catboost import CatBoostClassifier
     except ImportError:
@@ -126,7 +130,10 @@ def load_bundle(directory: Path | None = None) -> PanelBundle:
             continue
         m = CatBoostClassifier()
         try:
+            fingerprint = hashlib.sha256(path.read_bytes()).hexdigest()
             m.load_model(str(path))
+            if hashlib.sha256(path.read_bytes()).hexdigest() != fingerprint:
+                raise ValueError("Panel model changed during loading")
         except Exception:                      # битый файл не должен ронять live
             continue
         # Ширину спрашиваем у `feature_names_`: `n_features_in_` после
@@ -137,8 +144,9 @@ def load_bundle(directory: Path | None = None) -> PanelBundle:
                 f"{s.key}: модель ждёт {width} колонок, а в "
                 f"feature_names.json их {len(columns)} — артефакт несогласован")
         models[s.key] = m
+        artifact_hashes[s.key] = fingerprint
     return PanelBundle(tuple(specs), columns, models, n_prior, prod35_order,
-                       neutral_col)
+                       neutral_col, artifact_hashes)
 
 
 def assemble(columns: Sequence[str],
@@ -330,7 +338,8 @@ def draft_share(model: Any, row: np.ndarray, mask: np.ndarray,
 def score(bundle: PanelBundle,
           blocks: Mapping[str, Mapping[str, float] | None],
           prod35_names: Sequence[str] = (), with_draft: bool = True,
-          draft_keys: Sequence[str] | None = None):
+          draft_keys: Sequence[str] | None = None,
+          row_observer: Callable | None = None):
     """Вердикты по всем моделям панели. Пустой список, если артефакта нет."""
     from ml_panel import evaluate
 
@@ -378,6 +387,11 @@ def score(bundle: PanelBundle,
                      missing=missing_groups)
         if v is not None:
             out.append(v)
+    if row_observer is not None:
+        try:
+            row_observer(x.copy(), tuple(out))
+        except Exception as exc:
+            print(f"[duration43_shadow] capture failed: {type(exc).__name__}: {exc}", flush=True)
     return out
 
 

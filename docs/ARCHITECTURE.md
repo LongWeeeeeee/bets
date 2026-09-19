@@ -23,6 +23,39 @@
 > Нумерация `patch_id` исторических записей НЕ сдвинулась (7.40b=15, 7.39=4, 7.38=0),
 > таблица выросла с 16 до 24 записей.
 
+## Duration43 prospective shadow (E-302, 19.09.2026)
+
+`win_model_veto._prematch_index` передаёт явный map context в
+`prematch_panel_live.evaluate_map(..., shadow_context=None)`. Необязательный
+`prematch_panel_scorer.score(..., row_observer=None)` отдаёт копию фактического
+928-вектора и готовые вердикты в `duration43_shadow.submit`. Ошибки observer
+не изменяют вердикты. Bounded queue16 и один daemon worker отделяют model/I/O
+работу от serving lock; переполнение пропускает запись. Runtime API
+`prematch_panel_live.status()` содержит `shadow_status`, `shadow_health`
+(process-local submitted/dropped/processed/errors/queued/last_result).
+
+Env: `DURATION43_SHADOW_ENABLED=0` по умолчанию;
+`DURATION43_SHADOW_DIR` по умолчанию `ml-models/duration43_shadow`;
+`DURATION43_SHADOW_JOURNAL` по умолчанию `runtime/duration43_shadow.jsonl`.
+Подготовленный локальный пакет — `ml-models/duration43_shadow_20260919_v2`,
+требует явного DIR при активации. На serv1 режим ещё не включён.
+
+JSONL schema1: experiment/model SHA, explicit Dota match_id, ordered heroes,
+accounts, positions, оба вектора (NaN→null), raw/calibrated probabilities,
+clock, submitted/capture/recorded times, start_hint, fill/missing. Только
+полный draft/account набор и clock<0; фактический prestart подтверждается
+позже по STRATZ outcome schema_version1. Исходный fetch timestamp неизвестен,
+source_observed_at=null. Frozen models/manifest и точные входы позволяют replay.
+Первичная запись на experiment/map фиксируется append+flock+fsync; busy lock
+даёт ошибку worker, не задержку serving. Очередь недолговечна при выходе процесса.
+
+CLI: `base/tools/build_duration43_shadow.py --candidate-dir --corpus --output-dir`
+фиксирует E299/August, completed history и incumbent без обучения;
+`base/tools/evaluate_duration43_shadow.py --artifact-dir --journal --outcomes --output`
+оценивает фиксированный endpoint, проверяет модели/прогнозы/исходы и сохраняет
+SHA точных входных журналов. До ≥300 enrolled за ≥30 суток, всех исходов и
+≥300 eligible пар метрик нет. Правила и ограничения: [E-302](experiments/E-302-duration43-prospective.md).
+
 ## Сквозной pipeline (один проход `general()` в `base/cyberscore_try.py`, ~28580)
 
 ```

@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -251,12 +252,15 @@ def status() -> dict[str, Any]:
     """Что загрузилось — для диагностики и журнала."""
     st = _load()
     b = st.get("bundle")
+    shadow = sys.modules.get('duration43_shadow')
     return {"ready": bool(b is not None and getattr(b, "ready", False)),
             "models": len(getattr(b, "models", {}) or {}),
             "columns": len(getattr(b, "columns", ()) or ()),
             "snapshot": st.get("snap") is not None,
             "card": st.get("card"), "error": st.get("error"),
             "last_error": st.get("last_error"),
+            "shadow_status": st.get("shadow_status"),
+            "shadow_health": shadow.status() if shadow is not None else None,
             "kills_dict": st.get("kwdict") is not None,
             "dict_error": st.get("dict_error")}
 
@@ -321,7 +325,8 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                  prod_order: Sequence[str] = (),
                  now_ts: int | None = None,
                  team_ids: Sequence[int] | None = None,
-                 tier: str | None = None) -> list:
+                 tier: str | None = None,
+                 shadow_context: Mapping[str, Any] | None = None) -> list:
     """Вердикты панели по карте. Пустой список — панель не готова или выключена."""
     if not ENABLED:
         return []
@@ -405,8 +410,17 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                                         team_ids=team_ids, tier=tier)
             if hblock is not None:
                 blocks["hybrid"] = hblock
+        observer = None
+        if shadow_context is not None and os.getenv('DURATION43_SHADOW_ENABLED', '0') == '1':
+            def observer(x, verdicts):
+                # Imports and enqueue failures are contained by score's observer guard.
+                import duration43_shadow
+                _state["shadow_status"] = duration43_shadow.submit(
+                    shadow_context, heroes10[0].tolist(), accounts10[0].tolist(),
+                    bundle, x, verdicts)
         return score(bundle, blocks, prod35_names=prod_order,
-                     with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS)
+                     with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS,
+                     row_observer=observer)
     except Exception as exc:                         # noqa: BLE001
         # Молча вернуть пустоту нельзя: панель тогда «просто не появляется», и
         # причина теряется. Ошибка запоминается и видна в `status()`.
