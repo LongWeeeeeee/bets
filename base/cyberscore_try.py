@@ -28534,8 +28534,14 @@ def _format_team_elo_block(
     tier_gap_key = str(summary.get("tier_gap_key") or "").strip()
     lineup_used = bool(radiant_payload.get("lineup_used")) or bool(dire_payload.get("lineup_used"))
 
+    source = summary.get("source")
+    heading = (
+        "ELO состава (K24):" if source == "elo_composition_k24"
+        else "ELO состава (как в ML):" if source == "elo_prematch_hybrid"
+        else "ELO команды:"
+    )
     lines = [
-        "ELO состава (как в ML):" if summary.get("source") == "elo_prematch_hybrid" else "ELO команды:",
+        heading,
         f"{radiant_team_name}: {radiant_base_rating:.0f}",
         f"{dire_team_name}: {dire_base_rating:.0f}",
     ]

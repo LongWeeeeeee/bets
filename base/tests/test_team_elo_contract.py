@@ -55,7 +55,7 @@ def _draft(ids):
     return {f"pos{i}": {"account_id": a} for i, a in enumerate(ids, 1)}
 
 
-def test_live_summary_ml_and_telegram_use_identical_rating(matchup):
+def test_live_summary_uses_k24_while_ml_keeps_hybrid_contract(matchup):
     card, model, snapshot = matchup
     rad, dire = card["radiant_accounts"], card["dire_accounts"]
     before = copy.deepcopy(model.export_state())
@@ -66,15 +66,17 @@ def test_live_summary_ml_and_telegram_use_identical_rating(matchup):
     assert legacy["elo_diff"] < 0  # Reproducer: the old card backed the other side.
     summary = L.get_matchup_summary(timestamp=card["ts"], match_tier=LeagueTier.TIER1, **kwargs)
     ml = W.hybrid_strength_diff(_draft(rad), _draft(dire), "Fixture Radiant", "Fixture Dire", card["ts"])
-    assert summary["elo_diff"] == pytest.approx(ml * 400.0)
-    assert summary["elo_diff"] == pytest.approx(200.0)
-    assert summary["radiant"]["base_rating"] == summary["radiant"]["team_strength"]
+    assert summary["source"] == "elo_composition_k24"
+    assert summary["elo_diff"] == pytest.approx(0.0)
+    assert ml == pytest.approx(0.5)
+    assert summary["elo_diff"] != pytest.approx(ml * 400.0)
+    assert summary["radiant"]["base_rating"] == summary["radiant"]["rating"]
     assert summary["tier_gap_bonus"] == 0.0
     text, meta = _runtime_functions()["_format_team_elo_block"](
         summary, radiant_team_name="Fixture Radiant", dire_team_name="Fixture Dire")
-    assert "ELO состава (как в ML):" in text
-    assert "ΔELO +200" in text
-    assert meta["raw_diff"] == pytest.approx(ml * 400.0)
+    assert "ELO состава (K24):" in text
+    assert "ΔELO +0" in text
+    assert meta["raw_diff"] == pytest.approx(summary["elo_diff"])
     assert meta["raw_radiant_wr"] / 100 == pytest.approx(summary["radiant_win_prob"])
     assert model.export_state() == before, "Preview must not apply outcomes or mutate ratings"
 
@@ -164,7 +166,8 @@ def test_runtime_passes_map_time_through_both_wrappers(matchup):
         1, 2, "A", "B", card["radiant_accounts"], card["dire_accounts"], timestamp=ts)
     ml = W.hybrid_strength_diff(_draft(card["radiant_accounts"]), _draft(card["dire_accounts"]), "A", "B", ts)
     assert seen == [card["ts"]]
-    assert summary["elo_diff"] == pytest.approx(ml * 400.0)
+    assert summary["elo_diff"] == pytest.approx(0.0)
+    assert summary["elo_diff"] != pytest.approx(ml * 400.0)
     tree = ast.parse((ROOT / "base/cyberscore_try.py").read_text())
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == "_build_team_elo_matchup_summary"]

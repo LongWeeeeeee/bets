@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import os
+import math
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from .array_store import (FloatStore, HashedStore, IntCounts, IntStore,
                           PairCounts, RoleStore, StringValues, hash_key)
 
 #: Плоские поля с числовым ключом.
-_FLAT_NUMERIC = ("player_global", "player_global_last_seen_ts")
+_FLAT_NUMERIC = ("player_global", "player_global_last_seen_ts", "player_k24")
 #: Плоские поля со строковым ключом — ключ пакуется хешем.
 _HASHED_FLAT = ("lineup_match_counts",)
 #: Поля, разложенные по тирам лиг.
@@ -70,6 +71,8 @@ def _empty_raw() -> dict:
         "cur_idx": [],
         "pair_keys": [],
         "pair_vals": [],
+        "k24_player_map_present": False,
+        "k24_player_map_valid": True,
     }
 
 
@@ -97,6 +100,10 @@ def _accumulate_state(path: Path, prefix: str, raw: dict) -> None:
     P = prefix
     with open(path, "rb") as fh:
         for prefix, event, value in ijson.parse(fh):
+            if prefix == f"{P}player_k24" and event == "start_map":
+                raw["k24_player_map_present"] = True
+            if prefix.startswith(f"{P}player_k24.") and event not in ("number", "string"):
+                raw["k24_player_map_valid"] = False
             if event not in ("number", "string") or not prefix.startswith(P):
                 continue
             rest = prefix[len(P):]
@@ -104,6 +111,15 @@ def _accumulate_state(path: Path, prefix: str, raw: dict) -> None:
             if not tail:
                 continue
             if head in _FLAT_NUMERIC:
+                if head == "player_k24":
+                    try:
+                        if (int(tail) <= 0 or tail != str(int(tail))
+                                or not math.isfinite(float(value))):
+                            raw["k24_player_map_valid"] = False
+                            continue
+                    except (TypeError, ValueError, OverflowError):
+                        raw["k24_player_map_valid"] = False
+                        continue
                 b = flat.setdefault(head, ([], []))
                 b[0].append(int(tail))
                 b[1].append(value)
@@ -150,6 +166,11 @@ def _stores_from_raw(raw: dict) -> dict:
     out["player_global_last_seen_ts"] = IntStore(
         arr(flat.get("player_global_last_seen_ts", ([], []))[0], np.int64),
         arr(flat.get("player_global_last_seen_ts", ([], []))[1], np.int64))
+    out["player_k24"] = FloatStore(
+        arr(flat.get("player_k24", ([], []))[0], np.int64),
+        arr(flat.get("player_k24", ([], []))[1], np.float64))
+    out["_k24_player_map_present"] = bool(raw["k24_player_map_present"])
+    out["_k24_player_map_valid"] = bool(raw["k24_player_map_valid"])
     out["lineup_match_counts"] = HashedStore(
         arr(flat.get("lineup_match_counts", ([], []))[0], np.int64),
         arr(flat.get("lineup_match_counts", ([], []))[1], np.int64),
@@ -207,6 +228,7 @@ def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
 #: Sidecar с готовыми массивами: `<источник>.arrays.npz`. Несжатый — сжатый npz
 #: читается только распаковкой, а здесь цель именно отдать массивы memcpy'ем.
 ARRAYS_SIDECAR_SUFFIX = ".arrays.npz"
+ARRAYS_SIDECAR_SCHEMA_VERSION = 2
 
 
 def sidecar_path(src: Path) -> Path:
@@ -261,6 +283,9 @@ def save_state_arrays(src: Path, prefix: str = "model_state.",
     arrays["src_mtime_ns"] = np.int64(st.st_mtime_ns)
     arrays["src_size"] = np.int64(st.st_size)
     arrays["prefix"] = np.asarray(prefix, dtype="U")
+    arrays["schema_version"] = np.int64(ARRAYS_SIDECAR_SCHEMA_VERSION)
+    arrays["k24_player_map_present"] = np.int8(bool(raw["k24_player_map_present"]))
+    arrays["k24_player_map_valid"] = np.int8(bool(raw["k24_player_map_valid"]))
 
     out = Path(out) if out is not None else sidecar_path(src)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -275,10 +300,11 @@ def _sidecar_matches(npz: Path, src: Path, prefix: str) -> bool:
     try:
         st = src.stat()
         with np.load(npz, allow_pickle=False) as z:
-            for key in ("src_mtime_ns", "src_size", "prefix"):
+            for key in ("src_mtime_ns", "src_size", "prefix", "schema_version", "k24_player_map_present", "k24_player_map_valid"):
                 if key not in z.files:
                     return False
-            return (int(z["src_mtime_ns"]) == int(st.st_mtime_ns)
+            return (int(z["schema_version"]) == ARRAYS_SIDECAR_SCHEMA_VERSION
+                    and int(z["src_mtime_ns"]) == int(st.st_mtime_ns)
                     and int(z["src_size"]) == int(st.st_size)
                     and str(z["prefix"]) == prefix)
     except Exception:
@@ -311,6 +337,10 @@ def load_state_arrays_cached(path: Path, prefix: str = "model_state.") -> dict:
             for key in ("cur_keys", "cur_idx", "pair_keys", "pair_vals"):
                 if key in z.files:
                     raw[key] = z[key]
+            if "k24_player_map_present" in z.files:
+                raw["k24_player_map_present"] = bool(z["k24_player_map_present"])
+            if "k24_player_map_valid" in z.files:
+                raw["k24_player_map_valid"] = bool(z["k24_player_map_valid"])
             if "org_names" in z.files:
                 names = [str(n) for n in z["org_names"]]
                 raw["org_names"] = names
@@ -322,7 +352,11 @@ def load_state_arrays_cached(path: Path, prefix: str = "model_state.") -> dict:
 #: Части `model_state`, которые остаются словарями: они мелкие либо со своей
 #: логикой. `roster_tracker` сюда входит намеренно — у него собственный класс
 #: с разрешением родословной составов, и трогать его в этой правке не нужно.
-_KEEP_AS_IS = ("config", "current_patch_key", "side_bias", "roster_tracker")
+_KEEP_AS_IS = (
+    "config", "current_patch_key", "side_bias", "roster_tracker",
+    "k24_schema_version", "k24_available", "k24_highwater_timestamp",
+    "k24_history_coverage_since", "k24_history",
+)
 
 
 def _runtime_is_valid(runtime_path: Path, snapshot_path: Path) -> bool:
@@ -358,10 +392,15 @@ def _runtime_is_valid(runtime_path: Path, snapshot_path: Path) -> bool:
     with open(snapshot_path, "rb") as fh:
         head = {k: v for k, v in ijson.kvitems(fh, "meta")}
     want_ts = _snapshot_reference_timestamp({"meta": plain(head)})
-    with open(snapshot_path, "rb") as fh:
-        cfg = {k: v for k, v in ijson.kvitems(fh, "model_state.config")}
-    want_sig = _snapshot_model_config_signature(
-        {"model_state": {"config": plain(cfg)}})
+    # `meta.model_config_signature` binds the whole replay history, not merely
+    # config.  Prefer it exactly as the dictionary path does; config-only is
+    # retained solely for old snapshots that predate this metadata.
+    want_sig = _snapshot_model_config_signature({"meta": plain(head)})
+    if not want_sig:
+        with open(snapshot_path, "rb") as fh:
+            cfg = {k: v for k, v in ijson.kvitems(fh, "model_state.config")}
+        want_sig = _snapshot_model_config_signature(
+            {"model_state": {"config": plain(cfg)}})
     got_ts = got_sig = None
     with open(runtime_path, "rb") as fh:
         for prefix, event, value in ijson.parse(fh):
@@ -392,6 +431,8 @@ def _small_parts(path: Path) -> dict:
         depth = 0
         for prefix, event, value in ijson.parse(fh):
             if prefix == "model_state" and event == "map_key":
+                if value == "player_k24":
+                    out["_k24_player_map_present"] = True
                 active_key = value if value in _KEEP_AS_IS else None
                 builder = ObjectBuilder() if active_key is not None else None
                 depth = 0
@@ -430,14 +471,21 @@ def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
     from .domain import LeagueTier
     from .models import HybridPlayerRosterEloModel
 
-    model = HybridPlayerRosterEloModel.from_state(_small_parts(path))
     # Рантайм-состояние заменяет ПОЛЯ модели, но не остальной снимок: там лежит
     # только `model_state`, а имена команд и история килов остаются базовыми.
     src, prefix = path, "model_state."
     if runtime_model_state_path is not None and _runtime_is_valid(
             runtime_model_state_path, path):
         src, prefix = runtime_model_state_path, "model_state."
-    arrays = load_state_arrays_cached(src, prefix)
+    try:
+        small_parts = _small_parts(src)
+        arrays = load_state_arrays_cached(src, prefix)
+    except Exception:  # malformed streamed state is unavailable, never defaulted
+        return HybridPlayerRosterEloModel.from_state({"config": {}})
+    small_parts["_k24_player_map_deferred"] = True
+    model = HybridPlayerRosterEloModel.from_state(small_parts)
+    player_map_present = bool(arrays.pop("_k24_player_map_present", False))
+    player_map_valid = bool(arrays.pop("_k24_player_map_valid", False))
     by_name = {t.name: t for t in LeagueTier}
     for field, value in arrays.items():
         if isinstance(value, dict):
@@ -445,6 +493,11 @@ def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
                                    if k in by_name})
         else:
             setattr(model, field, value)
+    model.validate_k24_state(
+        player_map_present=bool(small_parts.get("_k24_player_map_present"))
+        and player_map_present,
+        player_map_valid=player_map_valid,
+    )
     return model
 
 
@@ -652,6 +705,9 @@ def _build_overlay_model(snapshot_path: Path, delta_path: Path | None = None,
         state_overlay.restore_small_parts(model, payload.get("small_parts") or {})
         applied += state_overlay.apply_resets(model, payload.get("resets") or {})
         applied += state_overlay.apply_changes(model, payload.get("changes") or {})
+    # Header guards only bind the delta to its snapshot.  K24 metadata and
+    # changed ratings need one reconstructed-state validation before serving.
+    model.validate_k24_state(player_map_present=bool(getattr(base, "_k24_player_map_validated", False)))
     if delta_is_valid and key != _overlay_key(snapshot_path, delta_path):
         return None
     model._overlay_applied = applied
