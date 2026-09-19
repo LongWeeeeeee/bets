@@ -56,6 +56,7 @@ def _fallback_details(warning="⚠️ test warning"):
         "refusal_reason": POSITION_MISMATCH_REASON,
         "refusal_details": [POSITION_MISMATCH_REASON],
         "refusal_warning_line": warning,
+        "position_mismatch": POSITION_MISMATCH_SLOTS,
     }
 
 
@@ -68,6 +69,7 @@ def test_extract_index_details_returns_fallback_when_index_is_absent():
     index, out = C._ml_dispatch_extract_index_details(early_output, {}, {})
     assert index is None
     assert out is details
+    assert out["position_mismatch"] == POSITION_MISMATCH_SLOTS
     # ровно то, что дальше читает `_ml_dispatch_tick` (details.get(...)):
     assert C._ml_dispatch_verdict_from_pair(out.get("early_nw")) == pytest.approx(
         None
@@ -273,3 +275,37 @@ def test_delivered_ml_dispatch_message_contains_the_warning(monkeypatch):
         ledger=None,
     )
     assert warning in captured["message_text"]
+
+
+@pytest.mark.parametrize('conflicts', [POSITION_MISMATCH_SLOTS, None])
+def test_producer_preserves_card_owned_structured_refusal(monkeypatch, conflicts):
+    """Execute the real card-attachment tail, without loading statistical dicts."""
+    import ast
+    import copy
+
+    tree = ast.parse((BASE_DIR / 'functions.py').read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+              and n.name == 'synergy_and_counterpick')
+    start = next(i for i, n in enumerate(fn.body) if isinstance(n, ast.Try)
+                 and any(isinstance(c, ast.Attribute) and c.attr == 'win_prediction_ex'
+                         for c in ast.walk(n)))
+    refusal = {'reason': POSITION_MISMATCH_REASON if conflicts else 'no_account_no_org_blocked',
+               'details': [], 'position_mismatch': copy.deepcopy(conflicts)}
+    monkeypatch.setattr(win_model_veto, 'win_prediction_ex', lambda *a: (None, None, refusal))
+    monkeypatch.setattr(laning_serving, 'fallback_verdicts', lambda *a, **k: {
+        'late': {'side': 'Radiant', 'confidence': .7}})
+    monkeypatch.setattr(laning_serving, 'refusal_warning_line', lambda *a: 'warning')
+    blocks = {k: {} for k in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output')}
+    env = dict(win_model_veto=win_model_veto, radiant_heroes_and_pos=RADIANT_DICT,
+               dire_heroes_and_pos=DIRE_DICT, radiant_team_name='R', dire_team_name='D',
+               match={}, return_dict=blocks)
+    # Exclude only the final return; every production attachment statement runs.
+    assert isinstance(fn.body[-1], ast.Return)
+    exec(compile(ast.Module(body=fn.body[start:-1], type_ignores=[]), '<card-tail>', 'exec'), env)
+    for block in blocks.values():
+        details = block[win_model_veto.DETAILS_KEY]
+        assert details['position_mismatch'] == conflicts
+        assert details['late']['confidence'] == .7
+    if conflicts:
+        refusal['position_mismatch'].clear()
+        assert blocks['early_output'][win_model_veto.DETAILS_KEY]['position_mismatch'] == POSITION_MISMATCH_SLOTS

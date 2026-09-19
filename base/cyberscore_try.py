@@ -12596,6 +12596,51 @@ def _ml_dispatch_deliver_decision(
     }
 
 
+def _ml_dispatch_draft_input(radiant, dire, details, source, resolution):
+    """Bounded evidence from this card; parser confidence is not role truth."""
+    def positive_id(value):
+        try:
+            parsed = int(value) if not isinstance(value, bool) else 0
+            return parsed if parsed > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    slots = []
+    parser = {}
+    for side, draft in (("radiant", radiant), ("dire", dire)):
+        for pos in range(1, 6):
+            entry = draft.get(f"pos{pos}") if isinstance(draft, dict) else None
+            entry = entry if isinstance(entry, dict) else {}
+            slots.append({"side": side, "pos": pos,
+                          "hero_id": positive_id(entry.get("hero_id")),
+                          "account_id": positive_id(entry.get("account_id"))})
+        meta = resolution.get(side) if isinstance(resolution, dict) else None
+        meta = meta if isinstance(meta, dict) else {}
+        parser[side] = {"method": str(meta["method"])[:80] if meta.get("method") else None}
+        for field in ("conf", "stats_conf", "raw_known", "raw_matched"):
+            value = meta.get(field)
+            parser[side][field] = (value if isinstance(value, (int, float))
+                                  and not isinstance(value, bool) and math.isfinite(value) else None)
+    details = details if isinstance(details, dict) else {}
+    mismatch = details.get("position_mismatch")
+    conflicts = []
+    for slot in mismatch if isinstance(mismatch, (list, tuple)) else ():
+        if not isinstance(slot, (list, tuple)) or len(slot) != 3:
+            continue
+        account, assigned, usual = (positive_id(v) for v in slot)
+        if account and assigned in range(1, 6) and usual in range(1, 6) and assigned != usual:
+            conflicts.append([account, assigned, usual])
+    return {"schema_version": 1, "captured_at": time.time(),
+            "source": str(source)[:80] if source else None,
+            "source_observed_at": None,  # upstream has no authoritative timestamp here
+            "slots": slots, "resolution": parser,
+            "position_check": "hard_conflict" if conflicts else "no_reported_hard_conflict",
+            "position_mismatch": conflicts,
+            "refusal_reason": str(details.get("refusal_reason") or "")[:300] or None,
+            "prematch": {k: details.get(k) for k in
+                         ("match_id", "map_key", "branch", "artifact_sha256", "snapshot_ts")}}
+
+
 def _ml_dispatch_tick(
     *,
     match_key: str,
@@ -12621,6 +12666,8 @@ def _ml_dispatch_tick(
     laning_timestamp: Any = None,
     radiant_team_id: Any = 0,
     dire_team_id: Any = 0,
+    position_source: Any = None,
+    position_resolution: Any = None,
 ) -> None:
     """Один тик одной карты: оценить шесть моделей, залогировать решение,
     при ``DISPATCH_MODE=ml`` — отправить ``Decision``ы с ``timing=="now"``.
@@ -12663,6 +12710,10 @@ def _ml_dispatch_tick(
         elo_dire = _team_elo_base_rating_for_side(team_elo_meta, "dire")
 
         index, details = _ml_dispatch_extract_index_details(early_output, mid_output, all_output)
+        draft_input = _ml_dispatch_draft_input(
+            radiant_heroes_and_pos, dire_heroes_and_pos, details,
+            position_source, position_resolution,
+        )
         early_nw_pair = details.get("early_nw") if details else (
             win_model_veto.last_early_nw(index) if index is not None else None
         )
@@ -12720,6 +12771,15 @@ def _ml_dispatch_tick(
             radiant_networth_lead=networth_lead_value,
         )
         result = _md.evaluate(ctx, cfg)
+        # The scorer already confirmed these hard conflicts. Consume only the
+        # refusal attached to this card, never another map's global last refusal.
+        if draft_input["position_mismatch"]:
+            for decision in result.decisions:
+                result.skipped.append(_md.Skipped(
+                    decision.market, decision.target_side, "position_mismatch",
+                    "hard position conflict in attached prematch snapshot",
+                ))
+            result.decisions = []
         # Apply the same Tier-1 requirement as the legacy early-kills senders
         # before audit/delivery, including both ML rules that emit windows.
         if not _match_has_tier1_team(radiant_team_id, dire_team_id):
@@ -12764,7 +12824,8 @@ def _ml_dispatch_tick(
             for decision in result.decisions:
                 if decision.timing != "now":
                     continue
-                delivered_view.append(_ml_dispatch_deliver_decision(
+                attempt_started_at = time.time()
+                delivery = _ml_dispatch_deliver_decision(
                     decision,
                     match_key=match_key,
                     base_url=base_url,
@@ -12787,7 +12848,10 @@ def _ml_dispatch_tick(
                     ml_laning_line=ml_laning_line,
                     all_model_line=all_model_line,
                     ledger=ledger,
-                ))
+                )
+                delivery.update(attempt_started_at=attempt_started_at,
+                                attempt_finished_at=time.time())
+                delivered_view.append(delivery)
 
         record = {
             "ts": time.time(),
@@ -12798,6 +12862,7 @@ def _ml_dispatch_tick(
             "radiant_networth_lead": ctx.radiant_networth_lead,
             "teams": {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")},
             "heroes": list(heroes) if heroes is not None else None,
+            "draft_input": draft_input,
             "elo_r": elo_radiant,
             "elo_d": elo_dire,
             "elo_diff": result.elo_diff,
@@ -12811,6 +12876,9 @@ def _ml_dispatch_tick(
         }
         timing_phase = "now" if (game_time_value or 0.0) >= cfg.timing_seconds else "wait"
         dedup_view = {
+            # Observe changed roles/refusal even if rounded predictions match;
+            # wall-clock capture/attempt times must never defeat deduplication.
+            "draft_input": {k: v for k, v in draft_input.items() if k != "captured_at"},
             "verdicts": {
                 name: (
                     {target: round(probability, 2) for target, probability in v.items()}
@@ -40415,6 +40483,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 except Exception:
                     _cov_elo_block, _cov_elo_meta = "", None
                 _ml_dispatch_tick_once_per_cycle(
+                    position_source=listing_context.get('source'),
+                    position_resolution=data.get('_pos_resolution'),
                     radiant_team_id=radiant_team_id,
                     dire_team_id=dire_team_id,
                     match_key=check_uniq_url,
@@ -40586,6 +40656,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # же _deliver_and_persist_signal. Не влияет на STAR-путь выше —
             # own try/except внутри, тик карты не падает из-за нового пути.
             _ml_dispatch_tick_once_per_cycle(
+                position_source=listing_context.get('source'),
+                position_resolution=data.get('_pos_resolution'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
@@ -43011,6 +43083,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
             # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
             _ml_dispatch_tick_once_per_cycle(
+                position_source=listing_context.get('source'),
+                position_resolution=data.get('_pos_resolution'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
@@ -46596,6 +46670,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # не вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
             # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
             _ml_dispatch_tick_once_per_cycle(
+                position_source=listing_context.get('source'),
+                position_resolution=data.get('_pos_resolution'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,

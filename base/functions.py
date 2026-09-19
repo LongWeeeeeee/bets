@@ -5289,6 +5289,10 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         _fallback_details["refusal_reason"] = _ml_details.get("reason")
         _fallback_details["refusal_details"] = _ml_details.get("details")
         _fallback_details["refusal_warning_line"] = _warning
+        # Keep the structured, card-owned refusal for the ML dispatch gate.
+        # Display-only fallback verdicts remain available even on this refusal.
+        from copy import deepcopy
+        _fallback_details["position_mismatch"] = deepcopy(_ml_details.get("position_mismatch"))
         for _block_key in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output'):
             _block = return_dict.get(_block_key)
             if isinstance(_block, dict):

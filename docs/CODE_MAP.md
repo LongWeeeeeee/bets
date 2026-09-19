@@ -1731,9 +1731,31 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 Runtime-файлы: `runtime/ml_dispatch_decisions.jsonl` (append-only, ключи `ts,
 match_key, base_url, map_num, game_time, teams, heroes, elo_r, elo_d, elo_diff,
 underdog_side, verdicts{early_nw,early_win,late,all,lane}, prematch_index,
-decisions, skipped, delivered, mode`; дедуп новой строки по sha256 от
+decisions, skipped, delivered, mode, draft_input`; дедуп новой строки по sha256 от
 `dedup_view`, не по каждому тику) и `runtime/ml_dispatch_sent.json` (дедуп-реестр,
 ключ `base_url|map_num|market|side` сериализован как список кортежей).
+
+С 19.09.2026 `_ml_dispatch_draft_input` сохраняет ограниченный снимок текущей
+карточки: десять `slots{side,pos,hero_id,account_id}`, `source`, метаданные
+`resolution` по сторонам (`method/conf/stats_conf/raw_known/raw_matched`),
+структурированный `position_mismatch`, `refusal_reason` и доступный контекст
+`prematch{match_id,map_key,branch,artifact_sha256,snapshot_ts}`. Неизвестные
+поля — `null`; `captured_at` означает время сборки снимка, а
+`source_observed_at=null` — отсутствие достоверного времени исходного наблюдения.
+`position_check=no_reported_hard_conflict` не доказывает корректность позиций.
+Изменение снимка участвует в дедупе, `captured_at` — нет.
+Элементы `delivered` содержат `attempt_started_at/attempt_finished_at` — границы
+вызова адаптера доставки, не Telegram acknowledgement.
+
+Перед доставкой `_ml_dispatch_tick` снимает все кандидаты (`win`, `kills_total`,
+`kills_window`, включая ожидающие) при непустом структурированном
+`position_mismatch` из прикреплённого к карточке `DETAILS_KEY` и записывает
+`skipped.reason=position_mismatch`. `functions.synergy_and_counterpick` переносит
+этот список из отказа prematch в fallback с глубокой копией. Глобальный
+`last_refusal` для гейта не читается. Расчёт и показ драфтовых оценок сохраняются;
+отказ только из-за account/org и низкая уверенность парсера сами по себе этот
+гейт не включают. Проверка действует в `ml` и `shadow`; STAR-пути не меняются.
+Обоснование и регрессии: [E-296](experiments/E-296-draft-position-dispatch-guard.md).
 
 `base/laning_serving.py:verdicts(radiant_dict, dire_dict, timestamp,
 draft_model=...)` — экспортирует те же два вердикта, что печатает

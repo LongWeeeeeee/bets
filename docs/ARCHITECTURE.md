@@ -272,9 +272,14 @@ Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): пор
                    по правилу «правка 0»), kills-маркеты (только при наличии U),
                    тайминг (lane 00 vs 600с)
         ▼
+3a. ПОЗИЦИИ        При структурированном position_mismatch в details текущей
+                   карточки все кандидаты становятся skipped (включая ожидание).
+                   Оценки в карточке сохраняются; глобальный last_refusal не читается.
+        ▼
 4. ЛОГ             _ml_dispatch_record_decisions → runtime/ml_dispatch_decisions.jsonl
    (ВСЕГДА,        (append, дедуп новой строки по sha256(dedup_view), не на
-   shadow И ml)    каждый тик) — verdicts, decisions, skipped, elo_diff, mode
+   shadow И ml)    каждый тик) — verdicts, decisions, skipped, elo_diff, mode,
+                   draft_input (слоты, источник, метаданные позиций и отказа)
         ▼
 5. РЕЖИМ-ГЕЙТ      dispatch_mode()=="ml"? иначе (star/shadow) — шаг 6 не выполняется,
                    STAR-пути шлют как раньше без вмешательства

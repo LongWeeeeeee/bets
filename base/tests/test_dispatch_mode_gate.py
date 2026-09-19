@@ -676,3 +676,117 @@ def test_team_nemesis_is_tier2_and_direborn_pair_cannot_send_early_kills(monkeyp
     assert C._get_team_tier(10150434) != 1
     assert C._match_has_tier1_team(10150434, 9691969) is False
     assert C._match_has_tier1_team(9691969, 10150434) is False
+
+
+@pytest.fixture
+def position_dispatch(monkeypatch):
+    from types import SimpleNamespace
+    from test_prematch_refusal_fallback import POSITION_MISMATCH_SLOTS, POSITION_MISMATCH_REASON
+
+    original_extract = C._ml_dispatch_extract_index_details
+    original_heroes = C.win_model_veto._heroes_vector
+    delivered, logged, fingerprints, ledger = [], [], [], _FakeLedger()
+    _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered, logged=logged, ledger=ledger)
+    monkeypatch.setattr(C, '_ml_dispatch_extract_index_details', original_extract)
+    monkeypatch.setattr(C.win_model_veto, '_heroes_vector', original_heroes)
+    monkeypatch.setattr(C, '_match_has_tier1_team', lambda *a: True)
+    monkeypatch.setattr(_laning_serving_module, 'verdicts', lambda *a, **k: {
+        'all': {'side': 'Radiant', 'confidence': .6222},
+        'lane': {'side': 'Radiant', 'confidence': .5955}})
+    monkeypatch.setattr(C, '_ml_dispatch_record_decisions',
+                        lambda record, *, dedup_view: (logged.append(record), fingerprints.append(dedup_view)))
+    heroes = [102, 126, 43, 40, 131, 46, 63, 2, 27, 87]
+    radiant = {f'pos{i+1}': {'hero_id': h, 'account_id': 100+i} for i, h in enumerate(heroes[:5])}
+    dire = {f'pos{i+1}': {'hero_id': h, 'account_id': 200+i} for i, h in enumerate(heroes[5:])}
+    radiant['pos4']['account_id'], radiant['pos5']['account_id'] = 118325938, 91535476
+    dire['pos3']['account_id'] = 161839895
+    resolution = {'radiant': {'method': 'permutation', 'conf': .2, 'raw_known': 2},
+                  'dire': {'method': 'raw', 'conf': 1., 'private_payload': 'must not log'}}
+
+    def call(conflicts=POSITION_MISMATCH_SLOTS, match_key='dltv.org/matches/8995525359.11'):
+        details = {'refusal_reason': POSITION_MISMATCH_REASON if conflicts else 'no_account_no_org_blocked',
+                   'position_mismatch': conflicts}
+        C._ml_dispatch_tick(
+            match_key=match_key, radiant_team_name='VooDooSh Club', dire_team_name='Stariy_Bog Club',
+            live_league={}, top='', mid='', bot='', protracker_payload=None,
+            team_elo_block='', team_elo_meta={}, game_time_seconds=650., radiant_lead=0,
+            early_output={C.win_model_veto.DETAILS_KEY: details},
+            radiant_heroes_and_pos=radiant, dire_heroes_and_pos=dire,
+            position_source='sourcetv', position_resolution=resolution,
+            full_message_text='VooDooSh Club VS Stariy_Bog Club')
+    return SimpleNamespace(call=call, delivered=delivered, logged=logged, ledger=ledger,
+                           fingerprints=fingerprints, radiant=radiant, resolution=resolution,
+                           conflicts=POSITION_MISMATCH_SLOTS)
+
+
+@pytest.mark.parametrize('mode', ['ml', 'shadow'])
+def test_real_position_refusal_incident_blocks_all_win_and_preserves_verdict(monkeypatch, position_dispatch, mode):
+    monkeypatch.setenv('DISPATCH_MODE', mode)
+    p = position_dispatch
+    p.call()
+    assert p.delivered == [] and p.ledger.as_set() == set()
+    row = p.logged[0]
+    assert row['decisions'] == []
+    assert any(s['market'] == 'win' and s['reason'] == 'position_mismatch' for s in row['skipped'])
+    assert row['verdicts']['all'] == {'side': 'Radiant', 'confidence': .6222}
+    assert row['draft_input']['position_mismatch'] == [list(x) for x in p.conflicts]
+    assert row['draft_input']['slots'][3] == {'side': 'radiant', 'pos': 4, 'hero_id': 40, 'account_id': 118325938}
+
+
+@pytest.mark.parametrize('market', ['win', 'kills_window', 'kills_total'])
+@pytest.mark.parametrize('timing', ['now', 'wait_600'])
+def test_position_guard_covers_every_candidate_market(monkeypatch, position_dispatch, market, timing):
+    from base import ml_dispatch as md
+    monkeypatch.setenv('DISPATCH_MODE', 'ml')
+    candidate = md.Decision(market, 'Radiant', 'Team', 'test', ['all'], [], timing, .7, 1.43, [])
+    monkeypatch.setattr(md, 'evaluate', lambda *a: md.EvalResult([candidate], [], 'Dire', 100., 'ml'))
+    p = position_dispatch
+    p.call()
+    assert not p.delivered and not p.ledger.as_set()
+    assert p.logged[0]['decisions'] == []
+    assert p.logged[0]['skipped'] == [{'market': market, 'side': 'Radiant',
+                                     'reason': 'position_mismatch',
+                                     'detail': 'hard position conflict in attached prematch snapshot'}]
+
+
+def test_account_org_refusal_on_next_map_ignores_stale_global_conflict(monkeypatch, position_dispatch):
+    monkeypatch.setenv('DISPATCH_MODE', 'ml')
+    p = position_dispatch
+    p.call()
+    monkeypatch.setattr(C.win_model_veto, '_LAST_REFUSAL', {'position_mismatch': p.conflicts})
+    p.call(None, 'dltv.org/matches/9005071263.0')
+    assert len(p.delivered) == 1 and len(p.ledger.as_set()) == 1
+    row = p.logged[-1]
+    assert row['draft_input']['position_mismatch'] == []
+    assert row['delivered'][0]['status'] == 'delivered'
+    assert row['delivered'][0]['attempt_started_at'] <= row['delivered'][0]['attempt_finished_at'] <= row['ts']
+    # Low parser confidence is evidence, not a hard-refusal policy.
+    assert row['draft_input']['resolution']['radiant']['conf'] == .2
+    assert 'private_payload' not in row['draft_input']['resolution']['dire']
+
+
+def test_position_evidence_changes_dedup_but_capture_clock_does_not(monkeypatch, position_dispatch):
+    monkeypatch.setenv('DISPATCH_MODE', 'shadow')
+    p = position_dispatch
+    p.call(None)
+    p.call(None)
+    assert p.fingerprints[0] == p.fingerprints[1]
+    assert 'captured_at' not in p.fingerprints[0]['draft_input']
+    old_slot = dict(p.logged[0]['draft_input']['slots'][0])
+    p.radiant['pos1'], p.radiant['pos2'] = p.radiant['pos2'], p.radiant['pos1']
+    p.call(None)
+    assert p.fingerprints[-1] != p.fingerprints[0]
+    assert p.logged[0]['draft_input']['slots'][0] == old_slot
+    assert p.logged[-1]['draft_input']['slots'][0]['hero_id'] == 126
+    assert p.logged[-1]['draft_input']['source_observed_at'] is None
+
+
+def test_every_ml_dispatch_callsite_passes_current_position_source():
+    tree = ast.parse(Path(C.__file__).read_text())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Name) and n.func.id == '_ml_dispatch_tick_once_per_cycle']
+    assert len(calls) == 4
+    for call in calls:
+        kwargs = {k.arg: ast.unparse(k.value) for k in call.keywords}
+        assert kwargs['position_source'] == "listing_context.get('source')"
+        assert kwargs['position_resolution'] == "data.get('_pos_resolution')"
