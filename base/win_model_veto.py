@@ -376,6 +376,7 @@ def _prediction_context(match) -> dict:
     except (TypeError, ValueError):
         mid = 0
     return {"match_id": str(mid) if mid > 0 else None,
+            "observed_at": time.time(),
             "map_key": data.get("map_key"),
             "game_time": data.get("game_time"),
             "elo_evaluation_timestamp": data.get("startDateTime")}
@@ -925,7 +926,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _best = _mlp.best_of(_wins)
             _LAST_PANEL["verdicts"] = _vs
             _LAST_PANEL["text"] = _mlp.render(
-                _wins, highlight=[_best.key] if _best else [])
+                _wins + [v for v in _vs if v.key == "dur43" and v.metadata],
+                highlight=[_best.key] if _best else [])
             _LAST_PANEL["error"] = None
             _mid = None
             if isinstance(match, dict):

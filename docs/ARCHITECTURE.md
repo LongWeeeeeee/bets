@@ -23,6 +23,36 @@
 > Нумерация `patch_id` исторических записей НЕ сдвинулась (7.40b=15, 7.39=4, 7.38=0),
 > таблица выросла с 16 до 24 записей.
 
+## Duration43 serving (E-305, 19.09.2026)
+
+`prematch_panel_live.evaluate_map` заменяет только dur43 через
+`duration43_serving.replace_verdict`. Пакет `ml-models/duration43_production`:
+E299 August CBM (762 unsigned hero-role + 32 causal duration history), отдельный
+July Platt. `win_model_veto` включает dur43 в `panel_text`; `ml_panel.render`
+показывает положительную P(>=43), подпись «предматчевая» и historical bin WR/N.
+Панель не делает duration-ставок; threshold не активирует betting dispatch.
+
+Новый прогноз допускается только при отрицательном game clock и реальном ID;
+первый прогноз полного драфта сохраняется в `runtime/duration43_predictions.jsonl`
+по хешу model+heroes+accounts и повторяется в live-карточках. При первом
+наблюдении уже начавшейся карты прогноза нет: `startDateTime` боевого ELO
+может быть wall-clock fallback, поэтому не используется как actual start.
+
+`prematch_live_delta.record_map` дополнительно сохраняет полные pro-результаты в
+`runtime/duration43_completed.jsonl`; retention общей трёхдневной delta на него
+не влияет. Первое полное наблюдение ID, end>snapshot_end, end<asof,
+observed_at<asof, исключение текущей карты. Снимок должен быть собран до asof.
+Journal optional `models[].metadata`: версия, model/manifest SHA, asof,
+history_end, added_maps, known_accounts, input hash. Ошибка duration scorer
+убирает только dur43; другие вердикты остаются.
+
+Env: `DURATION43_SERVING=1` по умолчанию; `0` — прежний скрытый dur43.
+`DURATION43_MODEL_DIR`, `DURATION43_HISTORY`, `DURATION43_PREDICTIONS` меняют
+пути пакета/журналов. Сборка: `base/tools/build_duration43_serving.py
+--snapshot --confidence --output` (новый output-каталог); OOF-проверка:
+`base/tools/audit_duration_confidence.py --predictions --output`.
+Ограничения качества/калибровки: [E305](experiments/E-305-duration43-serving-calibration.md).
+
 ## Duration43 prospective shadow (E-302, 19.09.2026)
 
 `win_model_veto._prematch_index` передаёт явный map context в

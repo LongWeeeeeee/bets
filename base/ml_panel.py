@@ -142,6 +142,7 @@ class ModelVerdict:
     band_n: int = 0
     odds: float | None = None           # кэф безубытка
     blocked: str | None = None          # чем погашен вердикт; None — не гасили
+    metadata: dict | None = None       # optional version/as-of evidence
 
     @property
     def confidence(self) -> float:
@@ -218,6 +219,13 @@ def render(verdicts: Sequence[ModelVerdict], highlight: Iterable[str] = ()) -> s
     star = set(highlight)
     lines = ["🤖 ML:"]
     for v in verdicts:
+        if v.key == 'dur43' and v.metadata:
+            # Positive-event probability, never 1-p disguised as P(duration>=43).
+            bits = [f"P(≥43 мин) {v.probability*100:.0f}%", "предматчевая"]
+            if v.band_hit is not None and v.band_n:
+                bits.append(f"ист. WR {v.band_hit*100:.1f}% (n={v.band_n})")
+            lines.append("🕐 Длительность: " + " · ".join(bits))
+            continue
         mark = OK_MARK if v.ok else NO_MARK
         # Заполненность округляется ВНИЗ. При округлении к ближайшему потеря
         # двух колонок из 928 давала 99.78% и печаталась как «100%» — то есть
@@ -261,7 +269,8 @@ def journal_row(map_id: Any, verdicts: Sequence[ModelVerdict], *,
                        if v.parts else None),
              "blocked": v.blocked,
              "band_hit": v.band_hit, "band_n": v.band_n,
-             "odds": None if v.odds is None else round(v.odds, 4)}
+             "odds": None if v.odds is None else round(v.odds, 4),
+             **({"metadata": v.metadata} if v.metadata else {})}
             for v in verdicts
         ],
     }

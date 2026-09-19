@@ -205,6 +205,13 @@ def record_map(match: Dict[str, Any], *, store_path: Optional[Path] = None,
                            "stratz_player_result_cache")
         except Exception:
             pass
+    # Duration history has its own durable retention; the general delta is pruned after 3 days.
+    if store_path is None:  # Isolated callers/tests must not write production history.
+        try:
+            from duration43_serving import record_completed
+            record_completed(match, now=ts)
+        except Exception as exc:
+            print(f"[duration43] completed history write failed: {type(exc).__name__}: {exc}", flush=True)
     return len(rows)
 
 
@@ -593,7 +600,8 @@ def retry_incomplete(*, fetch, store_path: Optional[Path] = None,
         except Exception:
             full = None
         if isinstance(full, dict) and _int_list(full.get("radiantKills")):
-            record_map(full, store_path=path, now=ts)
+            # Preserve default-store identity so duration history also sees completed retries.
+            record_map(full, store_path=store_path, now=ts)
             filled += 1
             continue
         with _lock:

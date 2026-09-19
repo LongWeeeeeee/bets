@@ -259,6 +259,7 @@ def status() -> dict[str, Any]:
             "snapshot": st.get("snap") is not None,
             "card": st.get("card"), "error": st.get("error"),
             "last_error": st.get("last_error"),
+            "duration43": st.get("duration43"),
             "shadow_status": st.get("shadow_status"),
             "shadow_health": shadow.status() if shadow is not None else None,
             "kills_dict": st.get("kwdict") is not None,
@@ -418,9 +419,21 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                 _state["shadow_status"] = duration43_shadow.submit(
                     shadow_context, heroes10[0].tolist(), accounts10[0].tolist(),
                     bundle, x, verdicts)
-        return score(bundle, blocks, prod35_names=prod_order,
-                     with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS,
-                     row_observer=observer)
+        verdicts = score(bundle, blocks, prod35_names=prod_order,
+                         with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS,
+                         row_observer=observer)
+        # Independent causal candidate only replaces duration; other endpoints keep their inputs.
+        try:
+            import duration43_serving
+            verdicts = duration43_serving.replace_verdict(
+                verdicts, heroes10[0].tolist(), accounts10[0].tolist(), shadow_context,
+                now=now_ts)
+            st['duration43'] = duration43_serving.status()
+        except Exception as exc:
+            st['duration43'] = {'ready': False, 'error': f'{type(exc).__name__}: {exc}'}
+            if os.getenv('DURATION43_SERVING', '1') != '0':
+                verdicts = [v for v in verdicts if v.key != 'dur43']
+        return verdicts
     except Exception as exc:                         # noqa: BLE001
         # Молча вернуть пустоту нельзя: панель тогда «просто не появляется», и
         # причина теряется. Ошибка запоминается и видна в `status()`.
