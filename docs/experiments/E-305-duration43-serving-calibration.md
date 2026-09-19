@@ -2,8 +2,13 @@
 
 ## STATUS
 
-Подготовлено к явно разрешённой пользователем выкатке. Receipt фактического
-деплоя хранится отдельно; наличие этого документа не доказывает рестарт.
+Выкатка выполнена 19.09.2026: commit `f362c599`, serv1 fast-forward,
+штатный systemd stop/clear-map-cache/start в 16:49:05 UTC. Новый PID1088646,
+один процесс, NRestarts0. Модель загрузилась в естественном цикле с ожидаемым
+SHA, новые завершённые карты записываются в durable history. Фактические
+счётчики циклов и наблюдений — в `server_health.json`/`deployment.json`
+под `runtime/artifacts/misc/duration43_serving_20260919/`.
+Новая duration-строка в естественной Telegram-карточке пока не наблюдалась.
 
 ## SUMMARY
 
@@ -70,7 +75,10 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 venv_catboost/bin/python3 -m pytest bas
 Builder требует новый output-каталог. Уже собранный пакет не перезаписывать
 для воспроизведения — задать другой путь. 133 focused tests PASS после review, включая два процесса, partial append,
 сохранение предматчевого прогноза после рестарта и изоляцию ошибки duration.
-Production acceptance — в deployment receipt.
+Объединённый набор с ≤35:139 PASS. На серверном Python3.12: py_compile,
+imports,11 serving tests PASS; raw/Platt совпали с Mac до1e−12. Для
+серверных тестов нужен `PYTHONPATH=base:.` (первый сбор без него завершился
+import error). Production acceptance — в deployment receipt.
 
 ## POINTERS
 
@@ -98,11 +106,19 @@ E300 давал худший кандидат на несовершенной li
 это ограничение не снимается калибровкой. Поля metadata — расширение journal4;
 старые поля и другие модели сохраняются.
 
+Отдельное наблюдение: `_ml_dispatch_tick` падает при сортировке `None` и
+строки в skipped dedup view (`cyberscore_try.py:12894`). Та же ошибка была
+89 раз в2MB лога непосредственно ДО рестарта; соответствующий код не менялся.
+Зафиксировано в `dispatch_existing_error.json`, отдельная задача `ingame-o66k`.
+Это ограничивает общую health-оценку: новая модель загружена, но отсутствие
+ошибок всего runtime не заявляется. Диспетчер в рамках E305 не исправлялся.
+
 ## NEXT
 
-Явно разрешённая выкатка, server Python3.12 smoke, один systemd-процесс,
-проверка естественных циклов. ≤35 — отдельный E306, без автоматической
-промоции его результата в production.
+Следующее свидетельство качества — естественные сохранённые предматчевые
+прогнозы с последующими исходами; исторические пороги не являются доказанной
+доходной политикой. ≤35 — отдельный E306, без автоматической промоции
+его результата в production.
 
 ```orchestra-evidence-v1
 {"schema":"orchestra-evidence-v1","constraints":["User chose simple >=43 with calibration","No duration betting dispatch","Historical <=35 is a separate experiment"],"sources":[{"id":"C","path":"runtime/artifacts/misc/duration43_serving_20260919/confidence.json"},{"id":"R","path":"runtime/artifacts/misc/duration43_serving_20260919/replay.json"}],"claims":[{"id":"F1","kind":"OBSERVED","claim":">=60 gives 125/215, day CI .5194-.6425; August only 4/8","sources":["C"]},{"id":"F2","kind":"OBSERVED","claim":"1983 August raw and calibrated predictions replay exactly","sources":["R"]},{"id":"U1","kind":"NOT_CHECKED","claim":"Profitability and future calibration","scope":"Production duration bets"}],"checks":[{"id":"R1","status":"PASS","observed":"Raw and calibrated replay max absolute error 0","sources":["R"]}],"limitations":["Pooled four historical refits, not independent future validation","No matched odds","No equal-input incumbent comparison"]}
