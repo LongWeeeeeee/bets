@@ -169,6 +169,29 @@ decisions get ``"kills30"`` appended to ``models_for`` and a threshold line
 appended to ``reasons``. Whole gate is disabled via
 ``ML_DISPATCH_KILLS_TOTAL_GATE=0`` (systemd drop-in, no deploy), which
 restores the pre-13.09.2026 ``kills_total`` behavior exactly.
+
+kills_early (owner rule 19.09.2026): a second, independent ``kills_total``
+path, run in :func:`evaluate` right after the E-281 gate above (so the
+gate never re-checks a decision this path produces). Two owner cases:
+(1) Early Win >= ``cfg.min_conf`` for a side ``A`` and E-281 P(A >= 30
+kills) >= ``cfg.kills_early_min_kills30`` (default 0.60) -> ``kills_total``
+on ``A``, regardless of Early NW favoring the *other* side at >= threshold
+(real case: Nemiga -- early_nw Dire 0.695, early_win Radiant 0.632,
+kills30_radiant 0.658 -> bet Radiant). (2) failing that, Early NW >=
+``cfg.min_conf`` for ``A`` with Early Win not >= threshold for the other
+side, plus the same kills30 gate on ``A`` -> ``kills_total`` on ``A``. Both
+cases are independent of ELO/``underdog_side`` and of Late/All starring
+the *other* side (real case: Nemesis -- elo 2282/2247 i.e. no underdog,
+early_nw/early_win both Radiant, Late Dire 0.617 i.e. against Radiant, All
+Radiant 0.524, kills30_radiant 0.604 -> bet Radiant anyway, even though the
+win market is stuck in ``late_conflict_wait``). At most one ``kills_total``
+per map: if the underdog path or the 4.3 late-conflict path already
+produced one (for either side), this path is a no-op. ``expected_wr`` on
+the resulting ``Decision`` is the E-281 kills30 probability itself (the
+model of the event actually being bet), not the early-model confidence --
+deliberate. Toggle ``ML_DISPATCH_KILLS_EARLY`` (default on; "0"/"false"/
+"off" disables it, systemd drop-in, no deploy); kills30 threshold via
+``ML_DISPATCH_KILLS_EARLY_MIN_KILLS30`` (default 0.60, inclusive).
 """
 from __future__ import annotations
 
@@ -203,6 +226,8 @@ REASON_EARLY_SOLO_BLOCKED = "early_solo_blocked"
 
 RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
+RULE_KILLS_EARLY_WIN_KILLS30 = "kills_early_win_kills30"
+RULE_KILLS_EARLY_NW_KILLS30 = "kills_early_nw_kills30"
 
 LATE_CONFLICT_MODES = ("wait", "veto")
 
@@ -294,6 +319,8 @@ class Config:
     early_nw_start_seconds: float = 240.0
     early_nw_min_lead: float = 1000.0
     early_solo_block: bool = True
+    kills_early_enabled: bool = True
+    kills_early_min_kills30: float = 0.60
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -344,6 +371,10 @@ class Config:
             early_solo_block=str(
                 env.get("ML_DISPATCH_EARLY_SOLO_BLOCK", "1")
             ).strip().lower() not in ("0", "false", "off"),
+            kills_early_enabled=str(
+                env.get("ML_DISPATCH_KILLS_EARLY", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            kills_early_min_kills30=_float("ML_DISPATCH_KILLS_EARLY_MIN_KILLS30", 0.60),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -899,6 +930,100 @@ def _apply_kills_total_gate(
     return kept, extra_skipped
 
 
+def _evaluate_kills_early(
+    ctx: Ctx, cfg: Config,
+    decisions: List[Decision], skipped: List[Skipped],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """kills_early (owner rule, 19.09.2026): a second, independent
+    ``kills_total`` path, run right after the E-281 gate (:func:`_apply_kills_total_gate`)
+    so it never re-checks a decision this path produces.
+
+    Case (1): Early Win >= ``cfg.min_conf`` for a side ``A`` -> ``kills_total``
+    on ``A`` if E-281 P(A >= 30 kills) also clears ``cfg.kills_early_min_kills30``,
+    regardless of Early NW favoring the *other* side at >= threshold. Case
+    (2): failing that, Early NW >= ``cfg.min_conf`` for ``A`` (with Early
+    Win not >= threshold for the other side) plus the same kills30 gate.
+    Independent of ELO/``underdog_side`` and of Late/All. At most one
+    ``kills_total`` per map -- a no-op if one already exists.
+    """
+    if not cfg.kills_early_enabled:
+        return decisions, skipped
+
+    if any(d.market == "kills_total" for d in decisions):
+        return decisions, skipped
+
+    ew_side = (
+        ctx.early_win.side
+        if ctx.early_win is not None and ctx.early_win.confidence >= cfg.min_conf
+        else None
+    )
+    en_side = (
+        ctx.early_nw.side
+        if ctx.early_nw is not None and ctx.early_nw.confidence >= cfg.min_conf
+        else None
+    )
+
+    if ew_side is not None:
+        side = ew_side
+        rule = RULE_KILLS_EARLY_WIN_KILLS30
+        models = ["early_win"] + (["early_nw"] if en_side == side else [])
+    elif en_side is not None:
+        side = en_side
+        rule = RULE_KILLS_EARLY_NW_KILLS30
+        models = ["early_nw"]
+    else:
+        return decisions, skipped
+
+    threshold = cfg.kills_early_min_kills30
+    p = ctx.kills30(side)
+    if p is None:
+        skipped = skipped + [Skipped(
+            "kills_total", side, REASON_KILLS30_MISSING,
+            f"kills30 probability unavailable for {side} (kills_early)",
+        )]
+        return decisions, skipped
+    if p < threshold:
+        skipped = skipped + [Skipped(
+            "kills_total", side, REASON_KILLS30_BELOW,
+            f"kills30 p={p:.3f} < t={threshold} (kills_early)",
+        )]
+        return decisions, skipped
+
+    key = _dedup_key(ctx, "kills_total", side)
+    if ctx.already_sent is not None and key in ctx.already_sent:
+        skipped = skipped + [Skipped(
+            "kills_total", side, REASON_DEDUP, f"key={key} already sent",
+        )]
+        return decisions, skipped
+
+    # Drop stale kills_total skips for this side (or side=None) so the log
+    # never shows a decision AND a skip for the same market/side. Leave
+    # kills_window skips alone.
+    skipped = [
+        s for s in skipped
+        if not (s.market == "kills_total" and (s.side is None or s.side == side))
+    ]
+
+    expected_wr = p
+    min_odds = _min_odds(expected_wr, cfg)
+    reasons = [f"{name}>= {cfg.min_conf} for {side} (kills_early)" for name in models]
+    reasons.append(f"kills30 p={p:.3f} >= {threshold} (kills_early)")
+
+    decisions = decisions + [Decision(
+        market="kills_total",
+        target_side=side,
+        target_team=ctx.team_name(side),
+        rule=rule,
+        models_for=list(models) + ["kills30"],
+        models_against=[],
+        timing="now",
+        expected_wr=expected_wr,
+        min_odds=min_odds,
+        reasons=reasons,
+    )]
+    return decisions, skipped
+
+
 def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     """Idempotent on every tick: same ``ctx``/``cfg`` -> same result.
 
@@ -912,6 +1037,9 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     kills_decisions, kills_skipped = _evaluate_kills(ctx, cfg, underdog_side, late_conflict)
     kills_decisions, kills_skipped = _apply_kills_total_gate(
         ctx, cfg, underdog_side, kills_decisions, kills_skipped
+    )
+    kills_decisions, kills_skipped = _evaluate_kills_early(
+        ctx, cfg, kills_decisions, kills_skipped
     )
     return EvalResult(
         decisions=win_decisions + kills_decisions,

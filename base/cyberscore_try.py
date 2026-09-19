@@ -47735,6 +47735,8 @@ if __name__ == "__main__":
         f" early_nw={'on' if _dispatch_startup_cfg.early_nw_enabled else 'off'}"
         f"/{_dispatch_startup_cfg.early_nw_start_seconds}"
         f"/{_dispatch_startup_cfg.early_nw_min_lead}"
+        f" kills_early={'on' if _dispatch_startup_cfg.kills_early_enabled else 'off'}"
+        f"/{_dispatch_startup_cfg.kills_early_min_kills30}"
     )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):
