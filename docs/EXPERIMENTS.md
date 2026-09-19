@@ -1,5 +1,11 @@
 # Журнал экспериментов
 
+Длительность карты: [E-299 — причинные приоры и rolling ≥43](experiments/E-299-duration43-causal-rolling.md),
+19.09.2026: исправлены end-time и глобальное среднее старого prior; предзадано
+сравнение draft/causal/unsafe и отдельной калибровки на четырёх окнах May–Aug.
+Исправление: 5 regression tests passed и heap parity; обучение пока блокирует
+CPU preflight, jobs не стартовали. Production не менялся.
+
 Длительность карты: [E-298 — ≥43 минуты и фазовые модели](experiments/E-298-duration43-phase-model-pilot.md),
 19.09.2026: аудит старого `dur43` и отдельный временной пилот Early NW / Early Win /
 All / Late, новых диапазонов победителя и прямых порогов длительности. На 466
