@@ -47,6 +47,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from copy import deepcopy
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,7 @@ from typing import Any
 FIELD_SPECS: dict[str, tuple[str, str, str]] = {
     "player_global": ("flat", "int", "float"),
     "player_global_last_seen_ts": ("flat", "int", "int"),
+    "player_k24": ("flat", "int", "float"),
     "lineup_match_counts": ("flat", "str", "int"),
     "player_local": ("tiered", "int", "float"),
     "player_local_last_seen_ts": ("tiered", "int", "int"),
@@ -68,9 +71,12 @@ FIELD_SPECS: dict[str, tuple[str, str, str]] = {
 }
 
 #: Мелкие поля модели, которые тоже меняются и должны переживать перезапуск.
-SMALL_PARTS = ("current_patch_key", "side_bias", "roster_tracker")
+SMALL_PARTS = (
+    "current_patch_key", "side_bias", "roster_tracker", "k24_schema_version",
+    "k24_available", "k24_highwater_timestamp", "k24_history_coverage_since", "k24_history",
+)
 
-DELTA_VERSION = 1
+DELTA_VERSION = 2
 
 #: Отсутствие ленивого сброса. Именно sentinel, а не None: None — законное
 #: значение сброса, если initial_rating когда-нибудь станет None.
@@ -294,9 +300,16 @@ def collect_small_parts(model: Any) -> dict[str, Any]:
     tracker = getattr(model, "roster_tracker", None)
     export = getattr(tracker, "export_state", None)
     if callable(export):
-        out["roster_tracker"] = export()
+        out["roster_tracker"] = deepcopy(export())
     elif isinstance(tracker, dict):
-        out["roster_tracker"] = tracker
+        out["roster_tracker"] = deepcopy(tracker)
+    for field in (
+        "k24_schema_version", "k24_available", "k24_highwater_timestamp",
+        "k24_history_coverage_since", "k24_history",
+    ):
+        if hasattr(model, field):
+            value = deepcopy(getattr(model, field))
+            out[field] = list(value) if field == "k24_history" else value
     return out
 
 
@@ -319,6 +332,20 @@ def restore_small_parts(model: Any, parts: dict[str, Any]) -> None:
     raw_tracker = parts.get("roster_tracker")
     if isinstance(raw_tracker, dict):
         model.roster_tracker = RosterLineageTracker.from_state(raw_tracker)
+    for field in (
+        "k24_schema_version", "k24_available", "k24_highwater_timestamp",
+        "k24_history_coverage_since", "k24_history",
+    ):
+        if field in parts:
+            value = deepcopy(parts[field])
+            if field == "k24_history":
+                if not isinstance(value, (list, tuple, deque)):
+                    model.k24_history = deque()
+                    model.k24_available = False
+                else:
+                    model.k24_history = deque(value)
+            else:
+                setattr(model, field, value)
 
 
 def collect_resets(wrappers: dict[str, Any]) -> dict[str, Any]:

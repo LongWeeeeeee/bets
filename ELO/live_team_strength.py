@@ -21,7 +21,7 @@ if __package__ is None or __package__ == "":
 from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier, MatchRecord
-from ELO.models import HybridPlayerRosterEloModel
+from ELO.models import K24_SCHEMA_VERSION, HybridPlayerRosterEloModel
 from ELO.replay import REPLAY_VERSION, replay_events, result_record
 from ELO.series_data import build_series_bundles
 from ELO.team_identity import TEAM_ID_TO_ORG_KEY, resolve_org_key
@@ -54,6 +54,7 @@ DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtim
 # needlessly large; this bounded, exact tail covers the only interval in which
 # a stopped live process can overlap the next rebuild.
 SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS = 7 * SECONDS_PER_DAY
+SNAPSHOT_RESULT_INDEX_COVERAGE_SECONDS = 14 * SECONDS_PER_DAY
 #: A DLTV series id / placeholder can stand in for `match_id` in an old live
 #: ledger entry, so id-based membership silently fails for it.  The fallback
 #: proof matches team pair + a start timestamp instead; this is the default
@@ -71,6 +72,7 @@ DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_proba
 #: Маркер «живого» снимка: значение — путь к дельте. Ставится в `_snapshot_with_runtime_model_state`,
 #: читается в `_restore_model_from_snapshot`.
 LIVE_DELTA_MARKER = "__live_delta_path__"
+LIVE_RUNTIME_UNAVAILABLE_MARKER = "__live_runtime_unavailable__"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
 # Снимок может быть заменён атомарным rename тем же процессом или другим
@@ -479,6 +481,9 @@ def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRoster
         model = _live_overlay_model(snapshot)
         if model is not None:
             return model
+        # The delta is the selected live source.  A corrupt K24 overlay must
+        # make the card unavailable rather than silently serving stale base.
+        return None
     raw_state = snapshot.get("model_state") if isinstance(snapshot, dict) else None
     if not isinstance(raw_state, dict):
         return None
@@ -570,8 +575,9 @@ def _model_config_signature(model_state: dict[str, Any] | None) -> str:
 
 def _rating_replay_meta() -> dict[str, str]:
     calendar = [(p.label, p.release_ts) for p in PATCH_RELEASES]
-    return {"rating_replay_version": REPLAY_VERSION,
-            "rating_calendar_signature": hashlib.sha256(json.dumps(calendar).encode()).hexdigest()}
+    return {"rating_replay_version": f"{REPLAY_VERSION}+k24_v1",
+            "rating_calendar_signature": hashlib.sha256(json.dumps(calendar).encode()).hexdigest(),
+            "k24_schema_version": str(K24_SCHEMA_VERSION)}
 
 
 def _snapshot_replay_is_current(snapshot: dict[str, Any] | None) -> bool:
@@ -1485,6 +1491,8 @@ def rebase_runtime_model_state(
                 return True
         return False
 
+    if _snapshot_replay_is_current(snapshot) and base_state.get("k24_schema_version") != K24_SCHEMA_VERSION:
+        raise RuntimeRebaseError("K24-current snapshot lacks explicit K24 state; rebase is blocked")
     model = HybridPlayerRosterEloModel.from_state(base_state) if replay_rows else None
     for result_timestamp, _order, map_key, raw, match in sorted(replay_rows):
         assert model is not None
@@ -1504,6 +1512,10 @@ def rebase_runtime_model_state(
             _applied_kept.append((match_id, team_pair, result_timestamp))
         if not is_twin:
             model.process_match(result_record(match, result_timestamp))
+            if not model.k24_available:
+                raise RuntimeRebaseError(
+                    "K24 result order is unavailable during rebase; refusing to promote runtime state"
+                )
         # The ledger entry itself is recorded either way (`rebased_applied`
         # semantics for a future rebase do not change for a skipped twin);
         # only the model application above is skipped for it.
@@ -1534,6 +1546,8 @@ def rebase_runtime_model_state(
             flush=True,
         )
 
+    if model is not None and not model.k24_available:
+        raise RuntimeRebaseError("K24 state unavailable; rebase is blocked before writes")
     rebased_progress = {
         "base_reference_timestamp": want_reference,
         "base_model_config_signature": want_signature,
@@ -1779,10 +1793,14 @@ def _snapshot_with_runtime_model_state(
         runtime_model_state_path=runtime_model_state_path,
     )
     if runtime_payload is None:
+        # A stale/corrupt runtime exists.  Do not present the base snapshot as
+        # the live K24 result: that would conceal the failed live source.
+        unavailable = dict(snapshot)
+        unavailable[LIVE_RUNTIME_UNAVAILABLE_MARKER] = True
         _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = base_snapshot_id
         _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = signature
-        _RUNTIME_SNAPSHOT_CACHE["snapshot"] = snapshot
-        return snapshot
+        _RUNTIME_SNAPSHOT_CACHE["snapshot"] = unavailable
+        return unavailable
 
     merged_snapshot = dict(snapshot)
     merged_meta = dict(snapshot.get("meta") or {})
@@ -1838,6 +1856,25 @@ def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
     _LEADERBOARD_RANK_CACHE["table_ref"] = teams_by_org_key
     _LEADERBOARD_RANK_CACHE["rank_map"] = rank_map
     return rank_map
+
+
+def _k24_leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
+    """K24 ranks are a separate table; never relabel the hybrid leaderboard."""
+    teams_by_org_key = snapshot.get("teams_by_org_key")
+    if not isinstance(teams_by_org_key, dict):
+        return {}
+    rows: list[tuple[str, float, str]] = []
+    for org_key, row in teams_by_org_key.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            rating = float(row["k24_strength"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(rating):
+            rows.append((str(org_key), rating, str(row.get("team_name") or org_key)))
+    rows.sort(key=lambda item: (-item[1], item[2].casefold()))
+    return {org_key: index + 1 for index, (org_key, _rating, _name) in enumerate(rows)}
 
 
 # E-224: у одной серии на живом пути применялась ровно одна карта из всех
@@ -2378,7 +2415,7 @@ def _build_snapshot_dict(
     result_times = [match.result_timestamp for match in matches if match.result_timestamp is not None]
     reference_timestamp = max(result_times, default=matches[-1].timestamp)
     recent_result_coverage_since = max(
-        0, reference_timestamp - SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS
+        0, reference_timestamp - SNAPSHOT_RESULT_INDEX_COVERAGE_SECONDS
     )
     recent_completed_match_meta = _recent_completed_match_meta(
         matches,
@@ -2473,6 +2510,15 @@ def _build_snapshot_dict(
             tier=LeagueTier(snapshot["tier"]),
             timestamp=int(snapshot["timestamp"]) + 1,
         )
+        k24_preview = model.preview_k24_lineup(
+            tuple(int(player_id) for player_id in snapshot["player_ids"]),
+            # Snapshot rank is the state after its last completed result.
+            # A public as-of query at exactly this timestamp remains strict
+            # (`result_timestamp < map_start`) and therefore has no rank.
+            reference_timestamp + 1,
+        )
+        if k24_preview is None:
+            raise RuntimeError("K24 snapshot construction requires an available K24 state")
         days_inactive = max(0.0, (reference_timestamp - int(snapshot["timestamp"])) / SECONDS_PER_DAY)
         current_strength = _decay_strength_for_leaderboard(
             raw_strength=float(preview["team_strength"]),
@@ -2493,6 +2539,8 @@ def _build_snapshot_dict(
             "roster_matches": int(preview["roster_matches"]),
             "roster_weight": float(preview["roster_weight"]),
             "roster_key": str(preview["roster_key"]),
+            "k24_strength": float(k24_preview["rating"]),
+            "k24_player_ids": list(k24_preview["lineup_player_ids"]),
             "days_inactive": days_inactive,
             "is_active": bool(days_inactive <= active_cutoff_days),
         }
@@ -2994,28 +3042,45 @@ def get_matchup_summary(
     rebuild_if_missing: bool = True,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
 ) -> dict[str, Any] | None:
-    """Live team ELO in the same E-173 scale as ML's hybrid_strength.
+    """Primary live K24 composition ELO; ML hybrid remains a separate feature."""
+    from ELO.models import k24_lineup_summary
 
-    match_tier is retained for caller compatibility; the trained serving
-    contract uses TIER3. Historical tier-aware reports use
-    build_matchup_summary_from_snapshot directly.
-    """
-    from ELO.models import prematch_lineup_summary
-
-    evaluation_timestamp = int(time.time()) if timestamp is None else int(timestamp)
+    # Without a supplied map start, the only honest query point is the next
+    # second: a result observed in this second is not strictly before `now`.
+    evaluation_timestamp = int(time.time()) + 1 if timestamp is None else int(timestamp)
 
     def summarize(current_snapshot):
+        if current_snapshot.get(LIVE_RUNTIME_UNAVAILABLE_MARKER):
+            return None
         model = _restore_model_from_snapshot(current_snapshot)
         if model is None:
             return None
-        result = prematch_lineup_summary(
+        result = k24_lineup_summary(
             model, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
             radiant_account_ids=radiant_account_ids, dire_account_ids=dire_account_ids,
             timestamp=evaluation_timestamp,
         )
         if result is not None:
-            result["reference_timestamp"] = (current_snapshot.get("meta") or {}).get("reference_timestamp")
-            ranks = _leaderboard_rank_map(current_snapshot)
+            meta = current_snapshot.get("meta") or {}
+            result["reference_timestamp"] = meta.get("reference_timestamp")
+            source_kind = (
+                "live_delta" if current_snapshot.get(LIVE_DELTA_MARKER)
+                else "runtime_model_state" if meta.get("runtime_updated_at") is not None
+                else "base_snapshot"
+            )
+            result["rating_source_metadata"] = {
+                "kind": source_kind,
+                "reference_timestamp": meta.get("reference_timestamp"),
+                "k24_highwater_timestamp": getattr(model, "k24_highwater_timestamp", None),
+                "k24_history_coverage_since": getattr(model, "k24_history_coverage_since", None),
+            }
+            # Snapshot ranks are constructed at its reference instant.  They
+            # are not a causal reconstruction for historical/equal queries.
+            try:
+                rank_is_causal = evaluation_timestamp > int(meta.get("reference_timestamp"))
+            except (TypeError, ValueError):
+                rank_is_causal = False
+            ranks = _k24_leaderboard_rank_map(current_snapshot) if rank_is_causal else {}
             for side, team_id in (("radiant", radiant_team_id), ("dire", dire_team_id)):
                 result[side]["team_id"] = team_id
                 org_key = resolve_org_key(team_id, result[side]["team_name"])
@@ -3023,44 +3088,42 @@ def get_matchup_summary(
                 result[side]["leaderboard_rank"] = ranks.get(org_key)
         return result
 
-    snapshot = ensure_snapshot(
+    base_snapshot = ensure_snapshot(
         data_dir=data_dir,
         snapshot_path=snapshot_path,
         rebuild_if_missing=rebuild_if_missing,
     )
-    if snapshot is None:
+    if base_snapshot is None:
         return None
-    base_summary = summarize(snapshot)
     snapshot = _snapshot_with_runtime_model_state(
-        snapshot,
+        base_snapshot,
         runtime_model_state_path=runtime_model_state_path,
     )
     live_summary = summarize(snapshot)
     if live_summary is None:
-        return base_summary
-    if base_summary is None:
-        return live_summary
+        return None
 
-    for side in ("radiant", "dire"):
-        live_payload = live_summary.get(side) or {}
-        base_payload = base_summary.get(side) or {}
-        live_base_rating = float(live_payload.get("base_rating", live_payload.get("rating", LEADERBOARD_BASELINE)))
-        base_base_rating = float(base_payload.get("base_rating", base_payload.get("rating", live_base_rating)))
-        live_rating = float(live_payload.get("rating", live_base_rating))
-        base_rating = float(base_payload.get("rating", base_base_rating))
-        live_payload["snapshot_base_rating"] = base_base_rating
-        live_payload["snapshot_rating"] = base_rating
-        live_payload["live_base_delta"] = live_base_rating - base_base_rating
-        live_payload["live_rating_delta"] = live_rating - base_rating
-        live_summary[side] = live_payload
-
-    live_summary["snapshot_radiant_win_prob"] = float(base_summary.get("radiant_win_prob", 0.5))
-    live_summary["snapshot_dire_win_prob"] = float(base_summary.get("dire_win_prob", 0.5))
-    live_summary["snapshot_elo_diff"] = float(base_summary.get("elo_diff", 0.0))
-    live_summary["has_live_delta"] = bool(
-        abs(float((live_summary.get("radiant") or {}).get("live_base_delta", 0.0))) >= 0.5
-        or abs(float((live_summary.get("dire") or {}).get("live_base_delta", 0.0))) >= 0.5
-    )
+    # These diagnostics compare two valid K24 views at the same as-of instant.
+    # They never select a stale base as the served result.
+    base_summary = live_summary if snapshot is base_snapshot else summarize(base_snapshot)
+    if base_summary is not None:
+        for side in ("radiant", "dire"):
+            live_payload = live_summary.get(side) or {}
+            base_payload = base_summary.get(side) or {}
+            live_rating = float(live_payload.get("base_rating", live_payload.get("rating")))
+            base_rating = float(base_payload.get("base_rating", base_payload.get("rating")))
+            live_payload["snapshot_base_rating"] = base_rating
+            live_payload["snapshot_rating"] = base_rating
+            live_payload["live_base_delta"] = live_rating - base_rating
+            live_payload["live_rating_delta"] = live_rating - base_rating
+            live_summary[side] = live_payload
+        live_summary["snapshot_radiant_win_prob"] = float(base_summary.get("radiant_win_prob", 0.5))
+        live_summary["snapshot_dire_win_prob"] = float(base_summary.get("dire_win_prob", 0.5))
+        live_summary["snapshot_elo_diff"] = float(base_summary.get("elo_diff", 0.0))
+        live_summary["has_live_delta"] = bool(
+            abs(float((live_summary.get("radiant") or {}).get("live_base_delta", 0.0))) >= 0.5
+            or abs(float((live_summary.get("dire") or {}).get("live_base_delta", 0.0))) >= 0.5
+        )
     return live_summary
 
 

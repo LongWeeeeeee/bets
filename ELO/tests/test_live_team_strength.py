@@ -16,7 +16,7 @@ from ELO.live_team_strength import (
     get_matchup_summary,
     register_live_map_context,
 )
-from ELO.models import HybridPlayerRosterEloModel
+from ELO.models import HybridPlayerRosterEloModel, prematch_lineup_summary
 from ELO.replay import result_record
 from ELO.tiering import attach_league_tiers_asof
 
@@ -1094,10 +1094,21 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     )
 
     assert preview_before is not None
-    assert preview_before["source"] == "elo_prematch_hybrid"
+    assert preview_before["source"] == "elo_composition_k24"
     assert preview_before["radiant"]["lineup_used"] is True
-    assert preview_before["radiant"]["rating_source"] == "prematch_hybrid_tier3"
-    assert preview_before["radiant"]["roster_matches"] == 0
+    # K24 is the served composition card.  The older hybrid roster/uncertainty
+    # contract remains an independent ML feature and is checked explicitly.
+    hybrid_before = prematch_lineup_summary(
+        model,
+        radiant_team_name="New Org",
+        dire_team_name="Stable Opponent",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
+        timestamp=1771153252,
+    )
+    assert hybrid_before is not None
+    assert hybrid_before["radiant"]["rating_source"] == "prematch_hybrid_tier3"
+    assert hybrid_before["radiant"]["roster_matches"] == 0
 
     live_map1 = MatchRecord(
         match_id=302,
@@ -1189,11 +1200,26 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
 
     assert preview_after is not None
     assert preview_after["radiant"]["lineup_used"] is True
-    assert preview_after["radiant"]["roster_key"] == preview_before["radiant"]["roster_key"]
+    live_snapshot = live_team_strength_module._snapshot_with_runtime_model_state(
+        snapshot,
+        runtime_model_state_path=runtime_model_state_path,
+    )
+    live_model = live_team_strength_module._restore_model_from_snapshot(live_snapshot)
+    assert live_model is not None
+    hybrid_after = prematch_lineup_summary(
+        live_model,
+        radiant_team_name="New Org",
+        dire_team_name="Stable Opponent",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
+        timestamp=1771154401,
+    )
+    assert hybrid_after is not None
+    assert hybrid_after["radiant"]["roster_key"] == hybrid_before["radiant"]["roster_key"]
     # The map updated TIER1; the shared ML/card preview reads TIER3, while
     # its global player component still includes the just-finished map.
-    assert preview_after["radiant"]["lineup_tier"] == "TIER3"
-    assert preview_after["radiant"]["roster_matches"] == 0
+    assert hybrid_after["radiant"]["lineup_tier"] == "TIER3"
+    assert hybrid_after["radiant"]["roster_matches"] == 0
     assert preview_after["radiant"]["live_base_delta"] != pytest.approx(0.0)
 
     _reset_live_team_strength_caches()
