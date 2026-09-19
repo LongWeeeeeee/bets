@@ -208,6 +208,35 @@ def test_k24_overlay_rejects_corrupt_temporal_metadata(tmp_path: Path):
     assert _summary(overlay, 2_000) is None
 
 
+def test_full_state_converter_preserves_live_k24_asof_history(tmp_path: Path):
+    from ELO.convert_state_to_delta import main as convert
+
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    model.process_match(result_record(_match(), 1_000))
+    base_state = model.export_state()
+    signature = live._model_config_signature(base_state)
+    snapshot = tmp_path / "snapshot.json"
+    runtime = tmp_path / "runtime.json"
+    delta = tmp_path / "delta.json"
+    snapshot.write_text(json.dumps({
+        "meta": {"reference_timestamp": 1_000, "model_config_signature": signature},
+        "model_state": base_state,
+    }))
+    model.process_match(result_record(_match(timestamp=1_100, radiant_win=False), 1_100))
+    runtime.write_text(json.dumps({
+        "base_reference_timestamp": 1_000,
+        "base_model_config_signature": signature,
+        "model_state": model.export_state(),
+    }))
+    assert convert(["--snapshot", str(snapshot), "--state", str(runtime), "--delta", str(delta)]) == 0
+    overlay = array_model.build_overlay_model(snapshot, delta)
+    assert overlay.k24_available
+    assert overlay.k24_highwater_timestamp == 1_100
+    assert list(overlay.k24_history) == list(model.k24_history)
+    for timestamp in (1_000, 1_001, 1_100, 1_101):
+        assert _summary(overlay, timestamp)["elo_diff"] == pytest.approx(_summary(model, timestamp)["elo_diff"])
+
+
 def test_k24_side_swap_reverses_sign_only():
     model = HybridPlayerRosterEloModel(HybridEloConfig())
     model.process_match(result_record(_match(), 1_000))

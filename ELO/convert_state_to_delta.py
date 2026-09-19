@@ -162,9 +162,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     small_parts = {
-        "current_patch_key": live_state.get("current_patch_key"),
-        "side_bias": live_state.get("side_bias") or {},
-        "roster_tracker": live_state.get("roster_tracker") or {},
+        field: live_state[field]
+        for field in state_overlay.SMALL_PARTS
+        if field in live_state
     }
     state_overlay.save_delta(
         args.delta,
