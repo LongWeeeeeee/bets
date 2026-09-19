@@ -1650,6 +1650,8 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_LATE_CONFLICT_MODE` | `wait` | `wait` — новые ветки ожидания 13.09.2026 (см. ниже); `veto` — точное поведение до 13.09.2026 (откат без деплоя, systemd drop-in); иное значение → `wait` |
 | `ML_DISPATCH_LATE_WAIT_SECONDS` | `1860.0` | дедлайн ожидания (31-я минута) для веток ниже |
 | `ML_DISPATCH_EARLY_SOLO_BLOCK` | `1` | E-291, решение владельца 15.09.2026: одиночная ★ Early NW/Early Win (без `all`/`late` в `models_for`) не даёт win-Decision, а даёт `Skipped(reason="early_solo_blocked")` — офлайн-WR 50-57%, хуже ELO; пары «ранняя + all/late» не затронуты; `=0`/`false`/`off` — откат к до-E-291 поведению |
+| `ML_DISPATCH_KILLS_EARLY` | `1` | E-301, решение владельца 19.09.2026: второй независимый путь `kills_total` (`_evaluate_kills_early`, после гейта E-281): Early Win ★ за `A` (Early NW против не мешает) либо Early NW ★ за `A` при молчащем Early Win, и E-281 P(A ≥30) ≥ `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` → `kills_total` на `A` независимо от ELO/андердога и Late/All; rule `kills_early_win_kills30` / `kills_early_nw_kills30`, `expected_wr` = P(A ≥30). `=0`/`false`/`off` — поведение до 19.09 |
+| `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` | `0.60` | порог E-281 P(сторона ≥30) для пути `kills_early` (включительно); без числа — fail-closed `kills30_missing` |
 
 **Правила (решения владельца 12.09.2026, win-маркет дополнен 15.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из
@@ -1679,7 +1681,14 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   за U (плюс опционально All при `ML_DISPATCH_KILLS_REQUIRE_ALL=1`) дают до
   двух решений — `kills_window` (только если открыто окно
   `ctx.kills_windows_open`, дедлайн окна `band_start-120`, lead `band_start-180`)
-  и `kills_total`, максимум по одному каждого на карту.
+  и `kills_total`, максимум по одному каждого на карту. Затем гейт E-281
+  `_apply_kills_total_gate` (0.60 фаворит / 0.70 иначе, E-289). E-301 (владелец,
+  19.09.2026): после гейта `_evaluate_kills_early` — если `kills_total` ещё не
+  решён ни для одной стороны, `A` = сторона Early Win ★ (иначе Early NW ★) и
+  P(A ≥30) ≥ 0.60 → `kills_total` на `A` без требования андердога и невзирая на
+  Late/All ★ против `A`; устаревшие `kills_total`-скипы той же стороны/`None`
+  убираются. Кейсы 19.09: Nemesis (ΔELO 35, Late★ против) и Nemiga (андердог,
+  0.658 < 0.70 у гейта) — оба отпали до правила, оба проходят по нему.
 - Тайминг: win-маркет смотрит на `ctx.lane` — если ML Laning подтверждает
   таргет `>=min_conf`, `timing="now"` (ставка на "00"); иначе `timing="now"`
   при `game_time >= ML_DISPATCH_TIMING_SECONDS` (600с). E-290, решение владельца
