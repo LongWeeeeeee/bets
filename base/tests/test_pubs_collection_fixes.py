@@ -120,32 +120,6 @@ def test_collect_matches_dedupes_by_match_id(tmp_path):
     assert records[0]["radiantNetworthLeads"] == [0, 100, 250]
 
 
-def test_paginator_advances_on_known_page():
-    """Страница из уже известных матчей не должна обрывать пагинацию.
-
-    Воспроизводим условие из `proceed_get_maps_with_data`: страница полная,
-    все матчи в окне, но все уже в existing_match_ids.
-    """
-    threshold = 1_700_000_000
-    existing = {i for i in range(1, 101)}
-    page = [{"id": i, "startDateTime": threshold + 10} for i in range(1, 101)]
-
-    kept_in_window = 0
-    in_window = 0
-    for match in page:
-        sdt = match.get("startDateTime")
-        if sdt is None or int(sdt) < threshold:
-            continue
-        in_window += 1
-        if int(match["id"]) in existing:
-            continue
-        kept_in_window += 1
-
-    assert kept_in_window == 0, "все матчи известны"
-    assert in_window == 100
-    assert len(page) == 100 and in_window > 0, "пагинация обязана продолжиться"
-
-
 def test_post_lane_solo_scope_walks_back_until_threshold(tmp_path, monkeypatch):
     """Свежий патч не добирает объём — окно расширяется на предыдущие."""
     import json as _json

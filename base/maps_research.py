@@ -758,7 +758,9 @@ def clear_get_maps_state(maps_to_save):
         os.remove(state_file)
         print(f"🗑️  Файл состояния удален: {state_file}")
 
-async def retry_request_with_proxy_rotation(request_func, *args, max_retries=None, sleep_time=300, **kwargs):
+async def retry_request_with_proxy_rotation(request_func, *args, max_retries=None, sleep_time=300,
+                                            non_retryable_exceptions=(), raise_last_error=False,
+                                            **kwargs):
     """
     Retry функция с перебором прокси и сном при исчерпании всех прокси
     
@@ -768,6 +770,7 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
         sleep_time: время сна в секундах при исчерпании всех прокси (по умолчанию 5 минут)
     """
     attempt = 0
+    last_error = None
     proxies_tried_in_cycle = 0
     pool = get_proxy_pool()  # Получаем proxy_pool только когда нужен
     total_proxies = len(pool.trackers) if hasattr(pool, 'trackers') else 1
@@ -777,6 +780,9 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
             result = await request_func(*args, **kwargs)
             return result
         except Exception as e:
+            if non_retryable_exceptions and isinstance(e, non_retryable_exceptions):
+                raise
+            last_error = e
             attempt += 1
             proxies_tried_in_cycle += 1
             print(f"⚠️ Ошибка при запросе (попытка {attempt}, прокси {proxies_tried_in_cycle}/{total_proxies}): {e}")
@@ -806,6 +812,8 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
                 # Если нет информации о прокси, просто ждем
                 await asyncio.sleep(5)
     
+    if raise_last_error and last_error is not None:
+        raise last_error
     raise Exception(f"Не удалось выполнить запрос после {max_retries} попыток")
 
 
@@ -963,104 +971,103 @@ async def get_maps_new(ids, mkdir,
         remaining_ids_list = list(remaining_ids)
         total_ids = len(remaining_ids_list)
         next_checkpoint = ((len(processed_ids) // CHECKPOINT_INTERVAL) + 1) * CHECKPOINT_INTERVAL
+        pub_pages_since_checkpoint = 0
 
-        for group_start in range(0, total_ids, batch_size * batch_concurrency):
-            group_end = min(total_ids, group_start + batch_size * batch_concurrency)
-            batch_group = []
-
-            for i in range(group_start, group_end, batch_size):
-                batch = remaining_ids_list[i:i + batch_size]
-                if not batch:
-                    continue
-                batch_group.append(batch)
-
-            # Получаем полные данные матчей с retry логикой (параллельно по батчам).
-            # return_exceptions=True: упавший батч не роняет остальные и, главное,
-            # не помечает своих игроков обработанными — иначе сбой прокси навсегда
-            # выкидывал бы игрока из будущих прогонов с недокачанными матчами.
-            tasks = [
-                retry_request_with_proxy_rotation(
-                    proceed_get_maps_with_data,
-                    skip=skip,
-                    ids_to_graph=batch,
-                    player_ids_check=True,
-                    pro=pro,
-                    existing_match_ids=existing_match_ids,
-                    start_date_time=start_date_time,
-                )
-                for batch in batch_group
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            ok_results = []
-            for batch, result in zip(batch_group, results):
-                if isinstance(result, BaseException):
-                    failed_batches += 1
-                    print(f"⚠️ Батч из {len(batch)} игроков не скачан ({type(result).__name__}: "
-                          f"{result}); игроки остаются неопрошенными")
-                    continue
-                # Игрок считается обработанным ТОЛЬКО после успешного ответа.
-                for check_id in batch:
-                    count += 1
-                    check_id_int = int(check_id)
-                    processed_ids.add(check_id_int)
-                    processed_graph_ids.add(check_id_int)
-                    if show_prints:
-                        print(f'{count}/{len(ids_set)}')
-                ok_results.append(result)
-
-            for matches, new_player_ids in ok_results:
-                # Обрабатываем каждый матч
-                for match in matches:
-                    map_id = int(match['id'])
-
-                    # Проверяем качество матча
-                    is_valid, reason = check_match_quality(match)
-
-                    if pro:
-                        # Матчи БЕЗ лиги и матчи любительских лиг больше не
-                        # выбрасываются: для обучения нужен весь доступный объём,
-                        # а история игрока одинаково полезна из любого матча.
-                        # Вернуть прежнее поведение — PRO_REQUIRE_LEAGUE=1.
-                        league = match.get('league') or {}
-                        league_id = match.get('leagueId') or league.get('id')
-                        if PRO_REQUIRE_LEAGUE and league_id is None:
-                            continue
-                        if not league:
-                            league = {}
-                        if league.get('id') is None and league_id is not None:
-                            league['id'] = int(league_id)
-                        if not league.get('tier'):
-                            league['tier'] = 'UNKNOWN'
-                        match['league'] = league
-                        if PRO_REQUIRE_LEAGUE and league.get('tier') == 'AMATEUR':
-                            continue
-                        if map_id not in run_map_ids:
-                            output_data[str(map_id)] = match
-                            run_map_ids.add(map_id)
-                            maps_counter += 1
+        async def _phase_results():
+            """Единый поток результатов; pub выдаёт страницу, pro — старый батч."""
+            if not pro:
+                async for completed_ids, page_matches, page_player_ids, failed_ids in iter_pub_pages(
+                        remaining_ids_list, skip=skip, batch_size=batch_size,
+                        batch_concurrency=batch_concurrency, start_date_time=start_date_time,
+                        player_ids_check=True, existing_match_ids=existing_match_ids):
+                    yield completed_ids, page_matches, page_player_ids, failed_ids
+                return
+            for group_start in range(0, total_ids, batch_size * batch_concurrency):
+                batch_group = [
+                    remaining_ids_list[i:min(i + batch_size, group_start + batch_size * batch_concurrency)]
+                    for i in range(group_start, min(total_ids, group_start + batch_size * batch_concurrency), batch_size)
+                ]
+                results = await asyncio.gather(*[
+                    retry_request_with_proxy_rotation(
+                        proceed_get_maps_with_data, skip=skip, ids_to_graph=batch,
+                        player_ids_check=True, pro=True, existing_match_ids=existing_match_ids,
+                        start_date_time=start_date_time,
+                    ) for batch in batch_group
+                ], return_exceptions=True)
+                for batch, result in zip(batch_group, results):
+                    if isinstance(result, BaseException):
+                        yield set(), [], set(), set(batch)
                     else:
-                        # Для pub матчей - записываем только валидные
-                        if is_valid:
-                            if map_id not in run_map_ids:
-                                output_data[str(map_id)] = match
-                                run_map_ids.add(map_id)
-                                maps_counter += 1
-                    
-                    if not is_valid:
-                        trash_maps.add(map_id)
-                        trash_reasons[reason] += 1
-                        if (not skip_auxiliary_files) and reason.startswith('invalid positions'):
-                            if str(map_id) not in invalid_positions_matches:
-                                invalid_positions_matches[str(map_id)] = {
-                                    'reason': reason,
-                                    'match': match,
-                                }
+                        matches, page_player_ids = result
+                        yield set(batch), matches, page_player_ids, set()
 
-                player_ids.update(new_player_ids)
+        async for completed_ids, matches, new_player_ids, failed_ids in _phase_results():
+            if failed_ids:
+                failed_batches += 1
+                print(f"⚠️ Батч из {len(failed_ids)} игроков не скачан; игроки остаются неопрошенными")
+                continue
+            for check_id in completed_ids:
+                count += 1
+                check_id_int = int(check_id)
+                processed_ids.add(check_id_int)
+                processed_graph_ids.add(check_id_int)
+                if show_prints:
+                    print(f'{count}/{len(ids_set)}')
 
-            # ОПТИМИЗАЦИЯ: Сохранение каждые CHECKPOINT_INTERVAL ID
-            while len(processed_ids) >= next_checkpoint:
+            if not pro:
+                pub_pages_since_checkpoint += 1
+            # Обрабатываем каждый матч
+            for match in matches:
+                map_id = int(match['id'])
+
+                # Проверяем качество матча
+                is_valid, reason = check_match_quality(match)
+
+                if pro:
+                    # Матчи БЕЗ лиги и матчи любительских лиг больше не
+                    # выбрасываются: для обучения нужен весь доступный объём,
+                    # а история игрока одинаково полезна из любого матча.
+                    # Вернуть прежнее поведение — PRO_REQUIRE_LEAGUE=1.
+                    league = match.get('league') or {}
+                    league_id = match.get('leagueId') or league.get('id')
+                    if PRO_REQUIRE_LEAGUE and league_id is None:
+                        continue
+                    if not league:
+                        league = {}
+                    if league.get('id') is None and league_id is not None:
+                        league['id'] = int(league_id)
+                    if not league.get('tier'):
+                        league['tier'] = 'UNKNOWN'
+                    match['league'] = league
+                    if PRO_REQUIRE_LEAGUE and league.get('tier') == 'AMATEUR':
+                        continue
+                    if map_id not in run_map_ids:
+                        output_data[str(map_id)] = match
+                        run_map_ids.add(map_id)
+                        maps_counter += 1
+                else:
+                    # Для pub матчей - записываем только валидные
+                    if is_valid and map_id not in run_map_ids:
+                        output_data[str(map_id)] = match
+                        run_map_ids.add(map_id)
+                        maps_counter += 1
+
+                if not is_valid:
+                    trash_maps.add(map_id)
+                    trash_reasons[reason] += 1
+                    if (not skip_auxiliary_files) and reason.startswith('invalid positions'):
+                        if str(map_id) not in invalid_positions_matches:
+                            invalid_positions_matches[str(map_id)] = {
+                                'reason': reason,
+                                'match': match,
+                            }
+
+            player_ids.update(new_player_ids)
+
+            # Pub может долго идти по полным свежим страницам без terminal ID;
+            # тогда ограничиваем память тем же чекпоинтом каждые 25 страниц.
+            while (len(processed_ids) >= next_checkpoint
+                   or (not pro and pub_pages_since_checkpoint >= 25)):
                 saved_count = 0
                 if len(output_data) > 0:
                     saved_count = len(output_data)
@@ -1084,7 +1091,9 @@ async def get_maps_new(ids, mkdir,
                     print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)} (top: {top_reasons}), IDs {len(processed_graph_ids)}")
                 else:
                     print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)}, IDs {len(processed_graph_ids)}")
-                next_checkpoint += CHECKPOINT_INTERVAL
+                if len(processed_ids) >= next_checkpoint:
+                    next_checkpoint += CHECKPOINT_INTERVAL
+                pub_pages_since_checkpoint = 0
 
         # Финальное сохранение после фазы 1
         if len(output_data) > 0:
@@ -1138,7 +1147,7 @@ async def get_maps_new(ids, mkdir,
     # прогона всё равно не потеряется. player_ids уже отфильтрован от
     # isAnonymous/смурфов в proceed_get_maps_with_data — переотбирать не нужно.
     # Никогда не роняет обход: любая ошибка здесь — предупреждение, не исключение.
-    if not skip_auxiliary_files and not pro:
+    if not skip_auxiliary_files and not pro and failed_batches == 0:
         try:
             merged_player_ids = set(int(pid) for pid in player_ids)
             previous_ids = load_pub_player_ids()
@@ -1155,11 +1164,17 @@ async def get_maps_new(ids, mkdir,
             )
         except Exception as e:
             print(f"⚠️ Не удалось обновить pub_player_steam_ids.json: {e}")
+    elif not skip_auxiliary_files and not pro:
+        print("⚠️ pub crawl завершён с нескачанными страницами; last_crawl_completed_utc не обновлён")
 
-    # Удаление файла состояния после успешного завершения
-    clear_get_maps_state(maps_to_save)
+    incomplete_pub_crawl = not pro and failed_batches > 0
+    # Partial pub pages are safely checkpointed above, but their crawl cursor is
+    # not complete. Keep the state and make the caller observe the failure.
+    if not incomplete_pub_crawl:
+        clear_get_maps_state(maps_to_save)
 
-    print(f"\n✅ Обработка завершена!")
+    print("\n⚠️ Обработка pub не завершена: часть игроков будет повторена" if incomplete_pub_crawl
+          else "\n✅ Обработка завершена!")
     print(f"🎮 Собрано валидных матчей: {maps_counter}")
     print(f"🗑️  Отклонено trash maps: {len(trash_maps)}")
     if not skip_auxiliary_files:
@@ -1177,6 +1192,8 @@ async def get_maps_new(ids, mkdir,
 
     if merged_files:
         print(f"✅ Временные файлы объединены: {len(merged_files)} файлов")
+    if incomplete_pub_crawl:
+        raise RuntimeError(f"pub crawl incomplete: {failed_batches} page batch(es) failed")
 
 
 def _process_single_json_file(file_path, maps, output):
@@ -1280,6 +1297,213 @@ def _start_date_for(pro: bool) -> int:
     raise RuntimeError(f"в keys.py нет ни одной из констант даты: {names}")
 
 
+PUB_PAGE_SIZE = 100
+PUB_MAX_PLAYERS_PER_REQUEST = 5
+PUB_PAGINATION_MAX_SKIP = 100000
+
+
+class PubPaginationError(RuntimeError):
+    """Ответ Stratz нарушил контракт, нужный для безопасного pub-курсора."""
+
+
+class PubPaginationCapError(PubPaginationError):
+    """Нельзя молча обрывать всё ещё неполную историю игрока."""
+
+
+_PUB_MATCH_FIELDS = """
+    id startDateTime durationSeconds didRadiantWin bottomLaneOutcome topLaneOutcome
+    midLaneOutcome winRates radiantNetworthLeads radiantExperienceLeads radiantKills
+    direKills towerDeaths { time isRadiant npcId }
+    players {
+      position isRadiant kills assists numDenies numLastHits goldPerMinute networth
+      experiencePerMinute level heroDamage heroHealing towerDamage heroId deaths imp
+      intentionalFeeding
+      steamAccount { id smurfFlag isAnonymous }
+    }
+"""
+
+
+def _pub_query(player_ids, skip):
+    """Одна pub-страница; все игроки этого запроса разделяют один курсор."""
+    return f'''{{
+      players(steamAccountIds: {[int(pid) for pid in player_ids]}) {{
+        steamAccount {{ id smurfFlag isAnonymous }}
+        matches(request: {{take: {PUB_PAGE_SIZE}, skip: {int(skip)},
+          gameModeIds: [22], bracketIds: [7, 8]}}) {{ {_PUB_MATCH_FIELDS} }}
+      }}
+    }}'''
+
+
+def _stratz_headers(query):
+    encoded_query = quote(query)
+    return {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Origin": "https://api.stratz.com",
+        "Referer": f"https://api.stratz.com/graphiql?query={encoded_query}",
+        "User-Agent": "STRATZ_API",
+    }
+
+
+def _pub_player_id(player):
+    try:
+        return int((player.get("steamAccount") or {}).get("id"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+async def _fetch_pub_page(player_ids, skip, threshold, player_ids_check, unsafe_player_ids=()):
+    """Загружает и валидирует страницу одного BFS-уровня без побочных эффектов."""
+    query = _pub_query(player_ids, skip)
+    data = await get_proxy_pool().make_request(
+        url="https://api.stratz.com/graphql", json={"query": query},
+        headers=_stratz_headers(query),
+    )
+    if not isinstance(data, dict) or data.get("errors"):
+        raise PubPaginationError(f"pub GraphQL error or malformed response: {data!r}")
+    payload = data.get("data")
+    players = payload.get("players") if isinstance(payload, dict) else None
+    if not isinstance(players, list):
+        raise PubPaginationError("pub response has no players list")
+
+    requested = {int(pid) for pid in player_ids}
+    by_id = {}
+    for player in players:
+        player_id = _pub_player_id(player)
+        if not isinstance(player, dict) or player_id not in requested or player_id in by_id:
+            raise PubPaginationError("pub response has missing, unexpected, or duplicate player")
+        if not isinstance(player.get("matches"), list):
+            raise PubPaginationError(f"pub response has malformed matches for player {player_id}")
+        by_id[player_id] = player
+    if set(by_id) != requested:
+        raise PubPaginationError(f"pub response missing requested players: {sorted(requested - set(by_id))}")
+
+    page_matches = []
+    discovered_player_ids = set()
+    completed_ids = set()
+    continue_ids = set()
+    newly_unsafe_ids = set()
+    for player_id in player_ids:
+        player = by_id[int(player_id)]
+        player_matches = player["matches"]
+        top_level_account = player.get("steamAccount") or {}
+        player_is_eligible = (top_level_account.get("smurfFlag") in [0, 2]
+                              and not top_level_account.get("isAnonymous"))
+        unsafe_order = int(player_id) in unsafe_player_ids
+        previous_ts = None
+        has_old = False
+        for match in player_matches:
+            if not isinstance(match, dict):
+                raise PubPaginationError(f"pub response has non-object match for player {player_id}")
+            try:
+                match_id = int(match["id"])
+            except (KeyError, TypeError, ValueError):
+                raise PubPaginationError(f"pub response has match without numeric id for player {player_id}")
+            try:
+                timestamp = int(match.get("startDateTime"))
+                if isinstance(match.get("startDateTime"), bool):
+                    raise ValueError
+            except (TypeError, ValueError):
+                unsafe_order = True
+                timestamp = None
+            if timestamp is not None:
+                if previous_ts is not None and timestamp > previous_ts:
+                    unsafe_order = True
+                previous_ts = timestamp
+                if timestamp < threshold:
+                    has_old = True
+                else:
+                    page_matches.append(match)
+                    if player_ids_check and player_is_eligible:
+                        for extra_player in match.get("players", []) or []:
+                            steam_account = extra_player.get("steamAccount") or {}
+                            if (not extra_player.get("intentionalFeeding")
+                                    and steam_account.get("smurfFlag") in [0, 2]
+                                    and not steam_account.get("isAnonymous")):
+                                try:
+                                    discovered_player_ids.add(int(steam_account["id"]))
+                                except (KeyError, TypeError, ValueError):
+                                    continue
+        if unsafe_order:
+            newly_unsafe_ids.add(int(player_id))
+        # A short page is exhaustive. A complete, ordered page with an old match
+        # is exhaustive for the cutoff; anomalous ordering instead stays sticky.
+        if len(player_matches) < PUB_PAGE_SIZE or (has_old and not unsafe_order):
+            completed_ids.add(int(player_id))
+        else:
+            if skip >= PUB_PAGINATION_MAX_SKIP:
+                raise PubPaginationCapError(
+                    f"pub pagination cap {PUB_PAGINATION_MAX_SKIP} reached for player {player_id}")
+            continue_ids.add(int(player_id))
+    return page_matches, discovered_player_ids, completed_ids, continue_ids, newly_unsafe_ids
+
+
+async def iter_pub_pages(player_ids, *, skip=0, batch_size=PUB_MAX_PLAYERS_PER_REQUEST,
+                         batch_concurrency=1, start_date_time=None,
+                         player_ids_check=False, existing_match_ids=None):
+    """Yield completed players and new matches in BFS cursor order.
+
+    Every request has one shared skip. A cursor bucket is fully drained before
+    its continuation bucket, so an incomplete bucket cannot be flushed before
+    players from a lower cursor have had a chance to join it.
+    """
+    if start_date_time is None:
+        start_date_time = _start_date_for(pro=False)
+    threshold = int(start_date_time)
+    batch_size = min(PUB_MAX_PLAYERS_PER_REQUEST, max(1, int(batch_size)))
+    batch_concurrency = max(1, int(batch_concurrency))
+    initial_ids = list(dict.fromkeys(int(pid) for pid in player_ids))
+    pending_by_skip = {int(skip): deque(initial_ids)} if initial_ids else {}
+    unsafe_player_ids = set()
+
+    while pending_by_skip:
+        current_skip = min(pending_by_skip)
+        pending = pending_by_skip[current_skip]
+        while pending:
+            batches = []
+            for _ in range(batch_concurrency):
+                batch = [pending.popleft() for _ in range(min(batch_size, len(pending)))]
+                if batch:
+                    batches.append(batch)
+            results = await asyncio.gather(*[
+                retry_request_with_proxy_rotation(
+                    _fetch_pub_page, player_ids=batch, skip=current_skip, threshold=threshold,
+                    player_ids_check=player_ids_check, unsafe_player_ids=unsafe_player_ids,
+                    max_retries=3, sleep_time=0,
+                    non_retryable_exceptions=(PubPaginationError,), raise_last_error=True,
+                ) for batch in batches
+            ], return_exceptions=True)
+            contract_error = next((result for result in results
+                                   if isinstance(result, PubPaginationError)), None)
+            if contract_error is not None:
+                raise contract_error
+            for batch, result in zip(batches, results):
+                if isinstance(result, BaseException):
+                    yield set(), [], set(), set(batch)
+                    continue
+                raw_matches, new_player_ids, completed_ids, continue_ids, newly_unsafe_ids = result
+                unsafe_player_ids.update(newly_unsafe_ids)
+                # This bounded page task owns a local ID set. Publish only after
+                # the successful response is fully parsed; there is no await in
+                # this critical section, so concurrent batches cannot duplicate it.
+                seen_in_page = set()
+                new_matches = []
+                for match in raw_matches:
+                    match_id = int(match["id"])
+                    if match_id in seen_in_page or (existing_match_ids is not None
+                                                    and match_id in existing_match_ids):
+                        continue
+                    seen_in_page.add(match_id)
+                    new_matches.append(match)
+                if existing_match_ids is not None:
+                    existing_match_ids.update(seen_in_page)
+                if continue_ids:
+                    pending_by_skip.setdefault(current_skip + PUB_PAGE_SIZE, deque()).extend(continue_ids)
+                yield completed_ids, new_matches, new_player_ids, set()
+        del pending_by_skip[current_skip]
+
+
 async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=None,
                                     game_mods=None, all_teams=None, player_ids_check=False,
                                     pro=False, existing_match_ids=None,
@@ -1301,71 +1525,45 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
     # датах (NPGSQL TIMEOUT), поэтому в pub-ветке матчи фильтруем по дате на стороне
     # клиента (Stratz отдаёт матчи newest-first), а не через серверный startDateTime.
     threshold = int(start_date_time)
+
+    # Pub обходу нужны индивидуальные курсоры. Совместимый публичный wrapper
+    # собирает небольшой переданный набор, основной get_maps_new потребляет
+    # iter_pub_pages инкрементально и не накапливает весь crawl в памяти.
+    if not pro:
+        matches = []
+        player_ids = set()
+        # Compatibility wrapper returns only after the whole supplied cohort.
+        # Keep its dedup local so a later failed page cannot make an outer retry
+        # discard already fetched matches.
+        staged_match_ids = set()
+        async for _completed, page_matches, page_player_ids, failed_ids in iter_pub_pages(
+                ids_to_graph or [], skip=skip, start_date_time=threshold,
+                player_ids_check=player_ids_check, existing_match_ids=staged_match_ids):
+            if failed_ids:
+                raise RuntimeError(f"pub page failed for players {sorted(failed_ids)}")
+            matches.extend(page_matches)
+            player_ids.update(page_player_ids)
+        if existing_match_ids is None:
+            return matches, player_ids
+        # Do not copy a multi-million-ID corpus set for a small compatibility
+        # call. Filter and publish the wrapper-local IDs once, without awaits.
+        published_ids = set()
+        new_matches = []
+        for match in matches:
+            match_id = int(match["id"])
+            if match_id in existing_match_ids or match_id in published_ids:
+                continue
+            published_ids.add(match_id)
+            new_matches.append(match)
+        existing_match_ids.update(published_ids)
+        return new_matches, player_ids
+
     matches = []
     player_ids = set()
     check = True
     while check:
+        start_date_time = _start_date_for(pro=True)
         query = f'''
-        {{
-          players(steamAccountIds: {ids_to_graph}) {{
-            steamAccount {{
-                  id
-                  smurfFlag
-                  isAnonymous
-                }}
-            matches(request:
-             {{take: 100,
-              skip: {skip},
-               gameModeIds: [22],
-                 bracketIds: [7, 8]}}) {{
-              id
-              startDateTime
-              durationSeconds
-              didRadiantWin
-              bottomLaneOutcome
-              topLaneOutcome
-              midLaneOutcome
-              winRates
-              radiantNetworthLeads
-              radiantExperienceLeads
-              radiantKills
-              direKills
-              towerDeaths {{
-                        time
-                        isRadiant
-                        npcId
-                      }}
-              players {{
-                position
-                isRadiant
-                kills
-                assists
-                numDenies
-                numLastHits
-                goldPerMinute
-                networth
-                experiencePerMinute
-                level
-                heroDamage
-                heroHealing
-                towerDamage
-                heroId
-                deaths
-                imp
-                intentionalFeeding
-                steamAccount {{
-                  id
-                  smurfFlag
-                  isAnonymous
-                }}
-              }}
-            }}
-          }}
-        }}
-        '''
-        if pro:
-            start_date_time = _start_date_for(pro=True)
-            query = f'''
                 query {{
                   teams(teamIds: {ids_to_graph}) {{
                     matches(request: {{startDateTime: {start_date_time}, take: 100, skip: {skip}, isStats:true}}) {{

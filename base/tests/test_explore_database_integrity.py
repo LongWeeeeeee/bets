@@ -261,7 +261,8 @@ def test_get_maps_new_deduplicates_maps_before_temp_save(tmp_path, monkeypatch):
     unique_match = _valid_match("888")
 
     async def _fake_retry(_func, **_kwargs):
-        return ([duplicate_match, duplicate_match, unique_match], set())
+        assert _func is maps_research._fetch_pub_page
+        return ([duplicate_match, duplicate_match, unique_match], set(), {1}, set(), set())
 
     monkeypatch.setattr(maps_research, "retry_request_with_proxy_rotation", _fake_retry)
     monkeypatch.setattr(maps_research, "check_match_quality", lambda match: (True, "ok"))
