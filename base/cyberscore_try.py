@@ -12837,6 +12837,13 @@ def _ml_dispatch_tick(
             except Exception:
                 pass
 
+        # Same signed value as the bet-card "lane_adv_dict: +x.xx" line
+        # (owner rule 20.09.2026: ELO favorite + lanes release the 00 wait).
+        try:
+            lane_adv_dict_value = _lane_dict_adv_value(top, mid, bot)
+        except Exception:
+            lane_adv_dict_value = None
+
         ledger = _ml_dispatch_sent_ledger()
         cfg = _md.Config.from_env()
         ctx = _md.Ctx(
@@ -12861,6 +12868,7 @@ def _ml_dispatch_tick(
             kills30_dire=kills30_dire,
             already_sent=ledger.as_set(),
             radiant_networth_lead=networth_lead_value,
+            lane_adv_dict=lane_adv_dict_value,
         )
         result = _md.evaluate(ctx, cfg)
         # The scorer already confirmed these hard conflicts. Consume only the
@@ -12952,6 +12960,7 @@ def _ml_dispatch_tick(
             "map_num": resolved_map_num,
             "game_time": game_time_value,
             "radiant_networth_lead": ctx.radiant_networth_lead,
+            "lane_adv_dict": ctx.lane_adv_dict,
             "teams": {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")},
             "heroes": list(heroes) if heroes is not None else None,
             "draft_input": draft_input,

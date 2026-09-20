@@ -525,6 +525,95 @@ def test_early_nw_does_not_override_late_conflict_wait_or_dedup():
     assert any(s.reason == md.REASON_DEDUP for s in result.skipped)
 
 
+# --- Owner 20.09.2026: ELO favorite + lanes release the wait at 00 --------
+
+@pytest.mark.parametrize("side,elo_radiant,elo_dire", [
+    ("Radiant", 1520.0, 1500.0),
+    ("Dire", 1500.0, 1520.0),
+])
+def test_lane_elo_release_via_lane_confidence(side, elo_radiant, elo_dire):
+    ctx = base_ctx(elo_radiant=elo_radiant, elo_dire=elo_dire, game_time=5.0,
+                   late=ModelVerdict(side, .70), lane=ModelVerdict(side, .55))
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == "now"
+    assert any(r.startswith("lane_elo_release") and "via=lane" in r and "via=lane_adv_dict" not in r
+               for r in win.reasons)
+
+
+@pytest.mark.parametrize("side,adv,elo_radiant,elo_dire", [
+    ("Radiant", 8.0, 1501.0, 1500.0),
+    ("Dire", -8.0, 1500.0, 1501.0),
+])
+def test_lane_elo_release_via_lane_adv_dict(side, adv, elo_radiant, elo_dire):
+    ctx = base_ctx(elo_radiant=elo_radiant, elo_dire=elo_dire, game_time=5.0,
+                   late=ModelVerdict(side, .70), lane=None, lane_adv_dict=adv)
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == "now"
+    assert any("via=lane_adv_dict" in r for r in win.reasons)
+
+
+@pytest.mark.parametrize("elo_radiant,elo_dire,lane,adv", [
+    (1500.0, 1500.0, ModelVerdict("Radiant", .58), 9.0),      # equal ELO
+    (1499.0, 1500.0, ModelVerdict("Radiant", .58), 9.0),      # underdog
+    (None, 1500.0, ModelVerdict("Radiant", .58), 9.0),        # ELO missing
+    (1520.0, 1500.0, ModelVerdict("Radiant", .549), 7.99),    # both below threshold
+    (1520.0, 1500.0, ModelVerdict("Dire", .58), -9.0),        # lanes point at the other side
+    (1520.0, 1500.0, None, None),
+    (1520.0, 1500.0, None, float("nan")),
+    (1520.0, 1500.0, None, "bad"),
+])
+def test_lane_elo_release_keeps_wait_when_conditions_not_met(elo_radiant, elo_dire, lane, adv):
+    ctx = base_ctx(elo_radiant=elo_radiant, elo_dire=elo_dire, game_time=5.0,
+                   late=ModelVerdict("Radiant", .70), lane=lane, lane_adv_dict=adv)
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == "wait_600"
+    assert not any("lane_elo_release" in r for r in win.reasons)
+
+
+def test_lane_elo_release_config_and_direct_helper():
+    ctx = base_ctx(elo_radiant=1520.0, elo_dire=1500.0, game_time=5.0,
+                   late=ModelVerdict("Radiant", .70), lane=ModelVerdict("Radiant", .56))
+
+    disabled = Config.from_env({"ML_DISPATCH_LANE_ELO_RELEASE": "0"})
+    assert disabled.lane_elo_release_enabled is False
+    win = next(d for d in evaluate(ctx, disabled).decisions if d.market == "win")
+    assert win.timing == "wait_600"
+
+    defaults = Config.from_env({})
+    assert (defaults.lane_elo_release_enabled, defaults.lane_elo_release_lane_conf,
+            defaults.lane_elo_release_lane_adv) == (True, 0.55, 8.0)
+
+    custom = Config.from_env({"ML_DISPATCH_LANE_ELO_RELEASE_LANE_CONF": "0.57",
+                              "ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV": "5"})
+    assert (custom.lane_elo_release_lane_conf, custom.lane_elo_release_lane_adv) == (0.57, 5.0)
+
+    assert isinstance(md._lane_elo_release(ctx, cfg(), "Radiant"), str)
+
+    ctx_zero_threshold = base_ctx(elo_radiant=1520.0, elo_dire=1500.0, game_time=5.0,
+                                  late=ModelVerdict("Radiant", .70), lane=None,
+                                  lane_adv_dict=50.0)
+    assert md._lane_elo_release(ctx_zero_threshold, cfg(lane_elo_release_lane_adv=0.0),
+                                "Radiant") is None
+
+
+def test_lane_elo_release_does_not_touch_late_conflict_wait():
+    ctx = base_ctx(early_nw=ModelVerdict("Radiant", .75),
+                   late=ModelVerdict("Dire", .70), game_time=300,
+                   elo_radiant=1500.0, elo_dire=1550.0,
+                   lane=ModelVerdict("Dire", .58), lane_adv_dict=-12.0)
+    result = evaluate(ctx, cfg())
+    assert not any(d.market == "win" for d in result.decisions)
+    assert any(s.reason == md.REASON_LATE_CONFLICT_WAIT for s in result.skipped)
+
+
+def test_lane_elo_release_reason_absent_when_star_already_fires():
+    ctx = base_ctx(elo_radiant=1500.0, elo_dire=1500.0, game_time=5.0,
+                   late=ModelVerdict("Radiant", .70), lane=ModelVerdict("Radiant", .65))
+    win = next(d for d in evaluate(ctx, cfg()).decisions if d.market == "win")
+    assert win.timing == "now"
+    assert not any("lane_elo_release" in r for r in win.reasons)
+
+
 # --- Dedup: in-memory set and SentLedger persistence -----------------------
 
 def test_already_sent_set_skips_repeat_decision():
@@ -657,7 +746,9 @@ def test_laning_verdicts_matches_panel_lines_all_and_lane():
     assert result["lane"] == {"side": "Radiant", "confidence": 0.60, "p_tie": 0.01}
     # ml_laning_line hits the star threshold (60.0%); verdicts() confidence
     # for lane matches the same underlying probability used in that line.
-    assert lines["ml_laning_line"].endswith("★")
+    # The line now ends with a data-freshness suffix (" | данные до ...",
+    # c82120ac), so the star is present but no longer the last character.
+    assert "★" in lines["ml_laning_line"]
 
 
 def test_laning_verdicts_lane_side_ignores_tie_being_the_argmax():

@@ -61,6 +61,13 @@ Rules implemented (owner decisions, 12.09.2026 — see
   (default 600s). E-290 additionally releases this ordinary wait from 240s
   when observed team net worth leads by >=1000 for the target side (configurable
   with ``ML_DISPATCH_EARLY_NW*``). Missing/nonfinite NW keeps the wait.
+  Owner decision 20.09.2026 (``_lane_elo_release``): the ELO favorite (strictly
+  higher rating than the opponent) also bets at "00" when the lanes lean its
+  way — ML Laning >= ``ML_DISPATCH_LANE_ELO_RELEASE_LANE_CONF`` (0.55, below
+  the 0.60 star) for the target OR ``ctx.lane_adv_dict`` (signed, + = Radiant)
+  at >= ``ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV`` (8) in the target's favor;
+  ``ML_DISPATCH_LANE_ELO_RELEASE=0`` is the rollback. Equal/missing ELO or
+  missing lane evidence keeps the wait.
   Otherwise ``timing="wait_600"``. Kills decisions are always
   ``timing="now"`` — the open-window filtering/deadline logic that gates
   ``kills_windows_open`` happens upstream (stage 2), not here.
@@ -286,6 +293,9 @@ class Ctx:
     kills30_dire: Optional[float] = None
     already_sent: Optional[Set[Tuple]] = None
     radiant_networth_lead: Optional[float] = None
+    # Signed panel ``lane_adv_dict`` (mean per-lane edge, + = Radiant), the same
+    # value the "lane_adv_dict: +x.xx" bet-card line prints; ``None`` = unknown.
+    lane_adv_dict: Optional[float] = None
 
     def team_name(self, side: str) -> str:
         return self.radiant_team if side == "Radiant" else self.dire_team
@@ -321,6 +331,9 @@ class Config:
     early_solo_block: bool = True
     kills_early_enabled: bool = True
     kills_early_min_kills30: float = 0.60
+    lane_elo_release_enabled: bool = True
+    lane_elo_release_lane_conf: float = 0.55
+    lane_elo_release_lane_adv: float = 8.0
 
     @classmethod
     def from_env(cls, env: Optional[dict] = None) -> "Config":
@@ -375,6 +388,11 @@ class Config:
                 env.get("ML_DISPATCH_KILLS_EARLY", "1")
             ).strip().lower() not in ("0", "false", "off"),
             kills_early_min_kills30=_float("ML_DISPATCH_KILLS_EARLY_MIN_KILLS30", 0.60),
+            lane_elo_release_enabled=str(
+                env.get("ML_DISPATCH_LANE_ELO_RELEASE", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            lane_elo_release_lane_conf=_float("ML_DISPATCH_LANE_ELO_RELEASE_LANE_CONF", 0.55),
+            lane_elo_release_lane_adv=_float("ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV", 8.0),
         )
 
     def resolved_sent_path(self) -> Path:
@@ -519,12 +537,68 @@ def _early_nw_release(ctx: Ctx, cfg: Config, target_side: str) -> bool:
             and signed_lead >= threshold)
 
 
+def _lane_elo_release(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
+    """Owner decision 20.09.2026: the ELO favorite does not wait for the 10th
+    minute when the lanes lean its way.
+
+    Applies when ``target_side`` has a strictly higher ELO than the opponent
+    AND (ML Laning backs the target at >= ``lane_elo_release_lane_conf`` — 0.55,
+    below the 0.60 star — OR ``ctx.lane_adv_dict`` (signed, + = Radiant) is at
+    least ``lane_elo_release_lane_adv`` (8) in the target's favor). Returns the
+    audit detail for ``Decision.reasons`` or ``None``. Equal/missing/nonfinite
+    ELO and missing/nonfinite lane inputs keep the wait (fail-closed). Only the
+    ordinary lane wait is released; the late-conflict wait is untouched.
+    """
+    if not cfg.lane_elo_release_enabled or target_side not in SIDES:
+        return None
+    try:
+        elo_r, elo_d = float(ctx.elo_radiant), float(ctx.elo_dire)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(elo_r) and math.isfinite(elo_d)):
+        return None
+    elo_edge = (elo_r - elo_d) if target_side == "Radiant" else (elo_d - elo_r)
+    if elo_edge <= 0:
+        return None
+
+    lane = ctx.lane
+    lane_ok = False
+    if lane is not None and lane.side == target_side:
+        try:
+            lane_ok = float(lane.confidence) >= float(cfg.lane_elo_release_lane_conf)
+        except (TypeError, ValueError):
+            lane_ok = False
+
+    adv: Optional[float] = None
+    adv_ok = False
+    try:
+        adv = float(ctx.lane_adv_dict) if ctx.lane_adv_dict is not None else None
+    except (TypeError, ValueError):
+        adv = None
+    if adv is not None and math.isfinite(adv):
+        threshold = float(cfg.lane_elo_release_lane_adv)
+        signed_adv = adv if target_side == "Radiant" else -adv
+        adv_ok = threshold > 0 and signed_adv >= threshold
+    else:
+        adv = None
+
+    if not (lane_ok or adv_ok):
+        return None
+    lane_text = f"{lane.side} {float(lane.confidence):.3f}" if lane is not None else "None"
+    adv_text = f"{adv:+.2f}" if adv is not None else "None"
+    via = "lane" if lane_ok else "lane_adv_dict"
+    return (f"lane_elo_release: elo_edge={elo_edge:+.0f} lane={lane_text} "
+            f"lane_adv_dict={adv_text} via={via}")
+
+
 def _timing_for_win(ctx: Ctx, cfg: Config, target_side: str) -> str:
     if ctx.lane is not None and ctx.lane.side == target_side and ctx.lane.confidence >= cfg.min_conf:
         return "now"
     if ctx.game_time is not None and ctx.game_time >= cfg.timing_seconds:
         return "now"
     if _early_nw_release(ctx, cfg, target_side):
+        return "now"
+    if _lane_elo_release(ctx, cfg, target_side):
         return "now"
     return "wait_600"
 
@@ -683,6 +757,10 @@ def _evaluate_win(
         if not lane_hit and _early_nw_release(ctx, cfg, side):
             reasons.append(f"early_nw_release: game_time={ctx.game_time} "
                            f"radiant_networth_lead={ctx.radiant_networth_lead}")
+        if not lane_hit:
+            lane_elo_detail = _lane_elo_release(ctx, cfg, side)
+            if lane_elo_detail:
+                reasons.append(lane_elo_detail)
         decisions.append(Decision(
             market="win",
             target_side=side,

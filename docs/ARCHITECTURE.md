@@ -380,6 +380,13 @@ E-290 (решение владельца 14.09.2026): обычное ожида�
 `ML_DISPATCH_EARLY_NW_MIN_LEAD=1000`; отключение первого флага возвращает
 обычное ожидание. Audit содержит `radiant_networth_lead`, а причина досрочного
 выхода — `early_nw_release`. Ветки ожидания1860с ниже и kills не затрагиваются.
+Решение владельца 20.09.2026 (`_lane_elo_release`): ожидание также снимается,
+если ELO таргета строго выше соперника И (ML Laning ≥0.55 за таргет ИЛИ
+`|Ctx.lane_adv_dict|` ≥8 в его пользу) — env `ML_DISPATCH_LANE_ELO_RELEASE`
+(rollback `=0`), `ML_DISPATCH_LANE_ELO_RELEASE_LANE_CONF` (0.55),
+`ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV` (8); причина в `Decision.reasons` —
+`lane_elo_release: … via=lane|lane_adv_dict`; ветки ожидания1860с (late
+conflict) не затрагиваются.
 E-291 (владелец, 15.09.2026): одиночная ★ Early NW/Early Win без `all`/`late`
 в поддержке win-маркета больше не даёт Decision (`Skipped(reason=
 "early_solo_blocked")`, офлайн-WR 50-57% хуже ELO); откат — `ML_DISPATCH_EARLY_SOLO_BLOCK=0`.

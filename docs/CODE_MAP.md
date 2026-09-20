@@ -1635,6 +1635,9 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   `prematch_index` (только для лога, не используется в правилах),
   `kills_windows_open: List[str]`, `already_sent: Optional[Set[Tuple]]`,
   `radiant_networth_lead: Optional[float]` — live общий NW Radiant minus Dire.
+  `lane_adv_dict: Optional[float] = None` — знаковый средний лейновый эдж (+ =
+  Radiant), то же число, что строка карточки «lane_adv_dict: +x.xx»
+  (`_lane_dict_adv_value(top, mid, bot)` в `_ml_dispatch_tick`).
 - `ModelVerdict(side, confidence)` — сторона "Radiant"/"Dire" (никогда "tie").
 - `Config.from_env(env=None)` — читает env ПРИ КАЖДОМ ВЫЗОВЕ (не кэширует), чтобы
   тесты и systemd drop-in применялись без перезагрузки модуля.
@@ -1718,6 +1721,16 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   таргета. `ML_DISPATCH_EARLY_NW=1` включает условие (0 — rollback),
   `ML_DISPATCH_EARLY_NW_START_SECONDS=240`, `ML_DISPATCH_EARLY_NW_MIN_LEAD=1000`.
   Missing/nonfinite NW не снимает ожидание; берётся signed lead, не abs.
+  Решение владельца 20.09.2026 (`_lane_elo_release`): ELO-фаворит (рейтинг
+  строго выше соперника) также ставит на «00», если ML Laning ≥
+  `ML_DISPATCH_LANE_ELO_RELEASE_LANE_CONF` (0.55, ниже ★ 0.60) за таргет ИЛИ
+  `Ctx.lane_adv_dict` (знаковое, + = Radiant; `_ml_dispatch_tick` берёт его из
+  `_lane_dict_adv_value(top, mid, bot)`, то же число, что строка
+  «lane_adv_dict: +x.xx» карточки) ≥ `ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV`
+  (8) в пользу таргета; `ML_DISPATCH_LANE_ELO_RELEASE=0` — rollback; равный/
+  отсутствующий ELO или отсутствие лейновых данных ожидание не снимают;
+  причина в `Decision.reasons` — `lane_elo_release: … via=lane|lane_adv_dict`;
+  запись `runtime/ml_dispatch_decisions.jsonl` получила поле `lane_adv_dict`.
   В остальных случаях `wait_600`. Ветки конфликта с ожиданием1860с не меняются.
   Kills-решения всегда `timing="now"` (фильтрацию по окну делает `Ctx.kills_windows_open`).
 - `expected_wr` = максимум уверенности среди моделей "за"; `min_odds =
