@@ -35,6 +35,27 @@ def test_lane_block_for_bet_hidden_by_default(monkeypatch):
     ) == ""
 
 
+def test_lane_block_for_bet_keeps_ml_laning_and_lane_adv_when_hidden(monkeypatch):
+    """Владелец 20.09.2026: «исчез ml lane — верни», «а также lane_adv_dict».
+
+    Прячутся только заголовок и Top/Mid/Bot; остальные строки блока — на месте
+    и в прежнем порядке (ML Laning, lane_adv_dict, Lane_adv_protracker).
+    """
+    monkeypatch.delenv("BET_SHOW_DRAFT_BLOCKS", raising=False)
+    ml_line = "ML Laning: Radiant 70.0% (золото, 10 мин) ★ | данные до 09.09 (11 дн.)"
+    got = cs._build_lane_block_for_bet(
+        "Top: win 66%", "Mid: win 57%", "Bot: win 65%",
+        lane_adv_line="Lane_adv_protracker: +0.42",
+        lane_adv_dict_line="lane_adv_dict: +23.67",
+        ml_laning_line=ml_line,
+    )
+    assert got == f"{ml_line}\nlane_adv_dict: +23.67\nLane_adv_protracker: +0.42\n\n"
+    assert "Lanes:" not in got and "Top:" not in got and "Mid:" not in got and "Bot:" not in got
+    # без остальных строк блока нет вовсе — как и раньше у чистого форматтера
+    assert cs._build_lane_block_for_bet("Top: win 66%", "Mid: win 57%", "Bot: win 65%",
+                                        ml_laning_line="") == ""
+
+
 def test_compose_for_bet_matches_pure_builder_when_enabled(monkeypatch):
     monkeypatch.setenv("BET_SHOW_DRAFT_BLOCKS", "1")
     got = cs._compose_star_metric_blocks_for_bet("E\n", "L\n", "A\n", "M\n")

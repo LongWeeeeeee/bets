@@ -7697,10 +7697,21 @@ def _compose_star_metric_blocks_for_bet(
 
 
 def _build_lane_block_for_bet(*args, **kwargs) -> str:
-    """Обёртка над `_build_lane_block` для карты ставки — см. `_bet_show_draft_blocks`."""
-    if not _bet_show_draft_blocks():
-        return ""
-    return _build_lane_block(*args, **kwargs)
+    """Обёртка над `_build_lane_block` для карты ставки — см. `_bet_show_draft_blocks`.
+
+    Скрытый режим (владелец 20.09.2026: «убери Lanes: Top/Mid/Bot», затем
+    «исчез ml lane — верни», «а также lane_adv_dict») прячет ТОЛЬКО заголовок
+    `Lanes:` и три строки Top/Mid/Bot. Остальные строки блока — `ML Laning`,
+    `lane_adv_dict`, lane-kills, `Lane_adv_protracker` — печатаются на прежнем
+    месте в прежнем порядке; формат и хвост `\\n\\n` даёт сам `_build_lane_block`.
+    """
+    show_all = _bet_show_draft_blocks()
+    head = tuple(args[:3]) if show_all else ("", "", "")
+    block = _build_lane_block(*head, *args[3:], **kwargs)
+    if show_all:
+        return block
+    header = "Lanes:\n"
+    return block[len(header):] if block.startswith(header) else block
 
 
 # Модульный уровень: тот же формат, что у nested _format_metrics в star-ветке

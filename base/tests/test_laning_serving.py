@@ -84,8 +84,11 @@ def test_all_and_laning_fail_independently(monkeypatch):
     lines = serving.panel_lines(*teams, 12345, draft_model=draft)
     # ml_laning_line hits 60.0%, exactly ML_DISPATCH_MIN_CONF's default
     # threshold, so it gets the " ★" marker; all_model_line at 55.4% does not.
-    assert lines == {'ml_laning_line': 'ML Laning: Radiant 60.0% (золото, 10 мин) ★',
-                     'all_model_line': '🌐 All ML-модель: Dire 55.4%'}
+    # С 20.09.2026 обе строки могут нести хвост «| данные до DD.MM (N дн.)»
+    # (приписка свежести артефакта); сравниваем текст до него.
+    assert {k: v.split(' | данные до ')[0] for k, v in lines.items()} == {
+        'ml_laning_line': 'ML Laning: Radiant 60.0% (золото, 10 мин) ★',
+        'all_model_line': '🌐 All ML-модель: Dire 55.4%'}
     assert calls == [(heroes, list(range(1, 11)), 12345)]
     draft.win_index_draft = lambda *args: None
     assert serving.panel_lines(*teams, 12345, draft_model=draft) == dict(
@@ -104,4 +107,5 @@ def test_equal_gold_is_a_real_class(monkeypatch):
     result = serving.panel_lines({}, {}, 12345, draft_model=draft)
     # 60.0% also hits the default ML_DISPATCH_MIN_CONF threshold -> starred,
     # even though "Равенство" itself is not a bettable side (display-only).
-    assert result['ml_laning_line'] == 'ML Laning: Равенство 60.0% (золото, 10 мин) ★'
+    assert (result['ml_laning_line'].split(' | данные до ')[0]
+            == 'ML Laning: Равенство 60.0% (золото, 10 мин) ★')

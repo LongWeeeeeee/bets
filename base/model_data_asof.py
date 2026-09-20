@@ -17,9 +17,11 @@ ML-модели дополняет пометкой «данные до DD.MM (N
   2) ``manifest.json`` / ``results.json`` — ключ верхнего уровня
      ``data_asof_ts`` / ``asof`` / ``snapshot_ts`` / ``history_last_end``
      (int/float epoch или строка "YYYY-MM-DD"/"DD.MM.YYYY");
-  3) дата ``YYYY-MM-DD`` в префиксе имени каталога, иначе родителя, иначе деда
-     (например, ``data/draft_phase_serving/2026-09-05_position_pairs/early_win``
-     → дата родителя) — это ВЕРХНЯЯ граница (дата сборки артефакта, не корпуса);
+  3) дата ``YYYY-MM-DD`` или ``YYYYMMDD`` в префиксе имени каталога, иначе
+     родителя, иначе деда (например,
+     ``data/draft_phase_serving/2026-09-05_position_pairs/early_win`` и
+     ``data/laning_models/20260909_team_nw10_v1/selected`` → дата родителя) —
+     это ВЕРХНЯЯ граница (дата сборки артефакта, не корпуса);
   4) новейший mtime среди ``*.joblib`` / ``*.npz`` / ``*.cbm`` в каталоге;
   5) ``None`` — приписки не будет.
 """
@@ -33,6 +35,8 @@ from pathlib import Path
 from typing import Optional, Union
 
 _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+# Компактный вариант `YYYYMMDD_…` (например, `data/laning_models/20260909_team_nw10_v1`).
+_COMPACT_DATE_PREFIX_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})(?=[_\-.]|$)")
 _DDMMYYYY_RE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
 
 
@@ -117,9 +121,15 @@ def _rule3_name_date(dir_path: Path) -> Optional[int]:
     for candidate in candidates:
         match = _DATE_PREFIX_RE.match(candidate.name)
         if match:
-            ts = _parse_date_str(match.group(1))
-            if ts is not None:
-                return ts
+            text = match.group(1)
+        else:
+            compact = _COMPACT_DATE_PREFIX_RE.match(candidate.name)
+            if not compact:
+                continue
+            text = "-".join(compact.groups())
+        ts = _parse_date_str(text)
+        if ts is not None:
+            return ts
     return None
 
 

@@ -58,6 +58,18 @@ def test_rule3_parent_name(tmp_path):
     assert mda.data_asof_ts(child) == _ts(2026, 9, 5)
 
 
+def test_rule3_compact_yyyymmdd_parent(tmp_path):
+    # laning-модель: data/laning_models/20260909_team_nw10_v1/selected
+    parent = tmp_path / "20260909_team_nw10_v1"
+    child = parent / "selected"
+    child.mkdir(parents=True)
+    assert mda.data_asof_ts(child) == _ts(2026, 9, 9)
+    # восемь цифр без разделителя после них — не дата (например, хэш/ид)
+    other = tmp_path / "20260909abc"
+    other.mkdir()
+    assert mda.data_asof_ts(other) is None
+
+
 def test_rule3_grandparent_name(tmp_path):
     grandparent = tmp_path / "2026-09-05_position_pairs"
     child = grandparent / "mid" / "early_win"

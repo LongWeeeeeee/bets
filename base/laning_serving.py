@@ -149,8 +149,18 @@ def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
             side = ("Dire", "Равенство", "Radiant")[winner]
             confidence = float(probability[winner])
             star = " ★" if confidence >= min_conf else ""
-            result["ml_laning_line"] = (
-                f"ML Laning: {side} {probability[winner] * 100:.1f}% (золото, 10 мин){star}")
+            line = f"ML Laning: {side} {probability[winner] * 100:.1f}% (золото, 10 мин){star}"
+            # Приписка свежести (20.09.2026): дата артефакта laning-модели —
+            # каталог `MODEL_DIR` (или его родитель `YYYYMMDD_…`), см.
+            # model_data_asof. Пусто, если дату взять неоткуда.
+            try:
+                _note = _model_data_asof.model_dir_note(
+                    getattr(_SERVICE, "model_dir", MODEL_DIR))
+            except Exception:                         # noqa: BLE001
+                _note = ""
+            if _note:
+                line += f" | {_note}"
+            result["ml_laning_line"] = line
     except Exception:
         pass
     return result
