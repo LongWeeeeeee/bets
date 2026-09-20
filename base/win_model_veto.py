@@ -35,6 +35,11 @@ try:
 except ImportError:                                   # запуск не из base/
     from base import draft_model_paths as _draft_paths
 
+try:
+    import model_data_asof as _model_data_asof
+except ImportError:                                   # запуск не из base/
+    from base import model_data_asof as _model_data_asof
+
 
 def _resolve_model_dir() -> Path:
     """Каталог драфт-модели: единственный источник — `draft_model_paths` (E-201).
@@ -319,6 +324,18 @@ _EVAL_JOURNAL = os.getenv(
 # сообщения. Живёт в модуле, потому что считается там, где есть входы, а
 # показывается там, где строится карточка.
 _LAST_PANEL: dict = {"text": "", "verdicts": [], "error": None, "map_id": None}
+
+
+def draft_model_freshness_note() -> str:
+    """Приписка свежести данных для строки 🤖, когда её источник не прематч.
+
+    Источник в этом случае — драфт-ансамбль (`MODEL_DIR`, All/Radiant-модель):
+    та же дата, что и у отдельной строки "🌐 All ML-модель" (laning_serving.py).
+    """
+    try:
+        return _model_data_asof.model_dir_note(MODEL_DIR)
+    except Exception:                                 # noqa: BLE001
+        return ""
 
 
 def last_panel_text() -> str:
@@ -1049,6 +1066,11 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                            "features": {k: float(_f[k]) for k in _cols if k in _f},
                            "missing_keys": list(getattr(res, "missing_keys", None) or []),
                            "calibration": _calibration})
+        try:
+            _LAST_FILL["freshness_note"] = _model_data_asof.freshness_note(
+                _LAST_FILL.get("snapshot_ts"))
+        except Exception:                             # noqa: BLE001
+            _LAST_FILL["freshness_note"] = ""
         # Разложение логита: вклад признака = коэффициент * стандартизованное
         # значение. Усредняем по моделям ансамбля (сейчас модель одна).
         try:
@@ -1090,6 +1112,14 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             # и late-модель обучена ровно на нём.
             _LAST_FILL["late"] = _lwm.verdict(
                 _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
+            try:
+                # Приписка свежести — отдельным guard'ом: тесты исполняют этот
+                # участок exec()-ом без модульных имён, и NameError здесь не
+                # должен подменять собой реальную ошибку модели.
+                _LAST_FILL["late"] = _model_data_asof.with_freshness_note(
+                    _LAST_FILL["late"], getattr(_lwm, "MODEL_DIR", None))
+            except Exception:                         # noqa: BLE001
+                pass
         except Exception as _late_exc:                # noqa: BLE001 — оценка необязательна
             # Ни один отказ late-модели не имеет права уронить предматчевую
             # оценку: она решает ставку, а late — только строка в карточке.
@@ -1113,6 +1143,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                 from base import early_nw_win_model as _enwm
             _LAST_FILL["early_nw"] = _enwm.verdict(
                 _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
+            try:
+                # См. комментарий у late: отдельный guard ради exec()-тестов.
+                _LAST_FILL["early_nw"] = _model_data_asof.with_freshness_note(
+                    _LAST_FILL["early_nw"], getattr(_enwm, "MODEL_DIR", None))
+            except Exception:                         # noqa: BLE001
+                pass
         except Exception as _early_nw_exc:            # noqa: BLE001 — оценка необязательна
             _LAST_FILL["early_nw"] = None
             _early_nw_load_error = f"{type(_early_nw_exc).__name__}: {_early_nw_exc}"
@@ -1132,6 +1168,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                 from base import early_win_model as _ewm
             _LAST_FILL["early_win"] = _ewm.verdict(
                 _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
+            try:
+                # См. комментарий у late: отдельный guard ради exec()-тестов.
+                _LAST_FILL["early_win"] = _model_data_asof.with_freshness_note(
+                    _LAST_FILL["early_win"], getattr(_ewm, "MODEL_DIR", None))
+            except Exception:                         # noqa: BLE001
+                pass
         except Exception as _early_win_exc:            # noqa: BLE001 — оценка необязательна
             _LAST_FILL["early_win"] = None
             _early_win_load_error = f"{type(_early_win_exc).__name__}: {_early_win_exc}"

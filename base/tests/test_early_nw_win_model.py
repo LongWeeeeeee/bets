@@ -169,7 +169,7 @@ def test_early_nw_line_is_not_caught_by_the_bet_gate_regex():
             patterns[target.id] = first.value
     assert set(patterns) == {"_WIN_MODEL_PANEL_RE", "_LATE_WIN_MODEL_PANEL_RE"}, patterns
 
-    panel = ("\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): Dire 61.0%\n"
+    panel = ("\U0001F550 Early NW ML-модель (20–28 мин): Dire 61.0%\n"
              "\U0001F551 Late ML-модель (карта ≥36 мин): Radiant 55.0%")
     general = _re.compile(patterns["_WIN_MODEL_PANEL_RE"], _re.M)
     late_re = _re.compile(patterns["_LATE_WIN_MODEL_PANEL_RE"], _re.M)

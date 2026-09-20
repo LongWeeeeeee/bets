@@ -91,7 +91,14 @@ def test_star_summary_shows_win_model_line_even_without_hits() -> None:
         mid_output={V.INDEX_KEY: 6.3},
         all_output={V.INDEX_KEY: 6.3},
     )
-    assert block.strip() == "\U0001F916 ML-модель: Radiant 56.3%"
+    # С 20.09.2026 у строки может быть хвост «| данные до DD.MM (N дн.)» —
+    # приписка свежести данных драфт-ансамбля (`win_model_veto.MODEL_DIR`);
+    # без каталога с датой хвоста нет. Проверяем начало строки и что кроме
+    # неё в блоке ничего нет.
+    lines = [ln for ln in block.splitlines() if ln.strip()]
+    assert len(lines) == 1
+    assert lines[0].startswith("\U0001F916 ML-модель: Radiant 56.3%")
+    assert lines[0] == "\U0001F916 ML-модель: Radiant 56.3%" or " | данные до " in lines[0]
 
     # знак читается как сторона
     block = runtime._build_star_hits_summary_block(
@@ -109,7 +116,10 @@ def test_star_summary_keeps_model_line_together_with_hits() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={"counterpick_1vs1": 9, V.INDEX_KEY: 4.0},
         mid_output={}, all_output={})
-    assert block.startswith("\U0001F916 ML-модель: Radiant 54.0%\n")
+    first_line = block.splitlines()[0]
+    assert first_line.startswith("\U0001F916 ML-модель: Radiant 54.0%")
+    # хвост свежести данных (20.09.2026) — на той же строке, а не отдельной
+    assert first_line == "\U0001F916 ML-модель: Radiant 54.0%" or " | данные до " in first_line
     assert "\u2b50 Star hits (WR60+):" in block
 
 

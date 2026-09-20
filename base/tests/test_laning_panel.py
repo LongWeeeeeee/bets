@@ -93,16 +93,25 @@ def test_serving_omits_only_the_failed_new_line(monkeypatch):
 
 def test_every_lane_card_builder_accepts_explicit_laning_line():
     tree = ast.parse(SOURCE.read_text())
-    calls = [
+    bet_calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_build_lane_block_for_bet"
+    ]
+    # Five helper builders plus the three check_head cards — all go through
+    # the BET_SHOW_DRAFT_BLOCKS-aware wrapper now (owner decision 20.09.2026).
+    assert len(bet_calls) == 8
+    assert all(any(keyword.arg == "ml_laning_line" for keyword in call.keywords)
+               for call in bet_calls)
+    # The pure builder itself is called exactly once — from inside the wrapper.
+    pure_calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_build_lane_block"
     ]
-    # Five helper builders plus the three check_head cards.
-    assert len(calls) == 8
-    assert all(any(keyword.arg == "ml_laning_line" for keyword in call.keywords)
-               for call in calls)
+    assert len(pure_calls) == 1
 
 
 def test_check_head_evaluates_adapter_once_and_keeps_strings_explicit():

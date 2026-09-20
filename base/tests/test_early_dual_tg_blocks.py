@@ -98,6 +98,10 @@ def test_recommend_odds_early_end_uses_early_thresholds():
 def test_early_local_kills_message_has_dual_early_blocks(monkeypatch):
     import cyberscore_try as runtime
 
+    # Карта ставки по умолчанию прячет Lanes/Early/Late/All/Mix
+    # (`_bet_show_draft_blocks`, owner decision 20.09.2026) — этот тест
+    # проверяет подробную (старую) карту, поэтому явно её включает.
+    monkeypatch.setenv("BET_SHOW_DRAFT_BLOCKS", "1")
     monkeypatch.setattr(
         runtime,
         "_decorate_star_block_for_display",

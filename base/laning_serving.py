@@ -10,6 +10,11 @@ import threading
 
 import numpy as np
 
+try:
+    import model_data_asof as _model_data_asof
+except ImportError:                                    # запуск не из base/
+    from base import model_data_asof as _model_data_asof
+
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = Path(os.getenv("LANING_MODEL_DIR", str(
     ROOT / "data/laning_models/20260909_team_nw10_v1/selected")))
@@ -120,8 +125,14 @@ def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
             side = "Radiant" if index >= 0 else "Dire"
             confidence = (50 + abs(index)) / 100.0
             star = " ★" if confidence >= min_conf else ""
-            result["all_model_line"] = (
-                f"🌐 All ML-модель: {side} {50 + abs(index):.1f}%{star}")
+            line = f"🌐 All ML-модель: {side} {50 + abs(index):.1f}%{star}"
+            try:
+                _note = _model_data_asof.model_dir_note(getattr(draft_model, "MODEL_DIR", None))
+            except Exception:                         # noqa: BLE001
+                _note = ""
+            if _note:
+                line += f" | {_note}"
+            result["all_model_line"] = line
     except Exception:
         pass
     try:
@@ -217,7 +228,8 @@ def fallback_verdicts(radiant_dict, dire_dict, *, draft_model):
             import early_nw_win_model as _enwm
         except ImportError:
             from base import early_nw_win_model as _enwm
-        result["early_nw"] = _enwm.verdict(heroes)
+        result["early_nw"] = _model_data_asof.with_freshness_note(
+            _enwm.verdict(heroes), getattr(_enwm, "MODEL_DIR", None))
     except Exception:
         result["early_nw"] = None
     try:
@@ -225,7 +237,8 @@ def fallback_verdicts(radiant_dict, dire_dict, *, draft_model):
             import early_win_model as _ewm
         except ImportError:
             from base import early_win_model as _ewm
-        result["early_win"] = _ewm.verdict(heroes)
+        result["early_win"] = _model_data_asof.with_freshness_note(
+            _ewm.verdict(heroes), getattr(_ewm, "MODEL_DIR", None))
     except Exception:
         result["early_win"] = None
     try:
@@ -233,7 +246,8 @@ def fallback_verdicts(radiant_dict, dire_dict, *, draft_model):
             import late_win_model as _lwm
         except ImportError:
             from base import late_win_model as _lwm
-        result["late"] = _lwm.verdict(heroes)
+        result["late"] = _model_data_asof.with_freshness_note(
+            _lwm.verdict(heroes), getattr(_lwm, "MODEL_DIR", None))
     except Exception:
         result["late"] = None
     return result

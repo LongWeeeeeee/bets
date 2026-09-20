@@ -7666,6 +7666,43 @@ def _compose_star_metric_blocks_for_message(
     )
 
 
+def _bet_show_draft_blocks() -> bool:
+    """Решение владельца 20.09.2026: карта ставки прячет Lanes/Early/Late/All/Mix
+
+    и Kills_window по умолчанию — эти блоки дублируют то, что уже отражено в
+    ML-строках (теперь с припиской свежести данных), а по факту читались как
+    шум. Восстановить старую подробную карту: `BET_SHOW_DRAFT_BLOCKS=1`
+    (или true/yes/on) в окружении процесса `cyberscore_try.py`.
+    """
+    return str(os.getenv("BET_SHOW_DRAFT_BLOCKS", "0")).strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _compose_star_metric_blocks_for_bet(
+    early_block: str,
+    late_block: str,
+    all_block: str,
+    mix_block: str = "",
+) -> str:
+    """Обёртка над `_compose_star_metric_blocks_for_message` для карты ставки.
+
+    Пустая строка по умолчанию (см. `_bet_show_draft_blocks`); сама функция
+    ниже остаётся чистой и без изменений — на неё напрямую опираются тесты
+    (test_mix_block.py и др.), которые эту обёртку не вызывают.
+    """
+    if not _bet_show_draft_blocks():
+        return ""
+    return _compose_star_metric_blocks_for_message(early_block, late_block, all_block, mix_block)
+
+
+def _build_lane_block_for_bet(*args, **kwargs) -> str:
+    """Обёртка над `_build_lane_block` для карты ставки — см. `_bet_show_draft_blocks`."""
+    if not _bet_show_draft_blocks():
+        return ""
+    return _build_lane_block(*args, **kwargs)
+
+
 # Модульный уровень: тот же формат, что у nested _format_metrics в star-ветке
 # check_head — нужно, чтобы no-star ветка отказа тоже собирала bet_message
 # с детальными блоками Early/Late/All для tail_log.
@@ -7954,22 +7991,37 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
         if _fb_early_nw:
             _fb_c = float(_fb_early_nw["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
-            _fb_lines.append(f"\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): "
-                             f"{_fb_early_nw['side']} {_fb_c * 100:.1f}%{_fb_star}")
+            try:
+                _fb_note = str(_fb_early_nw.get("freshness_note") or "")
+            except Exception:                        # noqa: BLE001
+                _fb_note = ""
+            _fb_lines.append(f"\U0001F550 Early NW ML-модель (20–28 мин): "
+                             f"{_fb_early_nw['side']} {_fb_c * 100:.1f}%{_fb_star}"
+                             f"{' | ' + _fb_note if _fb_note else ''}")
         _fb_early_win = _fb_details.get("early_win")
         if _fb_early_win:
             _fb_c = float(_fb_early_win["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
+            try:
+                _fb_note = str(_fb_early_win.get("freshness_note") or "")
+            except Exception:                        # noqa: BLE001
+                _fb_note = ""
             _fb_lines.append(f"\U0001F3C1 Early Win ML-модель (карта 20–34 мин): "
-                             f"{_fb_early_win['side']} {_fb_c * 100:.1f}%{_fb_star}")
+                             f"{_fb_early_win['side']} {_fb_c * 100:.1f}%{_fb_star}"
+                             f"{' | ' + _fb_note if _fb_note else ''}")
         if standalone_all_line:
             _fb_lines.append(standalone_all_line)
         _fb_late = _fb_details.get("late")
         if _fb_late:
             _fb_c = float(_fb_late["confidence"])
             _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
+            try:
+                _fb_note = str(_fb_late.get("freshness_note") or "")
+            except Exception:                        # noqa: BLE001
+                _fb_note = ""
             _fb_lines.append(f"\U0001F551 Late ML-модель (карта ≥36 мин): "
-                             f"{_fb_late['side']} {_fb_c * 100:.1f}%{_fb_star}")
+                             f"{_fb_late['side']} {_fb_c * 100:.1f}%{_fb_star}"
+                             f"{' | ' + _fb_note if _fb_note else ''}")
         _fb_warning = str(_fb_details.get("refusal_warning_line") or "").strip()
         if _fb_warning:
             _fb_lines.append(_fb_warning)
@@ -8001,6 +8053,20 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                      f" | ML от кэфа: {float(odds):.2f}")
         else:
             line += " | исторический WR: нет данных"
+    # Приписка свежести данных (владелец 20.09.2026): у предматчевой модели —
+    # дата снимка (`snapshot_ts`, тот самый, про который лог пишет «снимок
+    # старше»), у драфт-ансамбля — дата корпуса его артефакта. Ставится после
+    # «(оценка) | WR | кэф», чтобы читалась одним куском с калибровкой, и до
+    # длинного хвоста «вклад | вход».
+    try:
+        if is_prematch_source:
+            _main_note = str((details or {}).get("freshness_note") or "")
+        else:
+            _main_note = win_model_veto.draft_model_freshness_note()
+    except Exception:                                # noqa: BLE001
+        _main_note = ""
+    if _main_note:
+        line += f" | {_main_note}"
     try:
         # Team ELO is shown once in the shared hybrid block below. The legacy
         # account-ELO feature remains in ML diagnostics, not as a rival rating.
@@ -8060,8 +8126,13 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _early_nw:
         _early_nw_conf = float(_early_nw['confidence'])
         _early_nw_star = " ★" if _early_nw_conf >= _ml_star_min_conf else ""
-        line += (f"\n\U0001F550 Early NW ML-модель (нетворт-маркер 20–28 мин): "
-                 f"{_early_nw['side']} {_early_nw_conf * 100:.1f}%{_early_nw_star}")
+        try:
+            _early_nw_note = str(_early_nw.get("freshness_note") or "")
+        except Exception:                            # noqa: BLE001
+            _early_nw_note = ""
+        line += (f"\n\U0001F550 Early NW ML-модель (20–28 мин): "
+                 f"{_early_nw['side']} {_early_nw_conf * 100:.1f}%{_early_nw_star}"
+                 f"{' | ' + _early_nw_note if _early_nw_note else ''}")
     # Display-only winner estimate for the 20–34 minute population.
     try:
         _early_win = details.get("early_win") if details else win_model_veto.last_early_win(index)
@@ -8070,8 +8141,13 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _early_win:
         _early_win_conf = float(_early_win['confidence'])
         _early_win_star = " ★" if _early_win_conf >= _ml_star_min_conf else ""
+        try:
+            _early_win_note = str(_early_win.get("freshness_note") or "")
+        except Exception:                            # noqa: BLE001
+            _early_win_note = ""
         line += (f"\n\U0001F3C1 Early Win ML-модель (карта 20–34 мин): "
-                 f"{_early_win['side']} {_early_win_conf * 100:.1f}%{_early_win_star}")
+                 f"{_early_win['side']} {_early_win_conf * 100:.1f}%{_early_win_star}"
+                 f"{' | ' + _early_win_note if _early_win_note else ''}")
     if standalone_all_line:
         line += f"\n{standalone_all_line}"
     # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
@@ -8085,8 +8161,13 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     if _late:
         _late_conf = float(_late['confidence'])
         _late_star = " ★" if _late_conf >= _ml_star_min_conf else ""
+        try:
+            _late_note = str(_late.get("freshness_note") or "")
+        except Exception:                            # noqa: BLE001
+            _late_note = ""
         line += (f"\n\U0001F551 Late ML-\u043c\u043e\u0434\u0435\u043b\u044c (\u043a\u0430\u0440\u0442\u0430 \u226536 \u043c\u0438\u043d): "
-                 f"{_late['side']} {_late_conf * 100:.1f}%{_late_star}")
+                 f"{_late['side']} {_late_conf * 100:.1f}%{_late_star}"
+                 f"{' | ' + _late_note if _late_note else ''}")
     # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
     # тогда выглядит ровно как раньше.
     try:
@@ -13974,7 +14055,7 @@ def _build_lane_adv_standalone_kills_message(
         special_header_mode="early_kills",
         kills_window_label=kills_window_header_label,
     )
-    lane_block = _build_lane_block(
+    lane_block = _build_lane_block_for_bet(
         top,
         mid,
         bot,
@@ -14053,7 +14134,7 @@ def _build_prematch_model_bet_message(
             lines.insert(1, model_line.rstrip("\n"))
             text = "\n".join(lines)
         return text
-    lane_block = _build_lane_block(
+    lane_block = _build_lane_block_for_bet(
         top,
         mid,
         bot,
@@ -14127,7 +14208,7 @@ def _build_early_local_kills_message(
     has_protracker = isinstance(protracker_payload, dict) and bool(protracker_payload)
     # Lane_adv_protracker joins only when the payload came from the warm cache;
     # otherwise the lane block stays local-only (lane_adv_dict).
-    lane_block = _build_lane_block(
+    lane_block = _build_lane_block_for_bet(
         top,
         mid,
         bot,
@@ -14300,7 +14381,7 @@ def _build_early_local_kills_message(
         f"{team_elo_block or ''}"
         f"{wr_block}"
         f"{star_hits_summary_block}"
-        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block, mix_block)}"
+        f"{_compose_star_metric_blocks_for_bet(early_block + early_end_block, mid_block, all_block, mix_block)}"
         f"{live_state_block}"
     )
 
@@ -14432,7 +14513,7 @@ def _build_pipeline_probe_message(
     protracker_payload: Optional[Dict[str, Any]],
     ml_laning_line: str = "",
 ) -> str:
-    lane_block = _build_lane_block(
+    lane_block = _build_lane_block_for_bet(
         metrics_payload.get('top'),
         metrics_payload.get('mid'),
         metrics_payload.get('bot'),
@@ -15354,9 +15435,13 @@ def _format_live_message_state_block(
         networth_line = f"Networth: {str(radiant_team_name or 'Radiant')} +{abs_lead}"
     else:
         networth_line = f"Networth: {str(dire_team_name or 'Dire')} +{abs_lead}"
-    kills_window_block = _format_kills_window_values_block(
-        radiant_heroes_and_pos=radiant_heroes_and_pos,
-        dire_heroes_and_pos=dire_heroes_and_pos,
+    kills_window_block = (
+        _format_kills_window_values_block(
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+        )
+        if _bet_show_draft_blocks()
+        else ""
     )
     body = f"{kills_window_block}{time_line}\n{networth_line}\n"
     if show_kills_time_blocks or kills_window_label:
@@ -31867,7 +31952,7 @@ def _build_early_winner_kills_window_message(
     early_end_block = _format_metrics(
         "Early Winner (20-28):", early_end_log, metric_list
     )
-    lane_block = _build_lane_block(
+    lane_block = _build_lane_block_for_bet(
         s.get("top"),
         s.get("mid"),
         s.get("bot"),
@@ -41649,11 +41734,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
                     f"{series_score_line}"
-                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
+                    f"{_build_lane_block_for_bet(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
                     f"{team_elo_block}"
                     f"{pre_gate_wr_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}), all_model_line=all_model_line)}"
-                    f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
+                    f"{_compose_star_metric_blocks_for_bet(telegram_early_block, mid_block, all_block, mix_block)}"
                 )
             except Exception:
                 pass
@@ -43016,7 +43101,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
             )
-            lane_block = _build_lane_block(
+            lane_block = _build_lane_block_for_bet(
                 s.get('top'),
                 s.get('mid'),
                 s.get('bot'),
@@ -43042,7 +43127,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{team_elo_block}"
                 f"{wr_block}"
                 f"{star_hits_summary_block}"
-                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
+                f"{_compose_star_metric_blocks_for_bet(telegram_early_block, mid_block, all_block, mix_block)}"
                 f"{live_state_block}"
                 f"{odds_block}"
             )
@@ -46614,10 +46699,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
                     f"{_build_series_score_line(data.get('live_league_data') or {})}"
-                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
+                    f"{_build_lane_block_for_bet(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
                     f"{noskip_team_elo_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=star_base_all_output, all_model_line=all_model_line)}"
-                    f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block, _noskip_mix_block)}"
+                    f"{_compose_star_metric_blocks_for_bet(_noskip_early_block, _noskip_mid_block, _noskip_all_block, _noskip_mix_block)}"
                 )
             except Exception:
                 pass
