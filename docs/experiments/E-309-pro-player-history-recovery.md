@@ -90,15 +90,80 @@ raw JSON, сохранение compact candidate binary, deterministic MID dedup
 Проверены UTC-границы июня/июля, сохранение базового префикса на fixture.
 Совместно с предыдущим ML harness: **29 passed**; compile и diff-check прошли.
 
-Полный campaign ещё не стартовал: после успешной проверки данных/зависимостей
-планировщик дважды отказал из-за отсутствия консервативного CPU-бюджета.
-Ограничения ресурсов не изменялись. Первый preflight также выявил изменение
-трёх служебных metadata JSON архива; actual match-file hashes совпали.
-Обновление только их SHA зафиксировано в `metadata_input_refresh.json`;
-новый manifest — `recovery_campaign.v2.json`, старый сохранён.
+Полный recovery campaign `run-f1566653ed01385d9c37c462` завершён с exit 0;
+проверка неизменности snapshot после выполнения пройдена. 323 JSON файла,
+1 731 619 raw records, 1 730 200 валидных candidates, 21 942 дубликата
+(131 отличаются по полям), **1 708 258 canonical карт**. Во всех 1 261 465
+совпадающих с query MID прошли проверки времени, исхода и account/hero/side.
 
-Новый прирост качества и полная сохранность префикса пока **не измерены**.
-Два фиксированных ablation jobs подготовлены, hash нового dataset ожидается.
+Полная проверка результата: 1 261 465 строк × 203 колонки; исходные **71 колонка
+и 14 identity/contract arrays сохранены**, все новые значения конечны.
+Dataset SHA256 `4efd1819b93ede6e186e8a330974d6062b9cce11a7be9fd76a11123c0a351f1a`.
+`features/metadata.json` и `recovery_verification.json` — первичные отчёты.
+
+На тех же 9 038 картах / 90 380 player slots:
+
+| История игрока на выбранном герое | До | После |
+|---|---:|---:|
+| Хотя бы одна прошлая карта | 63 070 (69.78%) | 66 070 (73.10%) |
+| Не меньше 10 прошлых карт | 22 189 (24.55%) | 24 249 (26.83%) |
+| Медиана числа прошлых карт | 2 | 3 |
+
+Причинно предшествующий положительный hero XP найден для 57 402 slots (63.51%).
+Это доступность прошлого поля, не текущий XP и не процент угаданных карт.
+
+Пользователь явно разрешил временное исключение из load-average ограничения:
+одна задача, максимум два потока. Каждый campaign сохранил отдельный snapshot
+ресурсов; общая `.orchestra/resources.json` после launch возвращена к исходному
+содержимому. Recovery и два fixed ablations составляют один разрешённый эксперимент.
+
+Первый recovery preflight выявил изменение трёх служебных metadata JSON;
+actual match-file hashes совпали. `metadata_input_refresh.json` сохраняет замену
+их SHA, `recovery_campaign.v2.json` — исправленный manifest. Старые файлы сохранены.
+Для ablations проверен diff harness с исходным E308 snapshot: добавлены другие
+неиспользуемые рецепты и schema guards, параметры двух выбранных LGBM-рецептов,
+folds, веса и пороги не изменены (`training_harness_review.diff/.json`).
+
+Оба fixed ablations завершены в `run-58c329ed5d4b3f561815df97` с exit 0,
+snapshot post-check и SHA всех выходов проверены. На каждом из 9 018 матчей
+MID, label, series и K24 probability **совпадают** с сохранёнными E308 predictions.
+Выборка меньше coverage-аудита из-за embargo окончания у границ folds.
+
+| Рецепт | До, WR | После, WR | Прибавка к тому же рецепту | 95% CI прибавки |
+|---|---:|---:|---:|---:|
+| `lgb31_all` | 64.11% (5781) | 64.45% (5812) | +0.344 п.п. | [−0.274; +1.008] |
+| `lgb31_recent` | 64.01% (5772) | 63.58% (5734) | −0.421 п.п. | [−1.055; +0.221] |
+
+K24 на этих же картах: **61.23% (5522/9018)**. После восстановления:
+
+| Рецепт | Разница WR с K24 | 95% CI | Расхождения: ML / K24 | Log loss ML / K24 |
+|---|---:|---:|---:|---:|
+| `lgb31_all` | +3.216 п.п. | [2.201; 4.269] | 1283 / 993 | 0.626703 / 0.644304 |
+| `lgb31_recent` | +2.351 п.п. | [1.294; 3.441] | 1330 / 1118 | 0.633166 / 0.644304 |
+
+На расхождениях новой и прежней **той же** модели: all 446:415,
+recent 418:456. Log-loss improvement против прежней модели: all +0.000902
+(CI [−0.001495; +0.003306]), recent −0.001210
+(CI [−0.004039; +0.001711]). Bootstrap: 4 000 выборок целых серий,
+7 629 clusters; missing series использует отдельный MID. Это условные интервалы
+на уже использовавшейся selection-выборке, не поправка на весь прошлый поиск.
+
+**Вывод:** восстановление увеличило доступность истории, но существенной
+добавочной точности не доказало. Порог сильного результата +5 п.п. к K24 не
+пройден даже здесь. Лучший прежний ensemble E308 на selection имел 64.69%,
+поэтому 64.45% также не является новым лучшим результатом всего поиска.
+Независимое превосходство над Elo **не установлено**; уже открытый terminal
+E308 повторно не проверялся и его отрицательный итог сохраняется.
+
+Возраст не добавлен: в используемом наборе нет проверенных дат рождения.
+Эксперимент проверяет конкретное расширение pro-истории, а не доказывает,
+что все возможные персональные признаки исчерпаны. Производственная модель,
+пороги, сервисы не менялись. Новые full-refit/serving weights не публиковались.
+
+Первичный сравнительный отчёт: `ablation_comparison.json` в artifact root.
+Харнессы full-prefix verification и paired comparison:
+`runtime/experiments/elo/general_ml_pro_history_20260921/verify_recovery.py`,
+`compare_ablations.py`.
 
 Команды воспроизведения:
 
@@ -106,6 +171,9 @@ raw JSON, сохранение compact candidate binary, deterministic MID dedup
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_prematch_pro_player_history.py base/tests/test_prematch_causal_dataset.py base/tests/test_prematch_winner_research.py -q
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/elo/general_ml_pro_history_20260921/recovery_campaign.v2.json
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/elo/general_ml_pro_history_20260921/recovery_campaign.v2.json --background
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/elo/general_ml_pro_history_20260921/ablation_campaign.v2.json
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/elo/general_ml_pro_history_20260921/ablation_campaign.v2.json --background
+PYTHONPATH=. /Users/alex/Documents/ingame/venv_catboost/bin/python3 runtime/experiments/elo/general_ml_pro_history_20260921/compare_ablations.py run-58c329ed5d4b3f561815df97
 ```
 
 Проверка публикации данных в исторический момент отсутствует: source end
