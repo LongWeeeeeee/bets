@@ -2020,3 +2020,17 @@ weights_C_*.npz, predictions.npz and summary.json with paired series intervals.
 Audits zero historical metadata coverage by observation time; overlapping history
 requires a separately aligned export. This is offline sensitivity analysis on
 an already studied test, with no model selection, production admission or activation.
+
+### Causal prematch winner research inputs
+
+`base/tools/prematch_causal_dataset.py` builds end-time causal winner features.
+Rich `wins` must be a one-dimensional binary array; invalid labels fail before
+history replay. Shared rich/ELO MIDs must have equal start/end, outcome and side
+rosters. `base/tools/prematch_pro_player_history.py` adds account/hero history
+without requiring known positions. Same-MID raw duplicates with conflicting
+start/end/winner or account/hero/side identity fail even outside the query cohort.
+Player slot permutations are equivalent; XP-only differences retain deterministic
+first-record selection and are counted. No publication-time claim follows from
+that rule. See `docs/experiments/prematch-winner-audit-20260921.md` for measured
+impact, missing source families and reproduction commands. Both CLIs are offline;
+these guards do not change production models or activate their candidates.
