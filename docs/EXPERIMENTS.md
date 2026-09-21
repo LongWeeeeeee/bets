@@ -7,11 +7,13 @@ Winner ML: [проверка E-308/E-309](experiments/prematch-winner-audit-2026
 OpenDota/player-performance данные и ограничения public corpus перечислены;
 нового обучения и доказательства сильного lift нет.
 
-Килы: [E-310 — OpenDota и опыт игрока/героя/позиции](experiments/E-310-kills-opendota-retrain.md),
-21.09.2026. Обучены 30 вариантов шести целей на 16523 complete-картах.
-Опыт игрока/героя/позиции улучшил LL 5–15 и стороны ≥30 с отрицательным
-95% day-bootstrap CI; три цели неопределённы, 20–30 хуже. Новые timelines
-не дали общего выигрыша. Сравнение с новым pro-only baseline, не production.
+Килы: [E-310 — исправленный прогон и аудит](experiments/E-310-kills-audit.md),
+21.09.2026. Исправлены незавершённые исторические окна и несогласованность
+вероятностей сторон; повторно обучены 30 вариантов. Все шесть selection-выборов —
+experience; LL улучшен у 5–15/side≥30, 10–20 погранично, остальные CI включают 0.
+14 tests passed; 102 hashes и 30 model/calibrator replay проверены. Rich missingness,
+неиспользованные 13 pstats и условность окон на отсутствии ничьей явно описаны.
+Новый pro-only baseline, retrospective evaluation; production не менялся.
 
 История pro-игроков: [E-309 — восстановление без требования всех позиций](experiments/E-309-pro-player-history-recovery.md),
 21.09.2026. Восстановлено pro-only history из 1.708 млн карт; 132 новых признака,

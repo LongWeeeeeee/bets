@@ -8,7 +8,8 @@ import pytest
 
 from base.tools.kills_opendota_research import (
     BOUNDARIES, TARGETS, History, atomic_json, atomic_npz, fixed_splits,
-    _metric, build_dataset, epoch, lead_labels, train_target,
+    _metric, _raw_prediction_for_target, _timeline_values, _db_maps,
+    build_dataset, epoch, lead_labels, train_target,
 )
 
 
@@ -138,6 +139,36 @@ def test_build_dataset_flattens_db_history_and_enriches_matching_rich_rows(tmp_p
     # Map 2 sees flat players from completed map 1; a nested DB event would
     # TypeError before producing this finite causal timeline feature.
     assert np.isfinite(output["X_timeline"][1, 0, 0])
+    # The source ended at 16:40. Collector counters after that point must not
+    # become complete 10--20, 15--25 or 20--30 historical observations.
+    assert np.isnan(output["X_timeline"][1, 0, 5:20]).all()
+    assert (output["X_timeline"][1, 0, 25:40] == 0).all()
+    records, _ = _db_maps(db)
+    assert np.isfinite(records[0]["team_hero_windows"][:, 0]).all()
+    assert np.isnan(records[0]["team_hero_windows"][:, 1:]).all()
+
+
+def test_source_window_exact_end_is_observed_but_one_second_short_is_not():
+    row = {f"{metric}_{boundary}": boundary for metric in ("deaths", "gold", "xp", "lh", "dn") for boundary in BOUNDARIES}
+    assert np.isnan(_timeline_values(row, 899)[:5]).all()
+    assert (_timeline_values(row, 900)[:5] == 600).all()
+
+
+def test_window_orientation_aggregation_differs_from_total_and_independent_side():
+    class Model:
+        def predict_proba(self, frame):
+            p = np.array([.8, .6, .3, .2])
+            return np.column_stack([1-p, p])
+    data = {"X_baseline": np.zeros((2, 2, 20)), "y": np.zeros((2, len(TARGETS), 2))}
+    data["y"][:, 0, :] = [[1, 0], [0, 1]]
+    maps, sides = np.array([0, 0, 1, 1]), np.array([0, 1, 0, 1])
+    lead, unique, labels = _raw_prediction_for_target(Model(), data, "baseline", "lead_5_15", maps, sides)
+    assert lead == pytest.approx([.6, .55])
+    assert unique.tolist() == [0, 1] and labels.tolist() == [1, 0]
+    total, _, _ = _raw_prediction_for_target(Model(), data, "baseline", "total55", maps, sides)
+    assert total == pytest.approx([.7, .25])
+    side, _, _ = _raw_prediction_for_target(Model(), data, "baseline", "side30", maps, sides)
+    assert side == pytest.approx([.8, .6, .3, .2])
 
 
 def test_build_rejects_duplicate_rich_mid_even_when_it_overlaps_db(tmp_path):
@@ -161,7 +192,8 @@ def test_build_rejects_duplicate_rich_mid_even_when_it_overlaps_db(tmp_path):
         build_dataset(db, rich, tmp_path / "built")
 
 
-def test_saved_model_replay_smoke(tmp_path):
+@pytest.mark.parametrize("target", ["side30", "total55", "lead_5_15"])
+def test_saved_model_replay_smoke(tmp_path, target):
     # Five fixed date buckets, two maps each, with both side labels.  This is a
     # reusable artifact contract test, not a claim about corpus quality.
     starts = np.array([1780310400, 1780396800, 1785712000, 1785798400, 1786490000, 1786576400, 1787440400, 1787526800, 1788390800, 1788477200], dtype=np.int64)
@@ -173,14 +205,22 @@ def test_saved_model_replay_smoke(tmp_path):
     y = np.zeros((n, len(TARGETS), 2), dtype=np.float32)
     for row in range(n):
         y[row, :, 0] = row % 2; y[row, :, 1] = 1 - (row % 2)
+    y[:, TARGETS.index("total55"), 1] = y[:, TARGETS.index("total55"), 0]
     dataset = tmp_path / "dataset.npz"; meta = tmp_path / "metadata.json"
     atomic_npz(dataset, X_baseline=base, X_timeline=np.zeros((n, 2, 4), dtype=np.float32),
                X_experience=np.zeros((n, 2, 4), dtype=np.float32), X_dpxp=np.zeros((n, 2, 2), dtype=np.float32),
                y=y, mids=np.arange(n), starts=starts, ends=starts + 60, series_ids=np.zeros(n),
                split=np.repeat(np.arange(5, dtype=np.int8), 2))
     atomic_json(meta, {"schema": "test", "source_hashes": {"db": "x"}, "features": {"baseline": [], "timeline": [], "experience": [], "dpxp": []}})
-    report = train_target(dataset, meta, "side30", tmp_path / "trained", threads=1)
-    assert report["target"] == "side30"
+    report = train_target(dataset, meta, target, tmp_path / "trained", threads=1)
+    assert report["target"] == target
+    predictions = np.load(tmp_path / "trained" / "predictions.npz")
+    assert len(predictions["y"]) == (4 if target == "side30" else 2)
+    assert predictions["sides"].tolist() == ([0, 1, 0, 1] if target == "side30" else [-1, -1] if target == "total55" else [0, 0])
+    schema = json.loads((tmp_path / "trained" / "schema.json").read_text())
+    assert "total55_rule" not in schema
+    if target.startswith("lead_"):
+        assert "no tie" in schema["orientation_rule"]
     assert (tmp_path / "trained" / "model.cbm").exists()
     assert (tmp_path / "trained" / "predictions.npz").exists()
     assert {path.stem for path in (tmp_path / "trained" / "candidates").glob("*.cbm")} == {"baseline", "timelines", "experience", "combined", "combined_dpxp"}

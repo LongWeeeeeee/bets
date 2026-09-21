@@ -298,6 +298,18 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 Тесты: `base/tests/test_kills_window_policy.py`.
 
+**Offline kills research E-310** — `base/tools/kills_opendota_research.py`
+(`build` / `train`), не подключён к dispatch. Артефакты
+`kills-opendota-research-v2` содержат target-specific `orientation_rule`:
+для окон калибруется `(raw_R+1-raw_D)/2`, сохраняется одна Radiant-строка
+(`sides=0`) с `P(R lead | no tie)`, Dire = `1-p`; для `side30` стороны
+независимы; для `total55` raw-ориентации усредняются до calibration,
+одна строка карты (`sides=-1`). Ничьи окон исключены, поэтому это не оценка
+описанной выше betting-policy. Исторические окна требуют
+`source.duration >= window.end`, а источник — `source.end < query.start`.
+Проверка ошибок, покрытия признаков и повторное обучение:
+[`E-310-kills-audit.md`](experiments/E-310-kills-audit.md).
+
 **Schedule / quiet hours** — см. `docs/SCHEDULING.md`.
 
 **Stats backend / sharding**

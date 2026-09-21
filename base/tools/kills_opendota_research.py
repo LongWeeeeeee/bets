@@ -246,12 +246,12 @@ class History:
         return tuple(np.asarray(x, dtype=float) for x in (pro_sides, timeline_sides, exp_sides, dpxp_sides))
 
 
-def _timeline_values(row: sqlite3.Row) -> np.ndarray:
+def _timeline_values(row: sqlite3.Row, duration: int) -> np.ndarray:
     values = []
     for start, end in WINDOWS:
         for metric in TIMELINE_METRICS:
             left, right = row[f"{metric}_{start}"], row[f"{metric}_{end}"]
-            values.append(np.nan if left is None or right is None else float(right) - float(left))
+            values.append(np.nan if duration < end or left is None or right is None else float(right) - float(left))
     return np.asarray(values, dtype=float)
 
 
@@ -286,7 +286,7 @@ def _db_maps(db_path: Path) -> tuple[list[dict], dict]:
         for side in by_side:
             final_kills.append(sum(float(row["kills"]) for row in side) if all(row["kills"] is not None for row in side) else np.nan)
             record_players.append([{"account": row["account_id"] or 0, "hero": row["hero_id"] or 0,
-                                    "timeline": _timeline_values(row),
+                                    "timeline": _timeline_values(row, int(match["duration"])),
                                     "pro": [row[name] for name in PRO_METRICS], "role": None, "dpxp": None}
                                    for row in side])
         for side_index, side in enumerate(by_side):
@@ -300,7 +300,7 @@ def _db_maps(db_path: Path) -> tuple[list[dict], dict]:
         for side_index in (0, 1):
             for window_index, (start, end) in enumerate(WINDOWS):
                 a, b = BOUNDARIES.index(start), BOUNDARIES.index(end)
-                if np.isfinite(hero_kills[side_index, (a, b)]).all():
+                if match["duration"] >= end and np.isfinite(hero_kills[side_index, (a, b)]).all():
                     team_hero_windows[side_index, window_index] = hero_kills[side_index, b] - hero_kills[side_index, a]
         score_total = (match["final_radiant_score"] or 0) + (match["final_dire_score"] or 0)
         final_total = float(np.nansum(final_kills)) if np.isfinite(final_kills).all() else np.nan
@@ -441,7 +441,9 @@ def build_dataset(db_path: Path, rich_path: Path, output_dir: Path) -> dict:
                X_experience=np.asarray(experience, dtype=np.float32).reshape(-1, 2, len(exp_names)),
                X_dpxp=np.asarray(dpxp, dtype=np.float32).reshape(-1, 2, 2), y=np.asarray(labels, dtype=np.float32),
                mids=np.asarray(mids), starts=np.asarray(starts), ends=np.asarray(ends), series_ids=np.asarray(sids), split=split)
-    metadata = {"schema": "kills-opendota-research-v1", "baseline_kind": "new_pro_only_not_production_E281",
+    metadata = {"schema": "kills-opendota-research-v2", "baseline_kind": "new_pro_only_not_production_E281",
+                "history_window_policy": "all window statistics require source.duration >= window.end; otherwise missing, no support increment",
+                "dpxp_policy": "exploratory only: rich producer conflates absent/null with zero; historical observation time unverified",
                 "targets": list(TARGETS), "arms": list(ARMS),
                 "primary_selection_arms": list(PRIMARY_ARMS), "split_dates": list(DATE_SPLITS),
                 "features": {"baseline": base_names, "timeline": timeline_names, "experience": exp_names, "dpxp": list(dpxp_names)},
@@ -519,16 +521,23 @@ def _matrix(data, arm: str, maps, sides):
     return frame
 
 
-def _prediction_for_target(model, calibrator, data, arm: str, target: str, maps, sides):
-    """Calibrate after averaging the two orientations for the symmetric total."""
-    raw = model.predict_proba(_matrix(data, arm, maps, sides))[:, 1]
-    if target != "total55":
-        return _cal_predict(calibrator, raw), maps, data["y"][maps, TARGETS.index(target), sides].astype(np.int8)
+def _raw_prediction_for_target(model, data, arm: str, target: str, maps, sides):
+    """Use one Radiant truth per lead map, or one side-invariant total truth."""
+    if target == "side30":
+        raw = model.predict_proba(_matrix(data, arm, maps, sides))[:, 1]
+        return raw, maps, data["y"][maps, TARGETS.index(target), sides].astype(np.int8)
     unique = np.unique(maps)
     both_maps = np.repeat(unique, 2)
     both_sides = np.tile(np.arange(2, dtype=np.int8), len(unique))
-    raw = model.predict_proba(_matrix(data, arm, both_maps, both_sides))[:, 1].reshape(-1, 2).mean(axis=1)
-    return _cal_predict(calibrator, raw), unique, data["y"][unique, TARGETS.index(target), 0].astype(np.int8)
+    raw = model.predict_proba(_matrix(data, arm, both_maps, both_sides))[:, 1].reshape(-1, 2)
+    probability = raw.mean(axis=1) if target == "total55" else (raw[:, 0] + 1 - raw[:, 1]) / 2
+    return probability, unique, data["y"][unique, TARGETS.index(target), 0].astype(np.int8)
+
+
+def _prediction_for_target(model, calibrator, data, arm: str, target: str, maps, sides):
+    raw, result_maps, labels = _raw_prediction_for_target(model, data, arm, target, maps, sides)
+    # Window output is P(R lead | no tie). P(D lead | no tie) is exactly 1-p.
+    return _cal_predict(calibrator, raw), result_maps, labels
 
 
 def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Path, threads: int) -> dict:
@@ -552,15 +561,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
             allow_writing_files=False, early_stopping_rounds=40)
         model.fit(X_train, train_y, cat_features=list(range(10)), eval_set=(X_stop, stop_y))
         cal_m, cal_s, _ = rows[2]
-        # Total55 is one map truth: average its two draft orientations before
-        # fitting/calibrating/evaluating it.
-        raw_cal = model.predict_proba(_matrix(data, arm, cal_m, cal_s))[:, 1]
-        if target == "total55":
-            unique_cal = np.unique(cal_m)
-            raw_cal = model.predict_proba(_matrix(data, arm, np.repeat(unique_cal, 2), np.tile(np.arange(2), len(unique_cal))))[:, 1].reshape(-1, 2).mean(1)
-            cal_y = data["y"][unique_cal, TARGETS.index(target), 0].astype(np.int8)
-        else:
-            cal_y = data["y"][cal_m, TARGETS.index(target), cal_s].astype(np.int8)
+        raw_cal, _, cal_y = _raw_prediction_for_target(model, data, arm, target, cal_m, cal_s)
         cal = _cal_fit(raw_cal, cal_y)
         sel_m, sel_s, _ = rows[3]
         select_prob, _, sel_y = _prediction_for_target(model, cal, data, arm, target, sel_m, sel_s)
@@ -577,13 +578,18 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
     metrics = {"target": target, "chosen": chosen, "selection": selection,
                "terminal": {arm: _metric(terminal_y, pred) for arm, pred in predictions.items()},
                "chosen_minus_baseline": _day_delta(terminal_y, predictions[chosen], predictions["baseline"], data["starts"][terminal_maps] // 86400),
-               "partitions": {str(part): int(len(rows[part][2])) for part in range(5)}}
+               "partitions": {str(part): int(len(rows[part][2])) for part in range(5)},
+               "partition_unit": "oriented training rows; window/total calibration and evaluation use one row per map"}
     feature_names = list(metadata["features"]["baseline"])
     if chosen in ("timelines", "combined", "combined_dpxp"): feature_names += list(metadata["features"]["timeline"])
     if chosen in ("experience", "combined", "combined_dpxp"): feature_names += list(metadata["features"]["experience"])
     if chosen == "combined_dpxp": feature_names += list(metadata["features"]["dpxp"])
     schema = {"schema": metadata["schema"], "target": target, "chosen_arm": chosen,
-              "feature_names": feature_names, "cat_features": list(range(10)), "total55_rule": "average orientations at consumer evaluation"}
+              "feature_names": feature_names, "cat_features": list(range(10)),
+              "orientation_rule": ("calibrate mean(raw_R,raw_D); one total probability per map" if target == "total55" else
+                                   "calibrate each side independently" if target == "side30" else
+                                   "calibrate (raw_R+1-raw_D)/2 as P(R lead | no tie); P(D lead | no tie)=1-P(R lead | no tie)"),
+              "dpxp_policy": metadata.get("dpxp_policy")}
     def save_candidate(model, cal, model_path: Path, calibration_path: Path) -> None:
         model_tmp = model_path.with_name(model_path.name + ".tmp")
         model.save_model(str(model_tmp)); os.replace(model_tmp, model_path)
@@ -598,7 +604,8 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
     save_candidate(models[chosen], calibration[chosen], output_dir / "model.cbm", output_dir / "calibration.joblib")
     atomic_json(output_dir / "schema.json", schema)
     atomic_json(output_dir / "metrics.json", metrics)
-    saved_sides = terminal_s if target != "total55" else np.full(len(terminal_maps), -1, dtype=np.int8)
+    saved_sides = (terminal_s if target == "side30" else
+                   np.full(len(terminal_maps), -1 if target == "total55" else 0, dtype=np.int8))
     atomic_npz(output_dir / "predictions.npz", mids=data["mids"][terminal_maps], sides=saved_sides, y=terminal_y,
                **{arm: prediction for arm, prediction in predictions.items()})
     for arm in ARMS:
