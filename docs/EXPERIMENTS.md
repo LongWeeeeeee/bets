@@ -1,5 +1,11 @@
 # Журнал экспериментов
 
+Winner performance: [E-311 — causal lane/player ablation](experiments/E-311-winner-player-performance.md),
+21.09.2026. 320 новых causal признаков, три fixed ablation, 56 tests passed.
+Лучший performance-only: 5844/9018 = 64.80% против Elo 61.23%; к прежнему
+лучшему ML только +0.11 п.п., CI включает 0. Линии отдельно ухудшили WR.
+Критерий сильного прироста не пройден; это повторная selection, не новый terminal.
+
 Winner ML: [проверка E-308/E-309](experiments/prematch-winner-audit-20260921.md),
 21.09.2026. Независимый пересчёт подтвердил метрики, 11631 K24-прогноз и
 выборку 9900 history values. Исправлены три fail-closed проверки входов;

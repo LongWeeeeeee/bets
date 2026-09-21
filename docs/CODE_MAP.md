@@ -2046,3 +2046,23 @@ first-record selection and are counted. No publication-time claim follows from
 that rule. See `docs/experiments/prematch-winner-audit-20260921.md` for measured
 impact, missing source families and reproduction commands. Both CLIs are offline;
 these guards do not change production models or activate their candidates.
+
+`base/tools/prematch_player_performance.py --mode build --dataset E309.npz
+--raw-dir RAW_PRO --database timeline.sqlite3 --output-dir NEW_DIR` adds two
+separate projections, `performance.npz` and `lane.npz` (each 160 columns; MID/ts
+aligned). Rebuilds canonical raw indices within the immutable input snapshot;
+never reuses file ordinals after new raw files arrive. Performance preserves raw
+null/zero distinction and includes XPM, duration-normalized totals and final level;
+lane means gold_t/xp_t/lh_t/dn_t at 300/600 seconds from previous completed maps.
+It verifies OpenDota account/hero/side/time/outcome against the query reference.
+History uses the last 20 maps with `end < query start`, metric-specific valid
+counts, causal query roles, and a shrunk player-hero deviation. Gold_t is total
+gold earned, not net worth. API publication time remains unverified.
+
+`--mode experiment --dataset E309.npz --features BUILD_DIR --family performance
+[--family lane] --draft CAUSAL_DRAFT.npz --output-dir NEW_DIR --threads N` uses the
+fixed lgb31_all recipe on reused June/early-July folds. It saves validation.npz,
+evaluation_models.joblib and metrics.json, reloads the models and requires exact
+prediction parity. Fresh output directories preserve failed-run evidence. The
+CLI is offline research only, does not select on the opened August–September
+terminal, and never changes production models. Protocol/results: E-311.
