@@ -182,6 +182,20 @@ def _canonicalize(candidate_path: Path, counters: dict[str, int]) -> np.ndarray:
     for begin, stop in zip(starts, stops):
         if stop - begin > 1:
             canonical = sorted_records[begin]
+            # A non-query map still updates later player histories. Never let
+            # file order decide its outcome, completion time or player identity.
+            # XP-only differences retain the existing deterministic policy:
+            # a filled snapshot is not proof it was available earlier.
+            for value in sorted_records[begin + 1:stop]:
+                conflicts = [name for name in ("start", "end", "won")
+                             if canonical[name].tobytes() != value[name].tobytes()]
+                identities = [sorted((int(a), int(h), int(s)) for a, h, s in
+                                     zip(row["accounts"], row["heroes"], row["sides"]) if a > 0)
+                              for row in (canonical, value)]
+                if identities[0] != identities[1]:
+                    conflicts.append("account/hero/side")
+                if conflicts:
+                    raise ValueError(f"conflicting raw history mid={int(canonical['mid'])}: {', '.join(conflicts)}")
             counters["conflicting_duplicates"] += sum(
                 _records_differ(canonical, value) for value in sorted_records[begin + 1:stop])
     canonical = sorted_records[first]

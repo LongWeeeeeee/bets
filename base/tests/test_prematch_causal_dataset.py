@@ -99,6 +99,24 @@ def test_shared_elo_event_rejects_side_orientation_mismatch():
         build_from_arrays(rows, elo_events=events)
 
 
+@pytest.mark.parametrize("winner", [np.nan, np.inf, -1, 0.5, 2])
+def test_invalid_rich_winner_cannot_become_a_dire_result(winner):
+    rows = _rows([10], [10], [1])
+    rows["wins"] = np.array([winner])
+    with pytest.raises(ValueError, match="binary labels"):
+        build_from_arrays(rows)
+
+
+def test_shared_elo_event_rejects_premature_completion():
+    rows = _rows([10, 50], [100, 10], [1, 0])
+    rows["accounts"][1] = rows["accounts"][0]
+    events = {"mid": np.array([1]), "ts": np.array([10]), "end": np.array([20]),
+              "accounts": rows["accounts"][:1], "y": np.array([1], dtype=np.int8)}
+    # Admitting end=20 would let map 2 see map 1's outcome before its real end=110.
+    with pytest.raises(ValueError, match="end-time mismatch"):
+        build_from_arrays(rows, elo_events=events)
+
+
 def test_opponent_quality_uses_the_other_side_rating_at_each_historical_start():
     rows = _rows([10, 30, 50], [10, 10, 10], [1, 1, 0])
     rows["accounts"][:] = rows["accounts"][0]

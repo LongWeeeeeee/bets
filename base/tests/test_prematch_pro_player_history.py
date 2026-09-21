@@ -117,6 +117,46 @@ def test_empty_roster_cannot_win_canonical_dedup_over_a_valid_duplicate(tmp_path
     assert _feature(augmented, "pro_history_games_log1p_R1") == pytest.approx(math.log(2.0))
 
 
+@pytest.mark.parametrize("changed", ["outcome", "end", "account", "hero", "side"])
+def test_material_duplicate_outside_query_cohort_is_rejected(tmp_path, changed):
+    original = _raw(1, 100, 20, True, [_player()])
+    conflict = _raw(1, 100, 20, True, [_player()])
+    if changed == "outcome":
+        conflict["didRadiantWin"] = False
+    elif changed == "end":
+        conflict["durationSeconds"] = 30
+    elif changed == "account":
+        conflict["players"][0]["steamAccount"]["id"] = 2
+    elif changed == "hero":
+        conflict["players"][0]["heroId"] = 8
+    else:
+        conflict["players"][0]["isRadiant"] = False
+    with pytest.raises(ValueError, match="conflicting raw history.*mid=1"):
+        _run(tmp_path, [{"mid": 2, "ts": 200, "end": 250}],
+             {"a.json": {"one": original}, "b.json": {"copy": conflict}})
+
+
+def test_xp_only_duplicate_keeps_existing_canonical_policy(tmp_path):
+    _, metadata, augmented, _ = _run(
+        tmp_path, [{"mid": 2, "ts": 200, "end": 250}],
+        {"a.json": {"one": _raw(1, 100, 20, True, [_player(xp=0)])},
+         "b.json": {"copy": _raw(1, 100, 20, True, [_player(xp=100)])}},
+    )
+    assert metadata["counters"]["conflicting_duplicates"] == 1
+    assert _feature(augmented, "pro_history_hero_xp_known_R1") == 0
+
+
+def test_reordered_duplicate_player_slots_preserve_same_history(tmp_path):
+    players = [_player(), _player(99, 19, False)]
+    _, metadata, augmented, _ = _run(
+        tmp_path, [{"mid": 2, "ts": 200, "end": 250}],
+        {"a.json": {"one": _raw(1, 100, 20, True, players)},
+         "b.json": {"copy": _raw(1, 100, 20, True, list(reversed(players)))}},
+    )
+    assert metadata["counters"]["duplicate_records"] == 1
+    assert _feature(augmented, "pro_history_games_log1p_R1") == pytest.approx(math.log(2))
+
+
 def test_ambiguous_overlap_including_corrupt_own_timestamp_fails(tmp_path):
     raw_dir, out, dataset = tmp_path / "raw", tmp_path / "out", tmp_path / "dataset.npz"
     raw_dir.mkdir()

@@ -119,6 +119,9 @@ def _validate_rows(rows: Mapping[str, np.ndarray]) -> tuple[np.ndarray, np.ndarr
     if (np.asarray(rows["teams"]).shape != (n, 2) or np.asarray(rows["heroes"]).shape != (n, 10)
             or np.asarray(rows["accounts"]).shape != (n, 10)):
         raise ValueError("teams/heroes/accounts source shapes are invalid")
+    wins = np.asarray(rows["wins"])
+    if wins.shape != (n,) or not np.isin(wins, (0, 1)).all():
+        raise ValueError("rich source requires binary labels, one per map")
     accounts = np.asarray(rows["accounts"], dtype=np.int64)
     durations = np.asarray(rows["durations"], dtype=np.int64)
     mids, starts = np.asarray(rows["mids"], dtype=np.int64), np.asarray(rows["ts"], dtype=np.int64)
@@ -185,6 +188,9 @@ def build_from_arrays(rows: Mapping[str, np.ndarray], *, emit_from: int | None =
     valid_rows = np.flatnonzero(valid)
     shared_mid, rich_shared, elo_shared = np.intersect1d(mids[valid], elo_mid, return_indices=True)
     shared_rows = valid_rows[rich_shared]
+    end_mismatches = int(np.count_nonzero(ends[shared_rows] != elo_end[elo_shared]))
+    if end_mismatches:
+        raise ValueError(f"rich/ELO shared-map end-time mismatch: {end_mismatches} of {len(shared_mid)}")
     orientation_match = (
         (starts[shared_rows] == elo_ts[elo_shared])
         & ((np.asarray(wins[shared_rows]) > 0.5) == (elo_y[elo_shared] > 0.5))
