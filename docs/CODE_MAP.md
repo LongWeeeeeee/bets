@@ -2072,3 +2072,19 @@ evaluation_models.joblib and metrics.json, reloads the models and requires exact
 prediction parity. Fresh output directories preserve failed-run evidence. The
 CLI is offline research only, does not select on the opened August–September
 terminal, and never changes production models. Protocol/results: E-311.
+
+`base/tools/prematch_player_context.py --mode build --dataset E309.npz
+--source E311_performance_source.bin --output-dir NEW_DIR --threads N` creates
+individual.npz (80 columns), context.npz (190), context_observations.npz and
+metrics.json. Individual restores per-role hero residuals. Context uses historical
+matched-role log-stat differences, strictly prior hero/role/patch baselines,
+win-minus-pregame-K24, last20/last5 histories and observation counts. Source joins
+verify MID/account/hero/end; role slots remain causal estimates, not actual lane
+opponents. Patch buckets use dota_patch_calendar announcement/legacy boundaries.
+
+`--mode experiment --dataset E309.npz --performance E311_performance.npz
+--features BUILD_DIR --arm individual|context --draft FROZEN_DRAFT.npz
+--output-dir NEW_DIR --threads N` adds 80 or 270 numeric columns to E311, retaining
+categorical hero/league fields at the end. It uses the frozen lgb31_all recipe,
+the same reused June/early-July evaluation and exact saved-model replay checks.
+CLI is offline only; no production integration. Protocol/status: E-313.
