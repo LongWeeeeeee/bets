@@ -315,6 +315,13 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 Прежняя давность последней игры остаётся в X_experience. Новые варианты
 `recent_experience` и `combined_recent` добавляют этот блок к прежним;
 DotaPlus XP исключён из новых fits как зависящий от подписки показатель.
+E-314 — `base/tools/kills_signature_research.py build|train` дополняет датасет
+E-312: causal player-hero WR all/90d с counts и smoothing, 390 индивидуальных
+признаков в том же порядке hero ID, 750 индивидуальных OpenDota performance.
+Rich `wins` — исход карты; `winrates` и nullable-conflated `pstats` не используются.
+`train_target(..., arms=..., comparisons=...)` допускает фиксированные новые
+варианты, обычный вызов сохраняет E-312. Inference явно ограничен одним потоком.
+См. [E-314](experiments/E-314-kills-signature-heroes.md).
 
 **Schedule / quiet hours** — см. `docs/SCHEDULING.md`.
 

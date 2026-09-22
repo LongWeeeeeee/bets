@@ -566,12 +566,12 @@ def _matrix(data, arm: str, maps, sides):
 def _raw_prediction_for_target(model, data, arm: str, target: str, maps, sides):
     """Use one Radiant truth per lead map, or one side-invariant total truth."""
     if target == "side30":
-        raw = model.predict_proba(_matrix(data, arm, maps, sides))[:, 1]
+        raw = model.predict_proba(_matrix(data, arm, maps, sides), thread_count=1)[:, 1]
         return raw, maps, data["y"][maps, TARGETS.index(target), sides].astype(np.int8)
     unique = np.unique(maps)
     both_maps = np.repeat(unique, 2)
     both_sides = np.tile(np.arange(2, dtype=np.int8), len(unique))
-    raw = model.predict_proba(_matrix(data, arm, both_maps, both_sides))[:, 1].reshape(-1, 2)
+    raw = model.predict_proba(_matrix(data, arm, both_maps, both_sides), thread_count=1)[:, 1].reshape(-1, 2)
     probability = raw.mean(axis=1) if target == "total55" else (raw[:, 0] + 1 - raw[:, 1]) / 2
     return probability, unique, data["y"][unique, TARGETS.index(target), 0].astype(np.int8)
 
@@ -582,9 +582,17 @@ def _prediction_for_target(model, calibrator, data, arm: str, target: str, maps,
     return _cal_predict(calibrator, raw), result_maps, labels
 
 
-def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Path, threads: int) -> dict:
+def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Path, threads: int,
+                 arms: tuple[str, ...] = ARMS, comparisons: tuple[tuple[str, str, str], ...] | None = None) -> dict:
     if target not in TARGETS:
         raise ValueError(f"unknown target {target}")
+    if "baseline" not in arms or len(set(arms)) != len(arms) or any(arm not in ARM_BLOCKS for arm in arms):
+        raise ValueError("invalid training arms")
+    if comparisons is None:
+        comparisons = (("recent_minus_experience", "recent_experience", "experience"),
+                       ("combined_recent_minus_combined", "combined_recent", "combined"))
+    if any(candidate not in arms or reference not in arms for _, candidate, reference in comparisons):
+        raise ValueError("comparison references an omitted arm")
     data = np.load(dataset, allow_pickle=False)
     metadata = json.loads(metadata_path.read_text())
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -595,7 +603,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
         raise ValueError(f"target {target} has an empty fixed partition")
     began = time.monotonic()
     models, calibration, selection, predictions = {}, {}, {}, {}
-    for arm in ARMS:
+    for arm in arms:
         train_m, train_s, train_y = rows[0]; stop_m, stop_s, stop_y = rows[1]
         X_train = _matrix(data, arm, train_m, train_s); X_stop = _matrix(data, arm, stop_m, stop_s)
         model = CatBoostClassifier(iterations=400, depth=5, learning_rate=.05, l2_leaf_reg=12,
@@ -610,20 +618,20 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
         selection[arm] = {"trees": int(model.tree_count_), "selection": _metric(sel_y, select_prob)}
         models[arm], calibration[arm] = model, cal
         print(f"{target} arm={arm} trees={model.tree_count_} selection_logloss={selection[arm]['selection']['log_loss']:.6f} elapsed={time.monotonic()-began:.1f}s", flush=True)
-    chosen = min(PRIMARY_ARMS, key=lambda arm: selection[arm]["selection"]["log_loss"])
+    chosen = min(arms, key=lambda arm: selection[arm]["selection"]["log_loss"])
     # This frozen record exists before any terminal partition prediction.
-    atomic_json(output_dir / "selection.json", {"chosen": chosen, "rule": "minimum calibrated selection logloss among " + ",".join(PRIMARY_ARMS), "arms": selection})
+    atomic_json(output_dir / "selection.json", {"chosen": chosen, "rule": "minimum calibrated selection logloss among " + ",".join(arms), "arms": selection})
     terminal_m, terminal_s, _ = rows[4]
-    for arm in ARMS:
+    for arm in arms:
         predictions[arm], _, _ = _prediction_for_target(models[arm], calibration[arm], data, arm, target, terminal_m, terminal_s)
     _, terminal_maps, terminal_y = _prediction_for_target(models[chosen], calibration[chosen], data, chosen, target, terminal_m, terminal_s)
     metrics = {"target": target, "chosen": chosen, "selection": selection,
                "terminal": {arm: _metric(terminal_y, pred) for arm, pred in predictions.items()},
                "chosen_minus_baseline": _day_delta(terminal_y, predictions[chosen], predictions["baseline"], data["starts"][terminal_maps] // 86400),
-               "recent_minus_experience": _day_delta(terminal_y, predictions["recent_experience"], predictions["experience"], data["starts"][terminal_maps] // 86400),
-               "combined_recent_minus_combined": _day_delta(terminal_y, predictions["combined_recent"], predictions["combined"], data["starts"][terminal_maps] // 86400),
                "partitions": {str(part): int(len(rows[part][2])) for part in range(5)},
                "partition_unit": "oriented training rows; window/total calibration and evaluation use one row per map"}
+    for name, candidate, reference in comparisons:
+        metrics[name] = _day_delta(terminal_y, predictions[candidate], predictions[reference], data["starts"][terminal_maps] // 86400)
     feature_names = [name for block in ARM_BLOCKS[chosen] for name in metadata["features"][block]]
     schema = {"schema": metadata["schema"], "target": target, "chosen_arm": chosen,
               "feature_names": feature_names, "cat_features": list(range(10)),
@@ -638,7 +646,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
         joblib.dump(cal, calibration_tmp); os.replace(calibration_tmp, calibration_path)
 
     candidates = output_dir / "candidates"; candidates.mkdir()
-    for arm in ARMS:
+    for arm in arms:
         save_candidate(models[arm], calibration[arm], candidates / f"{arm}.cbm", candidates / f"{arm}.joblib")
     # Canonical paths are the selected artifact consumed by a later serving
     # review; candidate paths preserve all frozen terminal predictions.
@@ -649,7 +657,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
                    np.full(len(terminal_maps), -1 if target == "total55" else 0, dtype=np.int8))
     atomic_npz(output_dir / "predictions.npz", mids=data["mids"][terminal_maps], sides=saved_sides, y=terminal_y,
                **{arm: prediction for arm, prediction in predictions.items()})
-    for arm in ARMS:
+    for arm in arms:
         replay = CatBoostClassifier(); replay.load_model(str(candidates / f"{arm}.cbm"))
         replay_prediction, _, _ = _prediction_for_target(replay, joblib.load(candidates / f"{arm}.joblib"), data, arm, target, terminal_m, terminal_s)
         if not np.allclose(replay_prediction, predictions[arm], rtol=0, atol=1e-12):
@@ -657,7 +665,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
     manifest = {"dataset_sha256": sha256(dataset), "metadata_sha256": sha256(metadata_path), "target": target,
                 "model_replay_atol": 1e-12, "source_hashes": metadata["source_hashes"],
                 "artifact_sha256": {name: sha256(output_dir / name) for name in ("model.cbm", "calibration.joblib", "schema.json", "selection.json", "metrics.json", "predictions.npz")},
-                "candidate_sha256": {arm: {"model": sha256(candidates / f"{arm}.cbm"), "calibration": sha256(candidates / f"{arm}.joblib")} for arm in ARMS},
+                "candidate_sha256": {arm: {"model": sha256(candidates / f"{arm}.cbm"), "calibration": sha256(candidates / f"{arm}.joblib")} for arm in arms},
                 "code_sha256": sha256(Path(__file__))}
     atomic_json(output_dir / "manifest.json", manifest)
     return metrics

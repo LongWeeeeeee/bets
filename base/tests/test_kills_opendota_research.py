@@ -186,7 +186,8 @@ def test_source_window_exact_end_is_observed_but_one_second_short_is_not():
 
 def test_window_orientation_aggregation_differs_from_total_and_independent_side():
     class Model:
-        def predict_proba(self, frame):
+        def predict_proba(self, frame, *, thread_count):
+            assert thread_count == 1
             p = np.array([.8, .6, .3, .2])
             return np.column_stack([1-p, p])
     data = {"X_baseline": np.zeros((2, 2, 20)), "y": np.zeros((2, len(TARGETS), 2))}

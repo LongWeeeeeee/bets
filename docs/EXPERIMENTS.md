@@ -1,5 +1,16 @@
 # Журнал экспериментов
 
+Килы: [E-314 — сигнатурные герои и индивидуальная история](experiments/E-314-kills-signature-heroes.md),
+22.09.2026. 36 моделей: player-hero wins/counts/WR all/90d, отдельные игроки,
+исторические K/D/A/GPM/XPM и окна gold/xp/lh/dn/deaths. Выбор по августу:
+accuracy 5–15 60.39→61.22%, 20–30 55.56→55.90% (CI улучшений включает0);
+команда≥30 63.61→60.15%. Individual лучше aggregate для команды≥30 на4.08п.п.,
+но общего lift нет. Медиана наблюдаемой истории пары2игры,28.95% без истории.
+29 tests, oracle60900значений,114hashes,36replay,18прежних контролей неизменны.
+Харнесс `base/tools/kills_signature_research.py build|train`; точные команды,
+failed-build/fix и «где искать ошибку» в E-314. Ресурсы восстановлены,
+все варианты сохранены; retrospective, production не менялся.
+
 Winner context: [E-313 — индивидуальная и контекстная история](experiments/E-313-winner-player-context.md),
 22.09.2026. Обучены два фиксированных варианта: +80 individual, затем +190 context
 признаков. На 9018 прежних selection-картах: individual64.78%, context64.81%,
