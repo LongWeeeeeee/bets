@@ -152,6 +152,61 @@ def test_malformed_or_partial_response_raises_without_processing(fake_transport,
         asyncio.run(_collect(player_ids=[1, 2], start_date_time=1_700_000_000))
 
 
+@pytest.mark.parametrize("payload", [
+    {"data": None},  # Production traceback: pub response has no players list.
+    {"data": {"players": None}},
+    {"errors": [{"message": "temporarily unavailable"}]},
+    _response({1: [_match(55, 1_700_000_001)]}),  # Missing requested player 2.
+])
+def test_transient_invalid_pub_response_retries_same_page_without_losing_matches(monkeypatch, payload):
+    existing = set()
+
+    async def no_sleep(_seconds):
+        pass
+
+    def responder(ids, skip):
+        assert existing == set()  # Failed attempts must not publish dedup IDs.
+        if len(pool.calls) == 1:
+            return payload
+        return _response({pid: [_match(55, 1_700_000_001)] for pid in ids})
+
+    pool = _Pool(responder)
+    monkeypatch.setattr(maps_research, "get_proxy_pool", lambda: pool)
+    monkeypatch.setattr(maps_research.asyncio, "sleep", no_sleep)
+    events = asyncio.run(_collect(player_ids=[1, 2], start_date_time=1_700_000_000,
+                                  existing_match_ids=existing))
+
+    assert pool.calls == [(0, (1, 2)), (0, (1, 2))]
+    assert events[0][0] == {1, 2} and events[0][3] == set()
+    assert [match["id"] for event in events for match in event[1]] == [55]
+    assert existing == {55}
+
+
+def test_persistent_missing_players_stops_after_three_attempts_without_completion(monkeypatch):
+    async def no_sleep(_seconds):
+        pass
+
+    pool = _Pool(lambda _ids, _skip: {"data": None})
+    monkeypatch.setattr(maps_research, "get_proxy_pool", lambda: pool)
+    monkeypatch.setattr(maps_research.asyncio, "sleep", no_sleep)
+    existing = {99}
+    with pytest.raises(maps_research.PubPaginationError, match="no players list"):
+        asyncio.run(_collect(player_ids=[1], start_date_time=1_700_000_000,
+                              existing_match_ids=existing))
+    assert pool.calls == [(0, (1,))] * 3
+    assert existing == {99}
+
+
+def test_pagination_cap_is_not_retried(monkeypatch):
+    pool = _Pool(lambda ids, _skip: _response({
+        pid: [_match(n, 1_700_000_001) for n in range(100)] for pid in ids}))
+    monkeypatch.setattr(maps_research, "get_proxy_pool", lambda: pool)
+    monkeypatch.setattr(maps_research, "PUB_PAGINATION_MAX_SKIP", 0)
+    with pytest.raises(maps_research.PubPaginationCapError):
+        asyncio.run(_collect(player_ids=[1], start_date_time=1_700_000_000))
+    assert pool.calls == [(0, (1,))]
+
+
 def test_failed_second_page_does_not_complete_player_or_drop_first_page_ids(monkeypatch):
     cutoff = 1_700_000_000
     calls = []

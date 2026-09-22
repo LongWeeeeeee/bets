@@ -1471,7 +1471,9 @@ async def iter_pub_pages(player_ids, *, skip=0, batch_size=PUB_MAX_PLAYERS_PER_R
                     _fetch_pub_page, player_ids=batch, skip=current_skip, threshold=threshold,
                     player_ids_check=player_ids_check, unsafe_player_ids=unsafe_player_ids,
                     max_retries=3, sleep_time=0,
-                    non_retryable_exceptions=(PubPaginationError,), raise_last_error=True,
+                    # A transient malformed/partial response must retry the same
+                    # page before aborting. The local pagination cap cannot heal.
+                    non_retryable_exceptions=(PubPaginationCapError,), raise_last_error=True,
                 ) for batch in batches
             ], return_exceptions=True)
             contract_error = next((result for result in results
