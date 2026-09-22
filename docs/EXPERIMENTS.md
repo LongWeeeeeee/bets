@@ -1,5 +1,12 @@
 # Журнал экспериментов
 
+Килы: [E-312 — недавняя практика](experiments/E-312-kills-recent-practice.md),
+22.09.2026. DotaPlus XP исключён из новых fits; 30 признаков наблюдённых игр
+игрока/героя/позиции за 7/30/90 дней и долей. Обучены 36 вариантов, проверены
+114 hashes, 36 model replay и неизменность 24 прежних контролей. Общего lift нет:
+recent−experience помогает LL 5–15, ухудшает команда≥30; прочие CI включают 0.
+Accuracy 5–15 при этом ниже. Retrospective, production не менялся.
+
 Winner performance: [E-311 — causal lane/player ablation](experiments/E-311-winner-player-performance.md),
 21.09.2026. 320 новых causal признаков, три fixed ablation, 56 tests passed.
 Лучший performance-only: 5844/9018 = 64.80% против Elo 61.23%; к прежнему

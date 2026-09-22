@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from base.tools.kills_opendota_research import (
-    BOUNDARIES, TARGETS, History, atomic_json, atomic_npz, fixed_splits,
+    ARMS, BOUNDARIES, TARGETS, Experience, History, atomic_json, atomic_npz, fixed_splits,
     _metric, _raw_prediction_for_target, _timeline_values, _db_maps,
     build_dataset, epoch, lead_labels, train_target,
 )
@@ -67,6 +67,34 @@ def test_dpxp_uses_only_completed_player_hero_measurement():
     # A current value exists in a query-shaped row but is never passed to apply.
     _, _, _, again = history.features([[_player(1, 10, dpxp=-1)], [_player(2, 20)]], (11, 22), 20)
     assert again[0] == 123.0
+
+
+def test_recent_counts_include_lower_boundary_exclude_query_and_allow_out_of_order():
+    now = 100 * 86400
+    exp = Experience()
+    for end in (now - 1, now, now - 7 * 86400, now - 7 * 86400 - 1, now + 1):
+        exp.add(end)
+    assert exp.recent_games(now, 7) == 2
+    assert exp.recent_games(now, 30) == 3
+
+
+def test_recent_hero_practice_shares_do_not_depend_on_dota_plus():
+    now = 100 * 86400
+    histories = []
+    for xp in (0.0, 999999.0):
+        history = History()
+        for mid, days, hero in ((1, 91, 10), (2, 30, 10), (3, 7, 20), (4, 1, 10)):
+            end = now - days * 86400
+            history.apply(_event(mid, end-60, end, [_player(1, hero, role=0, dpxp=xp)]))
+        histories.append(history)
+    players = [[_player(1, 10, role=4)], [_player(99, 30)]]
+    a, b = [h.recent_features(players, now) for h in histories]
+    assert np.allclose(a, b, equal_nan=True)
+    assert a[0] == pytest.approx([2, 1, 2, .5, 1, 3, 2, 3, 2/3, 1, 3, 2, 3, 2/3, 1])
+    # No observed history is zero observed games, not a measured zero share.
+    assert a[1, :3].tolist() == [0, 0, 0]
+    assert np.isnan(a[1, [3, 4, 8, 9, 13, 14]]).all()
+    assert histories[0].features(players, (11, 22), now)[2][0, -1] == 86400
 
 
 def test_missing_timeline_values_stay_missing_not_zero():
@@ -146,6 +174,8 @@ def test_build_dataset_flattens_db_history_and_enriches_matching_rich_rows(tmp_p
     records, _ = _db_maps(db)
     assert np.isfinite(records[0]["team_hero_windows"][:, 0]).all()
     assert np.isnan(records[0]["team_hero_windows"][:, 1:]).all()
+    assert output["X_recent"].shape == (2, 2, 30)
+    assert output["X_recent"][1, 0, :5].tolist() == [1, 1, 1, 1, 1]
 
 
 def test_source_window_exact_end_is_observed_but_one_second_short_is_not():
@@ -209,9 +239,10 @@ def test_saved_model_replay_smoke(tmp_path, target):
     dataset = tmp_path / "dataset.npz"; meta = tmp_path / "metadata.json"
     atomic_npz(dataset, X_baseline=base, X_timeline=np.zeros((n, 2, 4), dtype=np.float32),
                X_experience=np.zeros((n, 2, 4), dtype=np.float32), X_dpxp=np.zeros((n, 2, 2), dtype=np.float32),
+               X_recent=np.zeros((n, 2, 30), dtype=np.float32),
                y=y, mids=np.arange(n), starts=starts, ends=starts + 60, series_ids=np.zeros(n),
                split=np.repeat(np.arange(5, dtype=np.int8), 2))
-    atomic_json(meta, {"schema": "test", "source_hashes": {"db": "x"}, "features": {"baseline": [], "timeline": [], "experience": [], "dpxp": []}})
+    atomic_json(meta, {"schema": "test", "source_hashes": {"db": "x"}, "features": {"baseline": [], "timeline": [], "experience": [], "dpxp": [], "recent": []}})
     report = train_target(dataset, meta, target, tmp_path / "trained", threads=1)
     assert report["target"] == target
     predictions = np.load(tmp_path / "trained" / "predictions.npz")
@@ -223,4 +254,5 @@ def test_saved_model_replay_smoke(tmp_path, target):
         assert "no tie" in schema["orientation_rule"]
     assert (tmp_path / "trained" / "model.cbm").exists()
     assert (tmp_path / "trained" / "predictions.npz").exists()
-    assert {path.stem for path in (tmp_path / "trained" / "candidates").glob("*.cbm")} == {"baseline", "timelines", "experience", "combined", "combined_dpxp"}
+    assert {path.stem for path in (tmp_path / "trained" / "candidates").glob("*.cbm")} == set(ARMS)
+    assert "combined_dpxp" not in ARMS

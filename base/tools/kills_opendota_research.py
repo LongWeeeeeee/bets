@@ -6,6 +6,7 @@ the input SQLite database, publishes a model, or starts a runtime service.
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left, insort
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -37,8 +38,18 @@ DATE_SPLITS = ("2026-06-01", "2026-08-01", "2026-08-10", "2026-08-20", "2026-09-
 # are safe in the primary timeline block.
 TIMELINE_METRICS = ("deaths", "gold", "xp", "lh", "dn")
 PRO_METRICS = ("kills", "deaths", "assists", "gold_per_min", "xp_per_min")
-ARMS = ("baseline", "timelines", "experience", "combined", "combined_dpxp")
-PRIMARY_ARMS = ARMS[:-1]
+ARMS = ("baseline", "timelines", "experience", "combined", "recent_experience", "combined_recent")
+PRIMARY_ARMS = ARMS
+ARM_BLOCKS = {
+    "baseline": ("baseline",), "timelines": ("baseline", "timeline"),
+    "experience": ("baseline", "experience"), "combined": ("baseline", "timeline", "experience"),
+    "recent_experience": ("baseline", "experience", "recent"),
+    "combined_recent": ("baseline", "timeline", "experience", "recent"),
+    # Replay compatibility only. Subscription XP is excluded from new training.
+    "combined_dpxp": ("baseline", "timeline", "experience", "dpxp"),
+}
+RECENT_DAYS = (7, 30, 90)
+RECENT_METRICS = ("player_games", "player_hero_games", "player_position_games", "hero_share", "position_share")
 SEED = 20260921
 
 
@@ -130,11 +141,19 @@ class Experience:
     games: int = 0
     last_end: int = 0
     roles: np.ndarray = field(default_factory=lambda: np.zeros(5, dtype=np.int32))
+    completed_times: list[int] = field(default_factory=list)
 
     def add(self, end: int, role: int | None = None) -> None:
         self.games += 1; self.last_end = max(self.last_end, int(end))
+        # Usually chronological; insort also handles overlapping maps/tests
+        # whose application order differs from the end-time ordering.
+        insort(self.completed_times, int(end))
         if role is not None and 0 <= role < 5:
             self.roles[role] += 1
+
+    def recent_games(self, query_start: int, days: int) -> int:
+        """Observed completions in [query_start - days*86400, query_start)."""
+        return bisect_left(self.completed_times, query_start) - bisect_left(self.completed_times, query_start - days * 86400)
 
 
 class History:
@@ -244,6 +263,26 @@ class History:
         # Side feature contains own level and an explicit own-minus-opponent
         # contrast. It can be oriented without using current outcomes.
         return tuple(np.asarray(x, dtype=float) for x in (pro_sides, timeline_sides, exp_sides, dpxp_sides))
+
+    def recent_features(self, sides: list[list[dict]], start: int) -> np.ndarray:
+        """Recent observed practice, independent of subscription-derived XP."""
+        result = []
+        for players in sides:
+            players = sorted(players, key=lambda p: (int(p["hero"]), int(p["account"])))
+            rows = []
+            for player, role in zip(players, self.role_assignment(players)):
+                account, hero = int(player["account"]), int(player["hero"])
+                groups = (self.player.get(account), self.player_hero.get((account, hero)),
+                          self.player_position.get((account, role)))
+                values = []
+                for days in RECENT_DAYS:
+                    total, on_hero, on_position = [group.recent_games(start, days) if group else 0 for group in groups]
+                    values.extend((total, on_hero, on_position,
+                                   on_hero / total if total else np.nan,
+                                   on_position / total if total else np.nan))
+                rows.append(values)
+            result.append(self._mean_rows(rows, len(RECENT_DAYS) * len(RECENT_METRICS)))
+        return np.asarray(result)
 
 
 def _timeline_values(row: sqlite3.Row, duration: int) -> np.ndarray:
@@ -391,7 +430,7 @@ def build_dataset(db_path: Path, rich_path: Path, output_dir: Path) -> dict:
     source_events.sort(key=lambda event: (event["start"], event["mid"], event["source"]))
     records.sort(key=lambda record: (record["start"], record["mid"]))
     history, pending, event_at = History(), [], 0
-    base, timelines, experience, dpxp, labels = [], [], [], [], []
+    base, timelines, experience, recent, dpxp, labels = [], [], [], [], [], []
     starts, ends, mids, sids = [], [], [], []
     max_history_end = 0
     for query_index, record in enumerate(records):
@@ -408,12 +447,14 @@ def build_dataset(db_path: Path, rich_path: Path, output_dir: Path) -> dict:
                     raise AssertionError("history source is not strictly before query start")
                 history.apply(event); max_history_end = max(max_history_end, int(end))
         pro, timeline, exp, dp = history.features(record["players"], record["teams"], start)
+        practice = history.recent_features(record["players"], start)
         sorted_heroes = [sorted((int(p["hero"]) for p in side)) for side in record["players"]]
         for side in (0, 1):
             other = 1 - side
             base.append(_side_vector(sorted_heroes[side] + sorted_heroes[other], pro[side], pro[other]))
             timelines.append(_side_vector([], timeline[side], timeline[other]))
             experience.append(_side_vector([], exp[side], exp[other]))
+            recent.append(_side_vector([], practice[side], practice[other]))
             dpxp.append(_side_vector([], np.asarray([dp[side]]), np.asarray([dp[other]])))
         win = lead_labels(record["duration"], record["hero_kills"])
         side = np.asarray(record["final_kills"], dtype=float)
@@ -433,20 +474,24 @@ def build_dataset(db_path: Path, rich_path: Path, output_dir: Path) -> dict:
     timeline_names = [f"{x}_{kind}" for kind in ("own", "diff") for x in timeline_core + timeline_support + team_window_names]
     exp_core = ("player_games", "player_hero_games", "player_position_games", "assigned_role_games", "player_recency_seconds", "player_hero_recency_seconds")
     exp_names = [f"experience_{kind}_{x}" for kind in ("own", "diff") for x in exp_core]
+    recent_names = [f"recent_{kind}_{days}d_{metric}" for kind in ("own", "diff")
+                    for days in RECENT_DAYS for metric in RECENT_METRICS]
     dpxp_names = ("dpxp_own", "dpxp_diff")
     output_dir.mkdir(parents=True, exist_ok=True)
     npz_path = output_dir / "dataset.npz"
     atomic_npz(npz_path, X_baseline=np.asarray(base, dtype=np.float32).reshape(-1, 2, len(base_names)),
                X_timeline=np.asarray(timelines, dtype=np.float32).reshape(-1, 2, len(timeline_names)),
                X_experience=np.asarray(experience, dtype=np.float32).reshape(-1, 2, len(exp_names)),
+               X_recent=np.asarray(recent, dtype=np.float32).reshape(-1, 2, len(recent_names)),
                X_dpxp=np.asarray(dpxp, dtype=np.float32).reshape(-1, 2, 2), y=np.asarray(labels, dtype=np.float32),
                mids=np.asarray(mids), starts=np.asarray(starts), ends=np.asarray(ends), series_ids=np.asarray(sids), split=split)
-    metadata = {"schema": "kills-opendota-research-v2", "baseline_kind": "new_pro_only_not_production_E281",
+    metadata = {"schema": "kills-opendota-research-v3", "baseline_kind": "new_pro_only_not_production_E281",
                 "history_window_policy": "all window statistics require source.duration >= window.end; otherwise missing, no support increment",
-                "dpxp_policy": "exploratory only: rich producer conflates absent/null with zero; historical observation time unverified",
+                "dpxp_policy": "excluded from new fits: subscription-dependent hero XP, not total practice; absent/null conflated with zero; retained for old artifact replay only",
+                "recent_policy": "counts of observed completed maps in [query.start-N*86400, query.start), N=7,30,90; hero/position share of player count, missing denominator gives NaN; available corpus only, not exhaustive player activity",
                 "targets": list(TARGETS), "arms": list(ARMS),
                 "primary_selection_arms": list(PRIMARY_ARMS), "split_dates": list(DATE_SPLITS),
-                "features": {"baseline": base_names, "timeline": timeline_names, "experience": exp_names, "dpxp": list(dpxp_names)},
+                "features": {"baseline": base_names, "timeline": timeline_names, "experience": exp_names, "recent": recent_names, "dpxp": list(dpxp_names)},
                 "hero_order": "ascending hero_id within each side; own side followed by opponent", "role_policy": "query role assigned from prior rich slot-role frequencies only",
                 "causality": "source event applied only when source.end < query.start; query mid excluded", "max_history_end_seen": int(max_history_end),
                 "label_semantics": "lead windows strict credited hero-kill deltas from sum of five opponent deaths at boundaries, ties omitted; side30/total55 are sums of final player kills",
@@ -508,10 +553,7 @@ def _target_rows(data, target: str, partition: int):
 
 
 def _matrix(data, arm: str, maps, sides):
-    blocks = [data["X_baseline"]]
-    if arm in ("timelines", "combined", "combined_dpxp"): blocks.append(data["X_timeline"])
-    if arm in ("experience", "combined", "combined_dpxp"): blocks.append(data["X_experience"])
-    if arm == "combined_dpxp": blocks.append(data["X_dpxp"])
+    blocks = [data[f"X_{name}"] for name in ARM_BLOCKS[arm]]
     values = np.concatenate([block[maps, sides] for block in blocks], axis=1)
     # CatBoost rejects float-valued categorical columns.  Keep the ten draft
     # hero IDs categorical while preserving NaN for numerical history features.
@@ -570,7 +612,7 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
         print(f"{target} arm={arm} trees={model.tree_count_} selection_logloss={selection[arm]['selection']['log_loss']:.6f} elapsed={time.monotonic()-began:.1f}s", flush=True)
     chosen = min(PRIMARY_ARMS, key=lambda arm: selection[arm]["selection"]["log_loss"])
     # This frozen record exists before any terminal partition prediction.
-    atomic_json(output_dir / "selection.json", {"chosen": chosen, "rule": "minimum calibrated selection logloss among baseline,timelines,experience,combined", "arms": selection})
+    atomic_json(output_dir / "selection.json", {"chosen": chosen, "rule": "minimum calibrated selection logloss among " + ",".join(PRIMARY_ARMS), "arms": selection})
     terminal_m, terminal_s, _ = rows[4]
     for arm in ARMS:
         predictions[arm], _, _ = _prediction_for_target(models[arm], calibration[arm], data, arm, target, terminal_m, terminal_s)
@@ -578,12 +620,11 @@ def train_target(dataset: Path, metadata_path: Path, target: str, output_dir: Pa
     metrics = {"target": target, "chosen": chosen, "selection": selection,
                "terminal": {arm: _metric(terminal_y, pred) for arm, pred in predictions.items()},
                "chosen_minus_baseline": _day_delta(terminal_y, predictions[chosen], predictions["baseline"], data["starts"][terminal_maps] // 86400),
+               "recent_minus_experience": _day_delta(terminal_y, predictions["recent_experience"], predictions["experience"], data["starts"][terminal_maps] // 86400),
+               "combined_recent_minus_combined": _day_delta(terminal_y, predictions["combined_recent"], predictions["combined"], data["starts"][terminal_maps] // 86400),
                "partitions": {str(part): int(len(rows[part][2])) for part in range(5)},
                "partition_unit": "oriented training rows; window/total calibration and evaluation use one row per map"}
-    feature_names = list(metadata["features"]["baseline"])
-    if chosen in ("timelines", "combined", "combined_dpxp"): feature_names += list(metadata["features"]["timeline"])
-    if chosen in ("experience", "combined", "combined_dpxp"): feature_names += list(metadata["features"]["experience"])
-    if chosen == "combined_dpxp": feature_names += list(metadata["features"]["dpxp"])
+    feature_names = [name for block in ARM_BLOCKS[chosen] for name in metadata["features"][block]]
     schema = {"schema": metadata["schema"], "target": target, "chosen_arm": chosen,
               "feature_names": feature_names, "cat_features": list(range(10)),
               "orientation_rule": ("calibrate mean(raw_R,raw_D); one total probability per map" if target == "total55" else

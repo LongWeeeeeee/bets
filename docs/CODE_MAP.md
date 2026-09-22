@@ -300,7 +300,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 **Offline kills research E-310** — `base/tools/kills_opendota_research.py`
 (`build` / `train`), не подключён к dispatch. Артефакты
-`kills-opendota-research-v2` содержат target-specific `orientation_rule`:
+`kills-opendota-research-v2/v3` содержат target-specific `orientation_rule`:
 для окон калибруется `(raw_R+1-raw_D)/2`, сохраняется одна Radiant-строка
 (`sides=0`) с `P(R lead | no tie)`, Dire = `1-p`; для `side30` стороны
 независимы; для `total55` raw-ориентации усредняются до calibration,
@@ -309,6 +309,12 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 `source.duration >= window.end`, а источник — `source.end < query.start`.
 Проверка ошибок, покрытия признаков и повторное обучение:
 [`E-310-kills-audit.md`](experiments/E-310-kills-audit.md).
+В v3 ([E-312](experiments/E-312-kills-recent-practice.md)) добавлен `X_recent`:
+наблюдённые завершения игр игрока/героя/назначенной по истории позиции за
+7/30/90 дней и доли героя/позиции; границы `[query.start-N*86400, query.start)`.
+Прежняя давность последней игры остаётся в X_experience. Новые варианты
+`recent_experience` и `combined_recent` добавляют этот блок к прежним;
+DotaPlus XP исключён из новых fits как зависящий от подписки показатель.
 
 **Schedule / quiet hours** — см. `docs/SCHEDULING.md`.
 
