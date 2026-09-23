@@ -28,6 +28,23 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 ---
 
+## Offline kills-v3 full-coverage research (E-328)
+
+- `base/tools/kills_v3_research.py`: `--history-start` и `--query-start` принимают
+  UTC epoch seconds; по умолчанию 2022-07-01 и 2023-01-01. Первый ограничивает
+  загружаемые исторические карты, второй — карты с выходными признаками.
+  Значения записываются в `metadata.json.parameters`; история применяется только
+  при `end < query.start`.
+- `runtime/experiments/kills/panel_plus_v3/run.py`: `--od3 PATH` выбирает
+  `dataset.npz` вместе с соседним `metadata.json` (по умолчанию прежний od3).
+  `--full-coverage` требует все 456470 train и 26016 test `mid`, сравнивает
+  A_full/B_full с production на одном test и пишет JSON по каждому таргету.
+  Для ранней остановки и изотонической калибровки panel делит train на `sub`/`val`;
+  `--check-only` не обучает модели и не выполняет отдельный `--check-row-order`.
+  `--seed N` задаёт CatBoost `random_seed` обоим вариантам (по умолчанию сид панели 20260814);
+  по каждой цели пишется `<target>.predictions.npz` (mids, ts, y, a, b, production теста).
+  Сетка E-328: `grid_e326.sh`, анализ `analyze_e326.py`, разрез по серии `series_split_e326.py`.
+
 ## Offline laning ML (E-264)
 
 - `base/build_laning_corpus.py`: CLI `python -m base.build_laning_corpus
