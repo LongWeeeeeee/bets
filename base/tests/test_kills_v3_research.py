@@ -38,6 +38,8 @@ def test_strict_end_before_start_and_query_never_contributes(tmp_path):
     toy_rich(rich, [start - 7200, start - 1800, start], [1800, 1800, 1800],
              [(10, 15), (40, 15), (100, 15)])
     meta = v3.build_dataset(rich, [tmp_path / "absent.sqlite3"], tmp_path / "out", pseudo_games=0)
+    assert meta["parameters"]["history_start"] == v3.HISTORY_START
+    assert meta["parameters"]["query_start"] == v3.QUERY_START
     with np.load(tmp_path / "out/dataset.npz") as ds:
         j = meta["feature_names"].index("team_own_kills_for")
         assert ds["mids"].tolist() == [3]
@@ -50,6 +52,25 @@ def test_strict_end_before_start_and_query_never_contributes(tmp_path):
     with np.load(tmp_path / "out2/dataset.npz") as ds:
         j = meta["feature_names"].index("team_own_kills_for")
         assert ds["X"][0, 0, j] > 20
+
+
+def test_explicit_history_and_query_starts_include_early_maps(tmp_path):
+    early = 1451606400  # 2016-01-01 UTC
+    rich = tmp_path / "early.npz"
+    toy_rich(rich, [early, early + 7200], [1800, 1800], [(10, 15), (30, 20)])
+    meta = v3.build_dataset(rich, [], tmp_path / "early_out", pseudo_games=0,
+                            history_start=early, query_start=early)
+    assert meta["parameters"]["history_start"] == early
+    assert meta["parameters"]["query_start"] == early
+    with np.load(tmp_path / "early_out/dataset.npz") as ds:
+        assert ds["mids"].tolist() == [1, 2]
+        j = meta["feature_names"].index("team_own_kills_for")
+        assert ds["X"][1, 0, j] == pytest.approx(10)
+    v3.build_dataset(rich, [], tmp_path / "later_query", pseudo_games=0,
+                     history_start=early, query_start=early + 7200)
+    with np.load(tmp_path / "later_query/dataset.npz") as ds:
+        assert ds["mids"].tolist() == [2]
+        assert ds["X"][0, 0, j] == pytest.approx(10)
 
 
 def test_orientation_mirror_and_zero_team(tmp_path):
@@ -111,7 +132,7 @@ def test_dedupe_prefers_opendota_and_counts_disagreement(tmp_path, monkeypatch):
            "pmetrics": np.ones((10, len(v3.PLAYER_METRICS)), np.float32),
            "timeline": np.ones((2, 6), np.float32)}
     rec["pmetrics"][0, 11] = np.nan  # OpenDota has no final LH; STRATZ does.
-    monkeypatch.setattr(v3, "_db_records", lambda paths: ({1: rec}, {}))
+    monkeypatch.setattr(v3, "_db_records", lambda paths, history_start: ({1: rec}, {}))
     events, audit = v3.load_events(rich, [])
     assert len(events["mid"]) == 1
     assert events["source"].tolist() == [1]
@@ -131,7 +152,7 @@ def test_overlap_identity_conflict_fails_closed(tmp_path, monkeypatch):
            "accounts": [999] + list(range(2, 11)),
            "pmetrics": np.ones((10, len(v3.PLAYER_METRICS)), np.float32),
            "timeline": np.ones((2, 6), np.float32)}
-    monkeypatch.setattr(v3, "_db_records", lambda paths: ({1: rec}, {}))
+    monkeypatch.setattr(v3, "_db_records", lambda paths, history_start: ({1: rec}, {}))
     with pytest.raises(ValueError, match="identity conflict"):
         v3.load_events(rich, [])
 
@@ -187,8 +208,8 @@ def test_new_db_appearing_after_ingestion_is_not_claimed_as_source(tmp_path, mon
     toy_rich(rich, [v3.QUERY_START], [1800], [(10, 10)])
     original = v3.load_events
 
-    def load_then_appear(rich_path, db_paths):
-        events, audit = original(rich_path, db_paths)
+    def load_then_appear(rich_path, db_paths, history_start):
+        events, audit = original(rich_path, db_paths, history_start)
         late_db.write_bytes(b"appeared after read")
         return events, audit
 

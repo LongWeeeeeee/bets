@@ -51,12 +51,12 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _columnar_rich(path: Path) -> dict:
+def _columnar_rich(path: Path, history_start: int = HISTORY_START) -> dict:
     with np.load(path, allow_pickle=False) as rich:
         expected = ("kills", "deaths", "assists", "goldPerMinute", "experiencePerMinute", "networth",
                     "numLastHits", "numDenies", "heroDamage", "towerDamage", "heroHealing")
         assert tuple(rich["pstat_names"][:len(expected)]) == expected, "unexpected STRATZ pstat order"
-        selected = np.flatnonzero(rich["ts"] >= HISTORY_START)
+        selected = np.flatnonzero(rich["ts"] >= history_start)
         keys = ("mids", "ts", "durations", "sids", "stypes", "leagues", "teams", "wins", "heroes", "accounts", "pstats", "rk", "dk")
         data = {name: np.asarray(rich[name][selected]).copy() for name in keys}
     return data
@@ -84,7 +84,7 @@ def _player_metrics(raw: np.ndarray, duration: np.ndarray, final: np.ndarray) ->
     return out
 
 
-def _db_records(paths: list[Path]) -> tuple[dict[int, dict], dict]:
+def _db_records(paths: list[Path], history_start: int = HISTORY_START) -> tuple[dict[int, dict], dict]:
     records: dict[int, dict] = {}
     audit = {"db_paths_missing": [], "db_duplicate_mids": 0, "db_incomplete_roster": 0,
              "db_score_vs_player_kills_disagreements": 0, "db_score_vs_player_kills_examples": []}
@@ -110,7 +110,7 @@ def _db_records(paths: list[Path]) -> tuple[dict[int, dict], dict]:
                 audit["db_incomplete_roster"] += 1
                 continue
             dur = int(row["duration"] or 0)
-            if dur <= 0 or int(row["start_time"] or 0) < HISTORY_START:
+            if dur <= 0 or int(row["start_time"] or 0) < history_start:
                 continue
             final = np.array([sum(float(p["kills"]) for p in slots[s:s + 5]) if all(p["kills"] is not None for p in slots[s:s + 5]) else np.nan for s in (0, 5)], np.float32)
             if not np.isfinite(final).all():
@@ -164,9 +164,10 @@ def _db_records(paths: list[Path]) -> tuple[dict[int, dict], dict]:
     return records, audit
 
 
-def load_events(rich_path: Path, db_paths: list[Path]) -> tuple[dict, dict]:
-    rich = _columnar_rich(rich_path)
-    db, audit = _db_records(db_paths)
+def load_events(rich_path: Path, db_paths: list[Path],
+                history_start: int = HISTORY_START) -> tuple[dict, dict]:
+    rich = _columnar_rich(rich_path, history_start)
+    db, audit = _db_records(db_paths, history_start)
     n = len(rich["mids"])
     mids = rich["mids"]
     index = {int(mid): i for i, mid in enumerate(mids)}
@@ -488,13 +489,13 @@ def _orient_features(parts: tuple, names: list[str], blocks: dict) -> np.ndarray
     return result
 
 
-def corrected_global_meta(events: dict, half_life_days: float) -> np.ndarray:
+def corrected_global_meta(events: dict, half_life_days: float, query_start: int = QUERY_START) -> np.ndarray:
     """Independent lightweight replay of the three 28-day league features.
 
     Useful to validate a completed matrix without repeating player histories.
     Rows follow the same query order as ``build_dataset``.
     """
-    query = np.flatnonzero(events["start"] >= QUERY_START)
+    query = np.flatnonzero(events["start"] >= int(query_start))
     result = np.full((len(query), 3), np.nan, np.float32)
     order = np.argsort(events["end"], kind="stable")
     at_end = 0
@@ -548,7 +549,8 @@ def split_with_purge(starts: np.ndarray, series: np.ndarray) -> tuple[np.ndarray
 def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
                   half_life_days: float = 90, pseudo_games: float = 5, poisson_lr: float = 0.03,
                   cpu_pause_seconds: float = 0, history_cutoff: int | None = None,
-                  visibility_delay: int = 0) -> dict:
+                  visibility_delay: int = 0, history_start: int = HISTORY_START,
+                  query_start: int = QUERY_START) -> dict:
     """history_cutoff freezes history like the production snapshot: an event is
     applied only if end < min(query start - visibility_delay, cutoff).
     visibility_delay models serving lag (a finished map reaches the feed late).
@@ -558,12 +560,14 @@ def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
     db_paths = [path.resolve() for path in db_paths]
     if half_life_days <= 0 or pseudo_games < 0 or poisson_lr < 0 or cpu_pause_seconds < 0 or visibility_delay < 0:
         raise ValueError("half_life_days>0, pseudo_games>=0, poisson_lr>=0, cpu_pause_seconds>=0 and visibility_delay>=0 required")
+    if history_start < 0 or query_start < history_start:
+        raise ValueError("UTC epoch starts require 0 <= history_start <= query_start")
     source_hashes_at_start = {str(path): sha256(path) for path in [rich_path] + db_paths if path.exists()}
-    events, audit = load_events(rich_path, db_paths)
+    events, audit = load_events(rich_path, db_paths, history_start)
     used_paths = [rich_path] + [path for path in db_paths if str(path) not in audit["db_paths_missing"]]
     if any(str(path) not in source_hashes_at_start for path in used_paths):
         raise RuntimeError("an OpenDota DB appeared during source loading; retry on a stable snapshot")
-    query = np.flatnonzero(events["start"] >= QUERY_START)
+    query = np.flatnonzero(events["start"] >= query_start)
     names, blocks = feature_layout()
     X = np.empty((len(query), 2, len(names)), np.float32)
     y = np.empty((len(query), 2, len(LABELS)), np.float32)
@@ -633,6 +637,7 @@ def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
     metadata = {"schema": "kills-v3-causal-v1", "feature_names": names, "blocks": blocks, "label_names": list(LABELS),
                 "parameters": {"half_life_days": half_life_days, "pseudo_games": pseudo_games,
                                "poisson_lr": poisson_lr, "elo_k": history.elo_k,
+                               "history_start": int(history_start), "query_start": int(query_start),
                                "cpu_pause_seconds": cpu_pause_seconds,
                                "history_cutoff": None if history_cutoff is None else int(history_cutoff),
                                "visibility_delay": int(visibility_delay),
@@ -669,10 +674,15 @@ def main() -> None:
                         help="UTC epoch seconds; freeze history at end < cutoff (production-snapshot replay)")
     parser.add_argument("--visibility-delay", type=int, default=0,
                         help="seconds; history event visible only if end < start - delay (serving lag)")
+    parser.add_argument("--history-start", type=int, default=HISTORY_START,
+                        help="UTC epoch seconds; earliest history event")
+    parser.add_argument("--query-start", type=int, default=QUERY_START,
+                        help="UTC epoch seconds; earliest map with output features")
     args = parser.parse_args()
     meta = build_dataset(args.rich, args.db if args.db is not None else [OLD_DB, NEW_DB], args.output,
                          args.half_life_days, args.pseudo_games, args.poisson_lr, args.cpu_pause_seconds,
-                         args.history_cutoff, args.visibility_delay)
+                         args.history_cutoff, args.visibility_delay,
+                         args.history_start, args.query_start)
     print(json.dumps({k: meta[k] for k in ("source_counts", "split_audit", "base_rates", "sanity", "wall_seconds")}, indent=2))
 
 
