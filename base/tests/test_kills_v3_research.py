@@ -227,3 +227,26 @@ def test_team_ids_are_written_in_orientation_order(tmp_path):
     with np.load(tmp_path / "out/dataset.npz") as ds:
         assert ds["team_ids"].tolist() == [[9, 7]]
         assert ds["y"][0, 0, 0] == 20  # orientation 0 = radiant team 9
+
+
+def test_visibility_delay_hides_maps_that_ended_within_the_delay(tmp_path):
+    # Map 2 (40 kills) ends 600 s before map 3 starts. With a 1200 s visibility
+    # delay (serving lag) it must be invisible; with 0 s it must be visible.
+    start = v3.QUERY_START + 86400
+    rich = tmp_path / "toy.npz"
+    toy_rich(rich, [start - 20000, start - 2400, start], [1800, 1800, 1800],
+             [(10, 15), (40, 15), (100, 15)])
+    online = v3.build_dataset(rich, [], tmp_path / "online", pseudo_games=0)
+    delayed = v3.build_dataset(rich, [], tmp_path / "delayed", pseudo_games=0, visibility_delay=1200)
+    edge = v3.build_dataset(rich, [], tmp_path / "edge", pseudo_games=0, visibility_delay=599)
+    j = online["feature_names"].index("team_own_kills_for")
+    with np.load(tmp_path / "online/dataset.npz") as a, np.load(tmp_path / "delayed/dataset.npz") as b, \
+            np.load(tmp_path / "edge/dataset.npz") as c:
+        row = int(np.flatnonzero(a["mids"] == 3)[0])
+        assert a["X"][row, 0, j] > 20
+        assert b["X"][row, 0, j] == pytest.approx(10)
+        assert c["X"][row, 0, j] > 20  # end = start-600 < start-599: still visible
+        assert np.array_equal(a["y"], b["y"])
+        assert np.array_equal(a["ends"], b["ends"])  # true ends are kept; only visibility shifts
+    assert delayed["parameters"]["visibility_delay"] == 1200
+    assert online["parameters"]["visibility_delay"] == 0

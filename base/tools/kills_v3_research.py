@@ -547,14 +547,17 @@ def split_with_purge(starts: np.ndarray, series: np.ndarray) -> tuple[np.ndarray
 
 def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
                   half_life_days: float = 90, pseudo_games: float = 5, poisson_lr: float = 0.03,
-                  cpu_pause_seconds: float = 0, history_cutoff: int | None = None) -> dict:
+                  cpu_pause_seconds: float = 0, history_cutoff: int | None = None,
+                  visibility_delay: int = 0) -> dict:
     """history_cutoff freezes history like the production snapshot: an event is
-    applied only if end < min(query start, cutoff). Labels are unaffected."""
+    applied only if end < min(query start - visibility_delay, cutoff).
+    visibility_delay models serving lag (a finished map reaches the feed late).
+    Labels and stored ends are unaffected."""
     started = time.monotonic()
     rich_path = rich_path.resolve()
     db_paths = [path.resolve() for path in db_paths]
-    if half_life_days <= 0 or pseudo_games < 0 or poisson_lr < 0 or cpu_pause_seconds < 0:
-        raise ValueError("half_life_days>0, pseudo_games>=0, poisson_lr>=0 and cpu_pause_seconds>=0 required")
+    if half_life_days <= 0 or pseudo_games < 0 or poisson_lr < 0 or cpu_pause_seconds < 0 or visibility_delay < 0:
+        raise ValueError("half_life_days>0, pseudo_games>=0, poisson_lr>=0, cpu_pause_seconds>=0 and visibility_delay>=0 required")
     source_hashes_at_start = {str(path): sha256(path) for path in [rich_path] + db_paths if path.exists()}
     events, audit = load_events(rich_path, db_paths)
     used_paths = [rich_path] + [path for path in db_paths if str(path) not in audit["db_paths_missing"]]
@@ -571,7 +574,9 @@ def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
     at_start = 0
     for qi, i in enumerate(query):
         start = int(events["start"][i])
-        visible = start if history_cutoff is None else min(start, int(history_cutoff))
+        visible = start - int(visibility_delay)
+        if history_cutoff is not None:
+            visible = min(visible, int(history_cutoff))
         while at_end < len(end_order) and events["end"][end_order[at_end]] < visible:
             history.apply(events, int(end_order[at_end]))
             at_end += 1
@@ -630,8 +635,9 @@ def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
                                "poisson_lr": poisson_lr, "elo_k": history.elo_k,
                                "cpu_pause_seconds": cpu_pause_seconds,
                                "history_cutoff": None if history_cutoff is None else int(history_cutoff),
+                               "visibility_delay": int(visibility_delay),
                                "overlap_kill_sum_tolerance_per_side": KILL_SUM_TOLERANCE},
-                "causality": "history event applied only if end < query start; series game number counts starts < query start",
+                "causality": "history event applied only if end < query start - visibility_delay (and < history_cutoff when set); series game number counts starts < query start",
                 "source_priority": "OpenDota overrides STRATZ on duplicate match_id; final labels sum five player kills per side",
                 "source_flags": {"0": "STRATZ", "1": "OpenDota"},
                 "source_hashes": {str(p): source_hashes_at_start[str(p)] for p in used_paths},
@@ -661,10 +667,12 @@ def main() -> None:
                         help="optional cooperative pause every 100 query maps")
     parser.add_argument("--history-cutoff", type=int, default=None,
                         help="UTC epoch seconds; freeze history at end < cutoff (production-snapshot replay)")
+    parser.add_argument("--visibility-delay", type=int, default=0,
+                        help="seconds; history event visible only if end < start - delay (serving lag)")
     args = parser.parse_args()
     meta = build_dataset(args.rich, args.db if args.db is not None else [OLD_DB, NEW_DB], args.output,
                          args.half_life_days, args.pseudo_games, args.poisson_lr, args.cpu_pause_seconds,
-                         args.history_cutoff)
+                         args.history_cutoff, args.visibility_delay)
     print(json.dumps({k: meta[k] for k in ("source_counts", "split_audit", "base_rates", "sanity", "wall_seconds")}, indent=2))
 
 
