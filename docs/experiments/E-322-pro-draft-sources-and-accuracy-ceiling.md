@@ -6,7 +6,7 @@ area: draft-cp
 status: full
 corpus: "master.npz (26 980 карт), тест май–сентябрь 2026: 1 720 карт pro/premium (852 серии); pro_corpus_rich.npz (1 261 591 лиговая карта 2016–2026); архив Dota2ProTracker (117 страниц героев от 24–25.04.2026)"
 verdict: "Цель 71,9 % на pp недостижима с теми источниками информации, что у нас есть. Лучший чистый результат — драфт по про-лигам (героев и пар) поверх ELO: 69,77 % против 68,49 % у ELO + паб-драфта, +1,28 п.п. [−0,06; 2,53], log loss −0,0061 [−0,0103; −0,0018]. Порог предрегистрации не пройден. Протрекер — ноль (−0,12 п.п.). По согласованности серий: при идеальном знании силы команд и лучшем драфте ожидается 70,5 % [66,8; 73,7]. Для 71,9 % нужен драфт с AUC 0,657–0,684 на pp; лучший измеренный — 0,608"
-harness: "runtime/experiments/draft-cp/protracker_pp_20260923/evaluate.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair_dump.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair_gridext.py, runtime/experiments/elo/ceiling_20260923/series_consistency.py, runtime/experiments/elo/ceiling_20260923/strength_ceiling.py, runtime/experiments/elo/ceiling_20260923/insample_dispersion.py, runtime/experiments/elo/ceiling_20260923/ceiling_with_league_draft.py"
+harness: "runtime/experiments/draft-cp/protracker_pp_20260923/evaluate.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair_dump.py, runtime/experiments/draft-cp/league_finetune_20260923/run_league_pair_gridext.py, runtime/experiments/elo/ceiling_20260923/series_consistency.py, runtime/experiments/elo/ceiling_20260923/strength_ceiling.py, runtime/experiments/elo/ceiling_20260923/insample_dispersion.py, runtime/experiments/elo/ceiling_20260923/ceiling_with_league_draft.py, runtime/experiments/elo/ceiling_20260923/selective_accuracy.py"
 ---
 
 # E-322. Цель +5 п.п. на про-картах: новые источники драфта и потолок точности
@@ -134,6 +134,26 @@ C 0,001 — 0,6764, β 0 — 0,6800, полураспад 60 — 0,6769. Про�
   драфте (70,5 %). Внутри доверительного интервала потолка она есть, но только у его верхнего края.
 - Прод не менялся. Вопрос о связке ELO + драфт по про-лигам в v2 остаётся за владельцем:
   интеграция v2 в диспетчер на паузе.
+
+## Дополнение: точность на самых уверенных картах (другая постановка, вне цели)
+
+`runtime/experiments/elo/ceiling_20260923/selective_accuracy.py` воспроизводит связку L-C:
+69,77 / 70,06 %, в скрипте стоит assert. Затем он считает точность на доле самых уверенных
+pp-карт по |p − 0,5|. Связка обучена только на pp, интервалы — бутстрап по сериям:
+
+| доля карт | n | порог уверенности | точность | средняя предсказанная уверенность |
+|---|---|---|---|---|
+| 100 % | 1 720 | — | 69,8 % [67,5; 72,0] | 67,1 % |
+| 80 % | 1 376 | ≥ 0,557 | 73,5 % [70,9; 75,8] | 70,7 % |
+| 60 % | 1 032 | ≥ 0,617 | 77,9 % [75,3; 80,3] | 74,8 % |
+| 50 % | 860 | ≥ 0,650 | 80,5 % [77,6; 83,1] | 77,1 % |
+| 20 % | 344 | ≥ 0,781 | 89,0 % [85,5; 92,0] | 86,0 % |
+
+- Порог здесь — ранг внутри самого теста, то есть ретроспективный. Для честной проверки его нужно
+  зафиксировать заранее, например 0,557.
+- Модель на pp недоуверенна: угадывает на 2,7 п.п. чаще, чем обещает, потому что калибровалась
+  на всех лигах с апреля.
+- Цель 71,9 % на **всех** картах это не закрывает.
 
 ## Харнесс
 
