@@ -5,7 +5,7 @@ date: "2026-09-23"
 area: ml
 status: full
 corpus: "7 318 651 пабов 24.03–21.09 (combined_corpus/rows.npz), H_post 17–21.09 и H_pre 12–14.09; v2 — 26 980 про-карт master, тест 1 720 pro/premium-карт май–сентябрь"
-verdict: "A: все 4 фазы на 7,32 млн пабов лучше прода по log loss (All −0,00049, +0,21 п.п.; Late −0,00022; Early Win −0,00155; Early NW −0,00064), каталог 20260923_all7m собран, выкат ждёт владельца. B: v2 с уровнем лиги — не лучше, только на pp — хуже; учить на всех уровнях"
+verdict: "A: все 4 фазы на 7,32 млн пабов лучше прода по log loss (All −0,00049, +0,21 п.п.; Late −0,00022; Early Win −0,00155; Early NW −0,00064), каталог 20260923_all7m выложен на serv1 и подключён в drop-in, запуск cyberscore ждёт решения (проба sourcetv и память). B: v2 с уровнем лиги — не лучше, только на pp — хуже; учить на всех уровнях"
 harness: "runtime/experiments/draft-cp/draft_ml_v2_20260923/phases_all/run_phases_all.py, runtime/experiments/draft-cp/draft_ml_v2_20260923/v2_tier/run_stage2_tier.py"
 ---
 
@@ -133,6 +133,26 @@ P(Radiant | маркер) (`base/tools/export_draft_phase_serving.py:69`). Сд�
 Шкала почти не сдвигается (средняя уверенность +0,0004…+0,0010), звёзд на 0,2–0,35 п.п. больше, точность
 звёзд не хуже прода. У Late общая точность на H_post −0,14 п.п., но на звёздах (там, где диспетчер
 действует) +0,17 п.п.: весь минус — в картах с уверенностью < 0,60, по которым решений нет.
+
+### Выкат на serv1 (23.09, владелец: «выложить и запустить»)
+
+Сделано: каталог скопирован в `/root/main/data/draft_phase_serving/20260923_all7m` (14 файлов, sha256 совпадают
+с локальным экспортом); drop-in `/etc/systemd/system/cyberscore.service.d/draft-phase-models.conf` переписан на
+четыре переменные (`WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR` и новая `EARLY_WIN_MODEL_DIR` —
+до этого Early Win раздавался из умолчания кода `2026-09-05_position_pairs/early_win`, `base/early_win_model.py:21-23`);
+прежний файл — `/root/main/base/_archive/backups/draft-phase-models.conf.bak_20260923`; `daemon-reload`.
+Проверка на serv1 (python 3.12, боевые загрузчики с окружением юнита): 4/4 без ошибок загрузки, 512/512 оценок,
+отличие от пробы ≤ 5e-6, отпечаток All `6f22f971974f` → `bda840eb2a73`. Независимая проверка (hard-verifier)
+пересчитала Δlog loss H_post всех четырёх фаз из `evaluation_predictions.npz` — совпадает с `results.json`.
+
+**Запуск не выполнен.** Проверка нашла два препятствия, не связанных с моделями: (1) `sourcetv-probe.service`
+и `sourcetv-probe-watchdog.timer` остановлены и отключены вместе с cyberscore 22.09 11:12:55, а
+`restart_cyberscore.sh` запускает только cyberscore — прод в режиме sourcetv остался бы без матчей;
+(2) на serv1 свободно ≈ 6,8 ГБ при обычном пике cyberscore 6,5–9,6 ГБ (журнал 21–22.09), память держит
+sweep aitrading другой сессии; earlyoom при нехватке убьёт его процессы, а не cyberscore (OOMScoreAdjust −900).
+22.09 было 5 загрузок с soft lockup / RCU stall. Решение о запуске — у владельца.
+
+**Откат:** вернуть drop-in из бэкапа, `systemctl daemon-reload`, рестарт cyberscore.
 
 ## B. v2 с учётом уровня лиг
 
