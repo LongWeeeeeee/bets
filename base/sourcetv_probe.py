@@ -1132,13 +1132,28 @@ def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
         team_id, has_dupes, sorted(missing), raw,
     )
 
+    # DLTV role soft vote (permutation step only, never a raw source).
+    # History raws keep weight 1.0; each slot matching the DLTV role adds w.
+    try:
+        from base.dltv_player_roles import lookup_roles, role_weight
+    except ImportError:  # Supports both direct-script and package imports.
+        from dltv_player_roles import lookup_roles, role_weight
+    dltv_w = role_weight()
+    try:
+        dltv_roles = lookup_roles(aids) or {}
+    except Exception:  # noqa: BLE001 — без DLTV результат как раньше
+        dltv_roles = {}
+        dltv_w = 0.0
+
     # Need to resolve: try all permutations of positions 1-5
     best_score = -1
     best_perm = None
     for perm in permutations(range(1, 6)):
         # Prefer assignments that match raw where possible
         raw_matches = sum(1 for i, a in enumerate(aids) if raw.get(a) == perm[i])
-        score = sum(_pos_score(hids[i], perm[i]) for i in range(5) if hids[i]) + raw_matches * 1.0
+        dltv_matches = sum(1 for i, a in enumerate(aids) if dltv_roles.get(a) == perm[i])
+        score = (sum(_pos_score(hids[i], perm[i]) for i in range(5) if hids[i])
+                 + raw_matches * 1.0 + dltv_matches * dltv_w)
         if score > best_score:
             best_score = score
             best_perm = perm
@@ -1147,7 +1162,8 @@ def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
         resolved = {aids[i]: best_perm[i] for i in range(5)}
         scored_heroes = len([h for h in hids if h])
         best_raw_matches = sum(1 for i, a in enumerate(aids) if raw.get(a) == best_perm[i])
-        stats_conf = (best_score - best_raw_matches) / max(1, scored_heroes)
+        best_dltv_matches = sum(1 for i, a in enumerate(aids) if dltv_roles.get(a) == best_perm[i])
+        stats_conf = (best_score - best_raw_matches - best_dltv_matches * dltv_w) / max(1, scored_heroes)
         # Комбинированная уверенность: слот, совпавший с историей игрока, = 1.0;
         # остальные оцениваются по статистике героя на позиции. Иначе команда с
         # полной историей и одним конфликтом получала пессимистичный conf
@@ -1165,6 +1181,8 @@ def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
             "method": "permutation",
             "raw_known": len(raw),
             "raw_matched": best_raw_matches,
+            "dltv_known": len(dltv_roles),
+            "dltv_matched": best_dltv_matches,
             "stats_conf": round(stats_conf, 3),
             "conf": round(combined_conf, 3),
         }
@@ -1173,6 +1191,7 @@ def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
             "team_id": team_id, "method": "перебор",
             "conf": round(combined_conf, 3), "stats_conf": round(stats_conf, 3),
             "raw_matched": best_raw_matches, "raw_known": len(raw),
+            "dltv_matched": best_dltv_matches, "dltv_known": len(dltv_roles),
             "resolved": {str(a): resolved[a] for a in aids},
             "slots": [{"account": aids[i], "hero": hids[i],
                        "hero_name": (hero_names or [None] * 5)[i],
@@ -1180,6 +1199,7 @@ def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
                        "совпало": raw.get(aids[i]) == best_perm[i],
                        "источник": raw_src.get(aids[i]),
                        "матчей истории": raw_hist.get(aids[i]),
+                       "dltv": dltv_roles.get(aids[i]),
                        "P(герой на позиции)": round(_pos_score(hids[i], best_perm[i]), 3)
                        if hids[i] else None} for i in range(5)],
         })
