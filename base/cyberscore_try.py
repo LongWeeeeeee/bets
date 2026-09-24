@@ -5,6 +5,7 @@ from html import escape as html_escape
 import ast
 import atexit
 import contextlib
+import ctypes
 from collections import deque, OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -34428,6 +34429,10 @@ class _AsyncCamoufoxSession:
             self._thread = None
 
 
+class _SharedCamoufoxWorkerAbandoned(BaseException):
+    """Stop a worker whose Playwright driver can no longer be trusted."""
+
+
 class _SharedCamoufoxSession:
     """Owns the only Camoufox browser and runs all page work on one thread.
 
@@ -34442,6 +34447,9 @@ class _SharedCamoufoxSession:
         self._job_seq = itertools.count()
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
+        self._generation = 0
+        self._active_job: Optional[Tuple[str, float, int]] = None
+        self._driver_pid: Optional[int] = None
         self._reset_requested = False
         # Worker-thread-only registry: name -> page. Cleared on browser close.
         self._named_pages: Dict[str, Any] = {}
@@ -34462,6 +34470,7 @@ class _SharedCamoufoxSession:
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(
                     target=self._worker,
+                    args=(self._generation,),
                     name="shared-camoufox",
                     daemon=True,
                 )
@@ -34476,7 +34485,161 @@ class _SharedCamoufoxSession:
                 bool(reset_on_error),
             )
         )
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except (FuturesTimeoutError, TimeoutError):
+            self._recover_if_wedged()
+            raise
+
+    def _driver_pid_for_browser(self, browser: Any) -> Optional[int]:
+        """The private Playwright pipe PID, if this version exposes it."""
+        try:
+            pid = browser._impl_obj._connection._transport._proc.pid
+            return int(pid) if int(pid) > 0 else None
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _driver_is_dead(pid: int) -> bool:
+        try:
+            import psutil
+            return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+        except ImportError:
+            pass
+        except Exception:
+            # An inaccessible PID is not evidence of a dead driver.
+            pass
+        try:
+            with open(f"/proc/{pid}/stat", "r") as proc_stat:
+                return proc_stat.read().split(") ", 1)[1].startswith("Z")
+        except FileNotFoundError:
+            if os.path.isdir("/proc"):
+                return True
+        except (OSError, IndexError):
+            pass
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        # macOS has no /proc; ps also distinguishes a still-present zombie.
+        if not os.path.isdir("/proc"):
+            with contextlib.suppress(Exception):
+                state = subprocess.check_output(
+                    ["ps", "-o", "stat=", "-p", str(pid)],
+                    stderr=subprocess.DEVNULL, timeout=1,
+                ).decode().strip()
+                return not state or state.startswith("Z")
+        return False
+
+    def _worker_wedge_reason(self, now: float) -> Optional[str]:
+        job = self._active_job
+        if job is None or job[2] != self._generation:
+            return None
+        elapsed = now - job[1]
+        grace = max(0, _camoufox_env_int("CAMOUFOX_DEAD_DRIVER_GRACE_SECONDS", 10))
+        ceiling = max(0, _camoufox_env_int("CAMOUFOX_WEDGED_JOB_SECONDS", 300))
+        if self._driver_pid is not None and elapsed >= grace and self._driver_is_dead(self._driver_pid):
+            return "driver_dead"
+        if elapsed >= ceiling:
+            return "job_overrun"
+        return None
+
+    @staticmethod
+    def _kill_owned_driver(pid: Optional[int]) -> None:
+        """Best effort: signal only a verified descendant, never a process name."""
+        if not pid or pid == os.getpid():
+            return
+        try:
+            import psutil
+            driver = psutil.Process(pid)
+            parents = driver.parents()
+            if not any(parent.pid == os.getpid() for parent in parents):
+                return
+            descendants = driver.children(recursive=True)
+            for process in reversed(descendants):
+                with contextlib.suppress(Exception):
+                    process.kill()
+            with contextlib.suppress(Exception):
+                driver.kill()
+            return
+        except ImportError:
+            pass
+        except Exception:
+            return
+        try:
+            proc_parents = {}
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    with contextlib.suppress(Exception):
+                        with open(f"/proc/{entry}/status", "r") as status_file:
+                            ppid = next(line for line in status_file if line.startswith("PPid:"))
+                        proc_parents[int(entry)] = int(ppid.split()[1])
+            lineage = set()
+            current = pid
+            while current in proc_parents and current not in lineage:
+                lineage.add(current)
+                current = proc_parents[current]
+                if current == os.getpid():
+                    break
+            if current != os.getpid():
+                return
+            children = [child for child in proc_parents if child != pid and pid in _SharedCamoufoxSession._proc_ancestors(child, proc_parents)]
+            for child in reversed(children):
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(child, 9)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, 9)
+        except Exception:
+            return
+
+    @staticmethod
+    def _proc_ancestors(pid: int, parents: Dict[int, int]) -> set:
+        result = set()
+        while pid in parents and pid not in result:
+            result.add(pid)
+            pid = parents[pid]
+        return result
+
+    def _recover_if_wedged(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            reason = self._worker_wedge_reason(now)
+            if reason is None:
+                return
+            label, started, _generation = self._active_job
+            old_thread = self._thread
+            old_pid = self._driver_pid
+            print(
+                f"🧟 Shared Camoufox worker wedged in '{label}' "
+                f"{now - started:.1f}s ({reason}) — abandoning thread, fresh worker"
+            )
+            self._generation += 1
+            self._active_job = None
+            self._driver_pid = None
+            self._worker_thread_id = None
+            self._named_pages = {}
+            self._named_page_used = {}
+            self._reset_requested = False
+            for cache_name in ("_CYBERSCORE_LONG_PAGES", "_CYBERSCORE_LIVE_WATCHERS"):
+                cache = globals().get(cache_name)
+                if cache is not None:
+                    with contextlib.suppress(Exception):
+                        cache.clear()
+            self._kill_owned_driver(old_pid)
+            if old_thread is not None and old_thread.ident is not None and old_thread.is_alive():
+                with contextlib.suppress(Exception):
+                    injected = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(old_thread.ident), ctypes.py_object(_SharedCamoufoxWorkerAbandoned)
+                    )
+                    if injected > 1:
+                        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(old_thread.ident), None)
+            self._thread = threading.Thread(
+                target=self._worker, args=(self._generation,),
+                name="shared-camoufox", daemon=True,
+            )
+            self._thread.start()
 
     def request_reset(self) -> None:
         with self._lock:
@@ -34514,7 +34677,8 @@ class _SharedCamoufoxSession:
 
     def get_or_create_page(self, name: str, browser: Any) -> Any:
         """Return a reusable named page. Callable only from the shared worker thread."""
-        if self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id:
+        if (self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id
+                or threading.current_thread() is not self._thread):
             raise RuntimeError("get_or_create_page must be called from the shared Camoufox worker thread")
         key = str(name or "").strip()
         if not key:
@@ -34539,7 +34703,8 @@ class _SharedCamoufoxSession:
 
     def invalidate_named_page(self, name: str) -> None:
         """Close and drop one named page (parser left it unrecoverable). Worker-thread only."""
-        if self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id:
+        if (self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id
+                or threading.current_thread() is not self._thread):
             raise RuntimeError("invalidate_named_page must be called from the shared Camoufox worker thread")
         key = str(name or "").strip()
         page = self._named_pages.pop(key, None)
@@ -34576,10 +34741,18 @@ class _SharedCamoufoxSession:
             self._reset_requested = False
             return value
 
-    def _worker(self) -> None:
+    def _worker(self, generation: int) -> None:
+        # The async exception may arrive during shutdown, outside the job loop.
+        try:
+            self._worker_run(generation)
+        except _SharedCamoufoxWorkerAbandoned:
+            pass
+
+    def _worker_run(self, generation: int) -> None:
         self._worker_thread_id = threading.get_ident()
         browser_cm = None
         browser = None
+        future = None
         launched_at = 0.0
         jobs_since_launch = 0
         # Перезапуск браузера = новый случайный fingerprint (UA/ОС/screen/WebGL):
@@ -34587,16 +34760,42 @@ class _SharedCamoufoxSession:
         reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 60))
         reset_after_seconds = max(60, _camoufox_env_int("CAMOUFOX_RESET_AFTER_SECONDS", 1200))
 
-        def _close_named_pages() -> None:
+        def _mark_active(label: str) -> bool:
+            with self._lock:
+                if generation != self._generation:
+                    return False
+                self._active_job = (label, time.monotonic(), generation)
+                return True
+
+        def _close_named_pages(skip_playwright: bool = False) -> None:
+            if generation != self._generation:
+                return
             # Strict order: close every named page before browser/context.
             for page_name, page in list(self._named_pages.items()):
-                with contextlib.suppress(Exception):
-                    page.close()
+                if not skip_playwright:
+                    with contextlib.suppress(Exception):
+                        page.close()
                 self._named_pages.pop(page_name, None)
             self._named_pages.clear()
+            self._named_page_used = {}
 
         def _close_browser(reason: str) -> None:
             nonlocal browser_cm, browser, launched_at, jobs_since_launch
+            if generation != self._generation:
+                browser_cm = None
+                browser = None
+                return
+            current_label = self._active_job[0] if self._active_job is not None else "worker"
+            if not _mark_active(f"close:{reason}:{current_label}"):
+                browser_cm = None
+                browser = None
+                return
+            driver_pid = self._driver_pid
+            driver_dead = driver_pid is not None and self._driver_is_dead(driver_pid)
+            if generation != self._generation:
+                browser_cm = None
+                browser = None
+                return
             cached_long_pages = globals().get("_CYBERSCORE_LONG_PAGES")
             if cached_long_pages is not None:
                 with contextlib.suppress(Exception):
@@ -34605,19 +34804,25 @@ class _SharedCamoufoxSession:
             if live_watchers is not None:
                 with contextlib.suppress(Exception):
                     live_watchers.clear()
-            _close_named_pages()
-            if browser is not None:
+            _close_named_pages(skip_playwright=driver_dead)
+            if browser is not None and not driver_dead:
                 with contextlib.suppress(Exception):
                     browser.close()
-            if browser_cm is not None:
+            if browser_cm is not None and not driver_dead:
                 with contextlib.suppress(Exception):
                     browser_cm.__exit__(None, None, None)
             if browser is not None:
-                print(f"   🔒 Shared Camoufox browser closed ({reason})")
+                if driver_dead:
+                    print(f"   🔒 Shared Camoufox browser dropped (driver dead, {reason})")
+                else:
+                    print(f"   🔒 Shared Camoufox browser closed ({reason})")
             browser_cm = None
             browser = None
             launched_at = 0.0
             jobs_since_launch = 0
+            self._driver_pid = None
+            if driver_dead:
+                self._kill_owned_driver(driver_pid)
 
         def _ensure_browser() -> Any:
             nonlocal browser_cm, browser, launched_at
@@ -34658,12 +34863,16 @@ class _SharedCamoufoxSession:
                 browser_cm = camoufox.Camoufox(**fallback_options)
                 browser = browser_cm.__enter__()
             launched_at = time.time()
+            self._driver_pid = self._driver_pid_for_browser(browser)
             print(f"   🌐 Shared Camoufox browser created ({proxy_label})")
             return browser
 
         try:
-            while True:
+            while generation == self._generation:
                 job = self._jobs.get()
+                if generation != self._generation:
+                    self._jobs.put(job)
+                    break
                 if job is self._STOP:
                     break
                 if isinstance(job, tuple) and len(job) == 6:
@@ -34680,11 +34889,22 @@ class _SharedCamoufoxSession:
                     continue
                 try:
                     _job_t0 = time.monotonic()
+                    if generation != self._generation:
+                        break
+                    if not _mark_active(label):
+                        break
                     if self._pop_reset_requested():
                         _close_browser("requested reset")
+                    if not _mark_active(f"launch:{label}"):
+                        break
                     active_browser = _ensure_browser()
+                    if generation != self._generation:
+                        break
                     _job_t_browser = time.monotonic()
+                    _mark_active(label)
                     result = callback(active_browser)
+                    if generation != self._generation:
+                        break
                     _job_t1 = time.monotonic()
                     _spent = _job_t1 - _job_t0
                     if _spent >= CAMOUFOX_SLOW_JOB_LOG_SECONDS:
@@ -34699,6 +34919,8 @@ class _SharedCamoufoxSession:
                     future.set_result(result)
                     _note_proxy_success(CURRENT_PROXY)
                 except Exception as exc:
+                    if generation != self._generation:
+                        break
                     future.set_exception(exc)
                     code_defect = False
                     with contextlib.suppress(Exception):
@@ -34731,17 +34953,31 @@ class _SharedCamoufoxSession:
                         # не ротируем прокси и не пишем в лог, будто виновата сеть.
                         self.request_reset()
                 finally:
-                    browser_age = time.time() - launched_at if launched_at else 0.0
-                    should_reset = (
-                        self._pop_reset_requested()
-                        or jobs_since_launch >= reset_after_jobs
-                        or (browser_age >= reset_after_seconds and self._jobs.empty())
-                    )
-                    if should_reset:
-                        _close_browser("periodic reset" if browser_age >= reset_after_seconds else "requested reset")
+                    if generation != self._generation:
+                        if not future.done():
+                            with contextlib.suppress(Exception):
+                                future.set_exception(_SharedCamoufoxWorkerAbandoned())
+                    else:
+                        browser_age = time.time() - launched_at if launched_at else 0.0
+                        should_reset = (
+                            self._pop_reset_requested()
+                            or jobs_since_launch >= reset_after_jobs
+                            or (browser_age >= reset_after_seconds and self._jobs.empty())
+                        )
+                        if should_reset:
+                            _close_browser("periodic reset" if browser_age >= reset_after_seconds else "requested reset")
+                        with self._lock:
+                            if self._active_job is not None and self._active_job[2] == generation:
+                                self._active_job = None
+        except _SharedCamoufoxWorkerAbandoned as exc:
+            if future is not None and not future.done():
+                with contextlib.suppress(Exception):
+                    future.set_exception(exc)
         finally:
             _close_browser("shutdown")
-            self._worker_thread_id = None
+            if generation == self._generation:
+                self._worker_thread_id = None
+                self._active_job = None
 
 
 _shared_camoufox_session = _SharedCamoufoxSession()
