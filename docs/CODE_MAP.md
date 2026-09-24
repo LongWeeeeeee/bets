@@ -45,6 +45,43 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   по каждой цели пишется `<target>.predictions.npz` (mids, ts, y, a, b, production теста).
   Сетка E-328: `grid_e326.sh`, анализ `analyze_e326.py`, разрез по серии `series_split_e326.py`.
 
+## Kills-v3 panel shadow serving (E-329)
+
+- `base/kills_v3_serving.py` — живые 152 T+P признака kills-v3 для одной карты, бит в бит как офлайн-сборщик
+  (`base/tools/kills_v3_research.py`, общий `History.query_features`).
+  - `build_state(rich_path, db_paths, *, history_start, cutoff, visibility_delay, **params)` проигрывает историю
+    до `cutoff`; события с `end` в `[cutoff - delay, cutoff)` держит «ожидающими» и применяет, когда запрос их видит.
+  - `save_state` / `load_state`: npz без pickle; отказ при смене схемы (v2 хранит `source_order`), раскладки,
+    SHA кода (снимается при импорте) или major-версии numpy.
+  - `features_for_map(state, radiant_team_id, dire_team_id, radiant_accounts, dire_accounts, start_ts, strict=False)`
+    → `(tp_names, float32[152])`. Правило видимости: `end < min(start_ts - delay, cutoff)`. Входы проверяются до
+    изменения состояния; team ID — любой int64 (отрицательные — настоящие ID STRATZ, 0 = нет команды).
+    При `strict=False` запрос не по порядку стартов использует уже применённый фронт и пишет
+    `state.serving_last_overvisible_seconds`; `strict=True` (в `parity`) падает.
+  - CLI: `python -m base.kills_v3_serving build-state --cutoff TS --history-start TS [--visibility-delay S]
+    [--half-life-days --pseudo-games --poisson-lr --elo-k] --output PATH` и
+    `parity --state PATH --dataset PATH.npz [--n 2000]` (exit 1 при любом расхождении).
+  - Замер 24.09: реальная сверка 857/857 строк бит в бит; сборка — пик 3.33 ГБ RSS (только локально);
+    файл ~220 МБ; после загрузки ~0.9 ГБ RSS; 3.4 мс на запрос.
+- `base/kv3_shadow.py` — сравнение модели B (928 колонок панели + подмножество kv3 T+P по именам) с продом.
+  Включается `KV3_SHADOW_ENABLED=1`; хук — `row_observer` в `prematch_panel_live.evaluate_map`; контекст (match_id,
+  map_key, start_ts, `start_ts_source`, знаковые team ID) — `win_model_veto._prediction_context`, только при флаге.
+  Очередь на 16, всё I/O и загрузка — в потоке `kv3-shadow`, в путь панели ничего не пробрасывается.
+  Ошибка одной карты пишется в строку; выключается после 50 ошибок подряд или при сбое загрузки/контракта.
+  Состояние перечитывается не чаще раза в 600 с при смене mtime/размера (старое освобождается до загрузки нового).
+  - Env: `KV3_SHADOW_DIR` (default `ml-models/prematch_panel_kv3`: `<target>.cbm`, `<target>.calib.json`,
+    `feature_names.json`, `manifest.json` из `run.py --save-models`), `KV3_STATE_PATH`
+    (default `data/kills_v3_state/state.npz`), `KV3_SHADOW_JOURNAL` (default `runtime/kv3_shadow.jsonl`: вероятности
+    B и прода по 6 целям, cutoff/возраст state, gate/error, `overvisible_s`, `x_panel_nan_share`),
+    `KV3_SHADOW_FEATURES` (default `runtime/kv3_shadow_features.jsonl`: полные векторы panel 928 и kv3 152 как base64
+    float32 — для офлайн-перескоринга других кандидатов).
+- `scripts/ops/build_kv3_state.sh [--deliver]` — ночная сборка состояния с параметрами из `manifest.json` модели B;
+  предупреждает, если свежайшая карта корпуса старше 36 ч; `--deliver` — scp на serv1 через tmp + sha1 + mv.
+  Вызывается из `scripts/run/rebuild_prematch_snapshot.sh` (не фатально) только при наличии модели B; доставка —
+  только при маркере `runtime/kv3_state_deliver.on`.
+- `runtime/experiments/kills/panel_plus_v3/run.py --save-models DIR` пишет бандл модели B (отказ, если DIR есть);
+  `--drop-kv3-regex RX` — абляция колонок kv3; `compare_d86400.py` — рычаг задержки 24 ч против 1200 с.
+
 ## Offline laning ML (E-264)
 
 - `base/build_laning_corpus.py`: CLI `python -m base.build_laning_corpus
@@ -535,6 +572,7 @@ Rich `wins` — исход карты; `winrates` и nullable-conflated `pstats`
 - `journal_row()` / `append_journal()` — JSONL по строке на карту, `schema = 1`; изменение состава полей обязано повышать номер.
 - `load_specs()` читает `panel.json` из каталога артефакта и **молчит при его отсутствии** (панель не должна ронять live). `atomic_write_specs()` пишет через tmp + `os.replace`.
 - Env: `ML_PANEL_DIR` (default `ml-models/prematch_panel`), `ML_PANEL_JOURNAL` (default `runtime/ml_panel.jsonl`), `ML_PANEL_MIN_FILL` (default `0.75`).
+- `base/kv3_shadow.py` — shadow модели B панели (E-329): см. раздел «Kills-v3 panel shadow serving» выше. Вердикты, текст панели, `ml_panel.jsonl` и ставки не меняются.
 - Тесты: `base/tests/test_ml_panel.py` (23 шт.) — границы калибровки, монотонность, гейт заполненности, выбор лучшего не по сырому скору, замороженный формат журнала.
 
 ---

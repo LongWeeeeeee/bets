@@ -1,5 +1,6 @@
 """Frozen history and live query parity for kills-v3 T+P."""
 import json
+import sqlite3
 import numpy as np
 import pytest
 
@@ -53,6 +54,25 @@ def test_frozen_state_matches_builder_and_roundtrip(tmp_path):
     np.testing.assert_array_equal(got, expected)
 
 
+def test_code_version_is_frozen_at_import_during_build(tmp_path, monkeypatch):
+    start = v3.QUERY_START + v3.DAY
+    rich = tmp_path / "toy.npz"
+    toy_rich(rich, [start - 20000], [1800], [(10, 15)])
+    original_sha256 = v3.sha256
+    expected = {"builder_sha256": original_sha256(v3.Path(v3.__file__)),
+                "serving_sha256": original_sha256(serving.Path(serving.__file__))}
+
+    def changed_code_on_disk(path):
+        if str(path) in (str(v3.__file__), str(serving.__file__)):
+            return "edited-during-build"
+        return original_sha256(path)
+
+    monkeypatch.setattr(v3, "sha256", changed_code_on_disk)
+    state = serving.build_state(rich, [], history_start=v3.HISTORY_START,
+                                cutoff=start - 7000, pseudo_games=0)
+    assert state.serving_meta["code_version"] == expected
+
+
 def test_delayed_event_becomes_visible_after_cutoff(tmp_path):
     start = v3.QUERY_START + v3.DAY
     cutoff = start - 1000
@@ -78,7 +98,8 @@ def test_delayed_event_becomes_visible_after_cutoff(tmp_path):
             np.testing.assert_array_equal(got, ds["X"][row, 0, columns])
     assert state.serving_pending_at == 1
     with pytest.raises(ValueError, match="nondecreasing"):
-        serving.features_for_map(state, 1, 2, range(1, 6), range(6, 11), cutoff + 200)
+        serving.features_for_map(state, 1, 2, range(1, 6), range(6, 11), cutoff + 200,
+                                 strict=True)
 
 
 def _random_accounts(rich, rng, low=1, high=200):
@@ -169,7 +190,91 @@ def test_out_of_order_queries_after_pending_applied(tmp_path):
         np.testing.assert_array_equal(revisit, ds["X"][row_of[q0], 0, columns])
         np.testing.assert_array_equal(revisit, first)
         with pytest.raises(ValueError, match="nondecreasing"):
-            serving.features_for_map(loaded, 1, 2, range(1, 6), range(6, 11), cutoff + 100)
+            serving.features_for_map(loaded, 1, 2, range(1, 6), range(6, 11), cutoff + 100,
+                                     strict=True)
+
+
+@pytest.mark.parametrize("delay", [1200, 86400])
+def test_live_out_of_order_reuses_visible_frontier(tmp_path, delay):
+    cutoff = v3.QUERY_START + 20000
+    early, late = cutoff + 600, cutoff + 1150
+    rich = tmp_path / "toy.npz"
+    toy_rich(rich, [cutoff - delay - 7800, cutoff - delay - 1500,
+                    cutoff - delay - 700, early, late],
+             [1800] * 5, [(10, 15), (40, 15), (30, 5), (100, 15), (25, 10)])
+    state = serving.build_state(rich, [], history_start=v3.HISTORY_START,
+                                cutoff=cutoff, visibility_delay=delay, pseudo_games=0)
+    assert state.serving_meta["events_pending"] == 2
+    accounts = (range(1, 6), range(6, 11))
+    serving.features_for_map(state, 1, 2, *accounts, late)
+    assert state.serving_last_overvisible_seconds == 0
+    assert state.serving_pending_at == 2
+    with pytest.raises(ValueError, match="nondecreasing"):
+        serving.features_for_map(state, 1, 2, *accounts, early, strict=True)
+    _, got = serving.features_for_map(state, 1, 2, *accounts, early)
+    assert state.serving_last_overvisible_seconds == 501
+    assert state.serving_out_of_order_queries == 1
+
+    # Independent History replay at the already-applied frontier, then query
+    # using the earlier map's own start time.
+    events, _ = v3.load_events(rich, [], v3.HISTORY_START)
+    frontier = late - delay
+    expected_history = v3.History(pseudo_games=0)
+    for i in np.argsort(events["end"], kind="stable"):
+        if int(events["end"][i]) >= frontier:
+            break
+        expected_history.apply(events, int(i))
+    query = {"start": early, "league": 0, "stype": 0, "series_number": 0,
+             "teams": np.array([1, 2]), "accounts": np.arange(1, 11),
+             "heroes": np.zeros(10, np.int64)}
+    x = expected_history.query_features(query)
+    blocks = expected_history.feature_blocks
+    lo = len(blocks["G"])
+    expected = x[0, lo:lo + len(blocks["T"]) + len(blocks["P"])]
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("bad", ["four_accounts", "milliseconds", "negative_account",
+                                 "team_below_int64", "team_above_int64", "boolean_team",
+                                 "noninteger_team", "noninteger_start", "invalid_account"])
+def test_bad_input_does_not_apply_pending_or_change_features(tmp_path, bad):
+    cutoff = v3.QUERY_START + 20000
+    rich = tmp_path / "toy.npz"
+    toy_rich(rich, [cutoff - 9000, cutoff - 2700, cutoff + 500], [1800] * 3,
+             [(10, 15), (40, 15), (100, 15)])
+    def fresh():
+        return serving.build_state(rich, [], history_start=v3.HISTORY_START,
+                                   cutoff=cutoff, visibility_delay=1200, pseudo_games=0)
+    state = fresh()
+    accounts = [1, 2, 3, 4, 5]
+    start = cutoff + 1000
+    radiant_team = 1
+    if bad == "four_accounts":
+        accounts.pop()
+    elif bad == "negative_account":
+        accounts[0] = -1
+    elif bad == "milliseconds":
+        start *= 1000
+    elif bad == "team_below_int64":
+        radiant_team = -(2 ** 63) - 1
+    elif bad == "team_above_int64":
+        radiant_team = 2 ** 63
+    elif bad == "boolean_team":
+        radiant_team = True
+    elif bad == "noninteger_team":
+        radiant_team = "-123"
+    elif bad == "noninteger_start":
+        start = str(start)
+    else:
+        accounts[0] = "unknown"
+    with pytest.raises(ValueError):
+        serving.features_for_map(state, radiant_team, 2, accounts, range(6, 11), start)
+    assert state.serving_pending_at == 0
+    assert state.serving_last_query_start == cutoff
+    _, got = serving.features_for_map(state, 1, 2, range(1, 6), range(6, 11), cutoff + 1000)
+    _, expected = serving.features_for_map(fresh(), 1, 2, range(1, 6), range(6, 11),
+                                            cutoff + 1000)
+    np.testing.assert_array_equal(got, expected)
 
 
 def test_numpy_major_mismatch_refused(tmp_path):
@@ -191,3 +296,51 @@ def test_numpy_major_mismatch_refused(tmp_path):
     state.serving_meta["numpy_version"] = f"{running_major}.99.99"
     serving.save_state(state, path)
     serving.load_state(path)
+
+
+def test_negative_team_id_uses_builder_history(tmp_path):
+    start = v3.QUERY_START + v3.DAY
+    cutoff = start - 7000
+    rich = tmp_path / "negative_team.npz"
+    toy_rich(rich, [start - 20000, start], [1800, 1800],
+             [(20, 10), (30, 15)], teams=[[-123, 2], [-123, 2]])
+    meta = v3.build_dataset(rich, [], tmp_path / "dataset", pseudo_games=0,
+                            history_cutoff=cutoff)
+    state = serving.build_state(rich, [], history_start=v3.HISTORY_START,
+                                cutoff=cutoff, pseudo_games=0)
+    with np.load(tmp_path / "dataset/dataset.npz") as ds:
+        row = int(np.flatnonzero(ds["starts"] == start)[0])
+        columns = [meta["feature_names"].index(name) for name in
+                   meta["blocks"]["T"] + meta["blocks"]["P"]]
+        _, got = serving.features_for_map(state, -123, 2, range(1, 6),
+                                          range(6, 11), start)
+        np.testing.assert_array_equal(got, ds["X"][row, 0, columns])
+        assert np.isfinite(got[meta["blocks"]["T"].index("team_own_kills_for")])
+    fresh = serving.build_state(rich, [], history_start=v3.HISTORY_START,
+                                cutoff=cutoff, pseudo_games=0)
+    assert serving.parity(fresh, tmp_path / "dataset/dataset.npz") == (0.0, 0, 1)
+
+
+def test_roundtrip_preserves_builder_source_order(tmp_path):
+    start = v3.QUERY_START + v3.DAY
+    cutoff = start - 7000
+    rich = tmp_path / "z_rich.npz"
+    db = tmp_path / "a_empty.sqlite3"
+    toy_rich(rich, [start - 20000, start], [1800, 1800], [(20, 10), (30, 15)])
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE matches (match_id INTEGER, status TEXT)")
+        conn.execute("CREATE TABLE match_windows (match_id INTEGER)")
+        conn.execute("CREATE TABLE player_windows (match_id INTEGER, row_index INTEGER)")
+    v3.build_dataset(rich, [db], tmp_path / "dataset", pseudo_games=0,
+                     history_cutoff=cutoff)
+    state = serving.build_state(rich, [db], history_start=v3.HISTORY_START,
+                                cutoff=cutoff, pseudo_games=0)
+    path = tmp_path / "state.npz"
+    serving.save_state(state, path)
+    loaded = serving.load_state(path)
+    assert loaded.serving_meta["source_order"] == [str(rich.resolve()), str(db.resolve())]
+    assert serving.parity(loaded, tmp_path / "dataset/dataset.npz") == (0.0, 0, 1)
+    state.serving_meta.pop("source_order")
+    serving.save_state(state, path)
+    with pytest.raises(ValueError, match="source order missing"):
+        serving.load_state(path)

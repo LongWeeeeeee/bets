@@ -20,7 +20,9 @@ import numpy as np
 from base.tools import kills_v3_research as v3
 
 
-SCHEMA = "kills-v3-serving-state-v1"
+SCHEMA = "kills-v3-serving-state-v2"
+CODE_VERSION = {"builder_sha256": v3.sha256(Path(v3.__file__)),
+                "serving_sha256": v3.sha256(Path(__file__))}
 
 
 def _rss_bytes() -> int:
@@ -86,12 +88,12 @@ def build_state(rich_path: Path, db_paths: list[Path], *, history_start: int,
     state.serving_meta = {"schema": SCHEMA, "numpy_version": np.__version__, "cutoff": int(cutoff),
                           "history_start": int(history_start), "visibility_delay": int(visibility_delay),
                           "builder_params": defaults, "source_hashes": {str(p): source_hashes[str(p)] for p in used},
+                          "source_order": [str(p) for p in used],
                           "rich_path": str(rich_path), "db_paths": [str(p) for p in db_paths],
                           "feature_names": names, "tp_names": blocks["T"] + blocks["P"],
                           "events_loaded": len(events["mid"]), "events_replayed": applied,
                           "events_pending": len(pending_order),
-                          "code_version": {"builder_sha256": v3.sha256(Path(v3.__file__)),
-                                           "serving_sha256": v3.sha256(Path(__file__))}}
+                          "code_version": dict(CODE_VERSION)}
     return state
 
 
@@ -255,6 +257,10 @@ def load_state(path: Path) -> v3.History:
         meta = json.loads(str(data["metadata"]))
         if meta["schema"] != SCHEMA:
             raise ValueError("unrecognized state schema")
+        if (not isinstance(meta.get("source_order"), list)
+                or len(meta["source_order"]) != len(meta["source_hashes"])
+                or set(meta["source_order"]) != set(meta["source_hashes"])):
+            raise ValueError("state source order missing or invalid; rebuild the snapshot")
         stored_numpy = meta.get("numpy_version")
         if stored_numpy is not None and str(stored_numpy).split(".")[0] != np.__version__.split(".")[0]:
             raise ValueError(f"state numpy major version {stored_numpy} differs from running "
@@ -262,8 +268,7 @@ def load_state(path: Path) -> v3.History:
         names, blocks = v3.feature_layout()
         if meta["feature_names"] != names or meta["tp_names"] != blocks["T"] + blocks["P"]:
             raise ValueError("feature layout changed since snapshot")
-        if meta["code_version"] != {"builder_sha256": v3.sha256(Path(v3.__file__)),
-                                    "serving_sha256": v3.sha256(Path(__file__))}:
+        if meta["code_version"] != CODE_VERSION:
             raise ValueError("code version changed since snapshot")
         state = v3.History(**meta["builder_params"])
         for prefix, width in (("team", len(v3.TEAM_METRICS)), ("player", len(v3.PLAYER_METRICS)),
@@ -292,20 +297,37 @@ def load_state(path: Path) -> v3.History:
 
 
 def features_for_map(state: v3.History, radiant_team_id: int, dire_team_id: int,
-                     radiant_accounts, dire_accounts, start_ts: int) -> tuple[list[str], np.ndarray]:
-    if int(start_ts) <= state.serving_meta["cutoff"]:
-        raise ValueError("query must start after snapshot cutoff")
+                     radiant_accounts, dire_accounts, start_ts: int, *,
+                     strict: bool = False) -> tuple[list[str], np.ndarray]:
+    min_id, max_id = np.iinfo(np.int64).min, np.iinfo(np.int64).max
+    if (not isinstance(start_ts, (int, np.integer)) or isinstance(start_ts, (bool, np.bool_))
+            or not state.serving_meta["cutoff"] < start_ts < 4_102_444_800):
+        raise ValueError("query start must be an integer after cutoff and before 2100")
+    if any(not isinstance(team, (int, np.integer)) or isinstance(team, (bool, np.bool_))
+           or not min_id <= team <= max_id for team in (radiant_team_id, dire_team_id)):
+        raise ValueError("team IDs must be int64 integers")
+    try:
+        radiant_accounts, dire_accounts = list(radiant_accounts), list(dire_accounts)
+        if len(radiant_accounts) != 5 or len(dire_accounts) != 5:
+            raise ValueError("five accounts per side required")
+        radiant_accounts = [int(account) for account in radiant_accounts]
+        dire_accounts = [int(account) for account in dire_accounts]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("five integer-convertible accounts per side required") from exc
+    if any(not 0 <= account <= max_id for account in radiant_accounts + dire_accounts):
+        raise ValueError("account IDs must be nonnegative int64 integers")
     pending = state.serving_pending
     visible = min(int(start_ts) - state.serving_meta["visibility_delay"], state.serving_meta["cutoff"])
-    if state.serving_pending_at > 0 and int(pending["end"][state.serving_pending_at - 1]) >= visible:
+    if strict and state.serving_pending_at > 0 and int(pending["end"][state.serving_pending_at - 1]) >= visible:
         raise ValueError("delayed snapshot queries must be in nondecreasing start order")
     while state.serving_pending_at < len(pending["end"]) and int(pending["end"][state.serving_pending_at]) < visible:
         state.apply(pending, state.serving_pending_at)
         state.serving_pending_at += 1
+    last_end = int(pending["end"][state.serving_pending_at - 1]) if state.serving_pending_at else None
+    state.serving_last_overvisible_seconds = max(0, last_end - visible + 1) if last_end is not None else 0
+    state.serving_out_of_order_queries = (getattr(state, "serving_out_of_order_queries", 0)
+                                          + int(start_ts < state.serving_last_query_start))
     state.serving_last_query_start = int(start_ts)
-    radiant_accounts, dire_accounts = list(radiant_accounts), list(dire_accounts)
-    if len(radiant_accounts) != 5 or len(dire_accounts) != 5:
-        raise ValueError("five accounts per side required")
     query = {"start": int(start_ts), "league": 0, "stype": 0, "series_number": 0,
              "teams": np.asarray([radiant_team_id, dire_team_id], np.int64),
              "accounts": np.asarray(radiant_accounts + dire_accounts, np.int64),
@@ -340,7 +362,7 @@ def parity(state: v3.History, dataset: Path, n: int = 2000) -> tuple[float, int,
             raise ValueError(f"dataset {key} differs from state")
     # A retained immutable source may be mounted at a different path. Preserve
     # source priority by comparing hashes in the builder's input order.
-    if list(meta["source_hashes"].values()) != list(sm["source_hashes"].values()):
+    if list(meta["source_hashes"].values()) != [sm["source_hashes"][path] for path in sm["source_order"]]:
         raise ValueError("dataset source hashes differ from state")
     for path, expected in sm["source_hashes"].items():
         if v3.sha256(Path(path)) != expected:
@@ -370,7 +392,8 @@ def parity(state: v3.History, dataset: Path, n: int = 2000) -> tuple[float, int,
         for row, i in enumerate(indices):
             teams, accounts = events["teams"][i], events["accounts"][i]
             _, got[row] = features_for_map(state, int(teams[0]), int(teams[1]),
-                                            accounts[:5], accounts[5:], int(events["start"][i]))
+                                            accounts[:5], accounts[5:], int(events["start"][i]),
+                                            strict=True)
     mismatch = int(np.count_nonzero(np.isnan(got) != np.isnan(expected)))
     if np.isinf(got).any() or np.isinf(expected).any():
         raise ValueError("nonfinite infinity in parity features")

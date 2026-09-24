@@ -392,11 +392,41 @@ def _prediction_context(match) -> dict:
         mid = int(raw) if not isinstance(raw, bool) else 0
     except (TypeError, ValueError):
         mid = 0
-    return {"match_id": str(mid) if mid > 0 else None,
+    context = {"match_id": str(mid) if mid > 0 else None,
             "observed_at": time.time(),
             "map_key": data.get("map_key"),
             "game_time": data.get("game_time"),
             "elo_evaluation_timestamp": data.get("startDateTime")}
+    if os.getenv("KV3_SHADOW_ENABLED", "0") == "1":
+        # Keep the default context unchanged; malformed optional team fields
+        # cannot interrupt the win/panel path even with shadow enabled.
+        def _signed_team_id(camel_key, snake_key):
+            raw_team = data.get(camel_key)
+            if raw_team is None:
+                raw_team = data.get(snake_key)
+            if isinstance(raw_team, dict):
+                raw_team = raw_team.get("id")
+            try:
+                return int(raw_team) if not isinstance(raw_team, bool) else 0
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        try:
+            raw_start = context["elo_evaluation_timestamp"]
+            try:
+                valid_start = not isinstance(raw_start, bool) and int(raw_start) > 0
+            except (TypeError, ValueError, OverflowError):
+                valid_start = False
+            context.update(map_id=context["match_id"],
+                           start_ts=elo_evaluation_timestamp(data),
+                           start_ts_source="startDateTime" if valid_start else "now_fallback",
+                           radiant_team_id=_signed_team_id("radiantTeam", "radiant_team_id"),
+                           dire_team_id=_signed_team_id("direTeam", "dire_team_id"))
+        except Exception:  # noqa: BLE001
+            context.update(map_id=context["match_id"], start_ts=int(context["observed_at"]),
+                           start_ts_source="now_fallback",
+                           radiant_team_id=0, dire_team_id=0)
+    return context
 
 
 def last_prediction_details(index) -> dict:

@@ -73,6 +73,9 @@ def test_prediction_context_uses_only_explicit_map_id() -> None:
     assert wmv._prediction_context({"id": 123, "map_key": "series/123.2"})["match_id"] is None
     context = wmv._prediction_context({"match_id": 8992864996, "map_key": "series/123.2",
                                        "game_time": -79, "startDateTime": 1789000000})
-    assert context == {"match_id": "8992864996", "map_key": "series/123.2",
-                       "game_time": -79, "elo_evaluation_timestamp": 1789000000}
+    assert {key: context[key] for key in ("match_id", "map_key", "game_time",
+                                           "elo_evaluation_timestamp")} == {
+        "match_id": "8992864996", "map_key": "series/123.2",
+        "game_time": -79, "elo_evaluation_timestamp": 1789000000}
+    assert context["observed_at"] > 0
     assert wmv._prediction_context({"match_id": True})["match_id"] is None

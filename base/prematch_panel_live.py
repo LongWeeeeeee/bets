@@ -412,13 +412,26 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             if hblock is not None:
                 blocks["hybrid"] = hblock
         observer = None
-        if shadow_context is not None and os.getenv('DURATION43_SHADOW_ENABLED', '0') == '1':
+        duration_shadow = shadow_context is not None and os.getenv('DURATION43_SHADOW_ENABLED', '0') == '1'
+        kv3_enabled = shadow_context is not None and os.getenv('KV3_SHADOW_ENABLED', '0') == '1'
+        if duration_shadow or kv3_enabled:
             def observer(x, verdicts):
-                # Imports and enqueue failures are contained by score's observer guard.
-                import duration43_shadow
-                _state["shadow_status"] = duration43_shadow.submit(
-                    shadow_context, heroes10[0].tolist(), accounts10[0].tolist(),
-                    bundle, x, verdicts)
+                if duration_shadow:
+                    try:
+                        import duration43_shadow
+                        _state["shadow_status"] = duration43_shadow.submit(
+                            shadow_context, heroes10[0].tolist(), accounts10[0].tolist(),
+                            bundle, x, verdicts)
+                    except Exception as exc:  # noqa: BLE001
+                        _state["shadow_status"] = f'{type(exc).__name__}: {exc}'
+                if kv3_enabled:
+                    try:
+                        import kv3_shadow
+                        _state["kv3_shadow_status"] = kv3_shadow.submit(
+                            shadow_context, heroes10[0].tolist(), accounts10[0].tolist(),
+                            bundle, x, verdicts)
+                    except Exception as exc:  # noqa: BLE001
+                        _state["kv3_shadow_status"] = f'{type(exc).__name__}: {exc}'
         verdicts = score(bundle, blocks, prod35_names=prod_order,
                          with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS,
                          row_observer=observer)
