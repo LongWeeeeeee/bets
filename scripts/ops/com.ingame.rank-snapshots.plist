@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.rank-snapshots</string>
+    <!-- Ежедневный снимок региональных лидербордов Valve (ingame-enwj).
+         Исходник: scripts/run/collect_rank_snapshots.sh
+
+         Замена автоматизации Codex «dota-2»: 22.09.2026 её ход упал на 403 от модели,
+         с 23.09 приложение Codex закрыто и heartbeat не срабатывает. Снимки за 22–23.09
+         потеряны навсегда: Valve отдаёт только текущую таблицу.
+
+         09:00 — как у прежней автоматизации. Если Mac спал, launchd запустит пропущенный
+         прогон при пробуждении; повтор в те же сутки UTC скрипт пропускает сам.
+
+         Ставится: bash scripts/ops/install-rank-snapshots.sh
+         Снять:    launchctl bootout gui/$(id -u)/com.ingame.rank-snapshots -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/Documents/ingame/scripts/run/collect_rank_snapshots.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/ingame_rank_snapshots.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_rank_snapshots.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/alex/Documents/ingame</string>
+</dict>
+</plist>
