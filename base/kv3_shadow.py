@@ -63,12 +63,21 @@ class Candidate:
                 or len(set(self.source_names)) != len(self.source_names)
                 or self.kv3_columns != ['kv3_' + name for name in self.source_names]):
             raise FeatureContractError('KV3 feature contract differs from panel columns or state T+P names')
+        manifest_blob = (directory / 'manifest.json').read_bytes()
+        parameters = json.loads(manifest_blob).get('od3_parameters')
+        required = ('history_start', 'visibility_delay', 'half_life_days',
+                    'pseudo_games', 'poisson_lr', 'elo_k')
+        missing = [key for key in required if not isinstance(parameters, dict) or key not in parameters]
+        if missing:
+            raise FeatureContractError('KV3 model manifest missing od3_parameters: ' + ', '.join(missing))
+        self.od3_parameters = parameters
+        self.state_contract_error = None
         self.state_mtime, self.state_size = self._signature()
         self.state = load_state(self.state_path)
         self.cutoff = int(self.state.serving_meta['cutoff'])
         self._check_state_contract()
         self.last_state_check = time.monotonic()
-        self.manifest_sha256 = hashlib.sha256((directory / 'manifest.json').read_bytes()).hexdigest()
+        self.manifest_sha256 = hashlib.sha256(manifest_blob).hexdigest()
         self.models = {}
         self.calibration = {}
         for key in TARGETS:
@@ -90,7 +99,23 @@ class Candidate:
         return stat.st_mtime_ns, stat.st_size
 
     def _check_state_contract(self):
-        self.tp_names = list(self.state.serving_meta['tp_names'])
+        meta = self.state.serving_meta
+        builder = meta.get('builder_params')
+        mismatches = []
+        for key in ('history_start', 'visibility_delay', 'half_life_days',
+                    'pseudo_games', 'poisson_lr', 'elo_k'):
+            if key in ('half_life_days', 'pseudo_games', 'poisson_lr', 'elo_k'):
+                actual = builder.get(key) if isinstance(builder, dict) else None
+            else:
+                actual = meta.get(key)
+            expected = self.od3_parameters[key]
+            if (type(actual) not in (int, float) or type(expected) not in (int, float)
+                    or not math.isfinite(actual) or not math.isfinite(expected)
+                    or actual != expected):
+                mismatches.append(key)
+        if mismatches:
+            raise FeatureContractError('KV3 model/state parameters differ: ' + ', '.join(mismatches))
+        self.tp_names = list(meta['tp_names'])
         positions = {name: i for i, name in enumerate(self.tp_names)}
         if len(positions) != 152 or any(name not in positions for name in self.source_names):
             raise FeatureContractError('KV3 feature contract differs from panel columns or state T+P names')
@@ -114,6 +139,7 @@ class Candidate:
         self.state_mtime, self.state_size = signature if signature is not None else (None, None)
         self.state = None
         self.cutoff = None
+        self.state_contract_error = None
         gc.collect()
         if error is not None:
             return f'{type(error).__name__}: {error}'
@@ -125,6 +151,8 @@ class Candidate:
         except Exception as exc:  # noqa: BLE001 - keep the worker alive until next replacement
             self.state = None
             self.cutoff = None
+            if isinstance(exc, FeatureContractError):
+                self.state_contract_error = f'{type(exc).__name__}: {exc}'
             gc.collect()
             return f'{type(exc).__name__}: {exc}'
         return None
@@ -176,6 +204,8 @@ def _append_features(row):
 def _append(row, path, features=None):
     # Commit the deduplicated summary before its optional feature vector.
     def json_finite(value):
+        if isinstance(value, np.generic):
+            value = value.item()
         if isinstance(value, (float, np.floating)) and not math.isfinite(value):
             return None
         if isinstance(value, dict):
@@ -268,7 +298,11 @@ def capture(context, heroes, accounts, bundle, incumbent_x, verdicts, *, candida
                     row['error'] = reload_error
                     _STATUS['errors'] += 1
                 if candidate.state is None:
-                    row['gate_reason'] = 'state_unavailable'
+                    if candidate.state_contract_error:
+                        row['gate_reason'] = 'state_contract_mismatch'
+                        row['error'] = candidate.state_contract_error
+                    else:
+                        row['gate_reason'] = 'state_unavailable'
                 else:
                     ts = int(row['ts'])
                     row['state_cutoff_age_hours'] = (time.time() - candidate.cutoff) / 3600.0

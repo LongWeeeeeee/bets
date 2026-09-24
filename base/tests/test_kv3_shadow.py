@@ -51,7 +51,11 @@ def artifacts(tmp_path, monkeypatch):
         'kv3_columns': ['kv3_' + name for name in names],
         'kv3_source_names': names,
     }))
-    (directory / 'manifest.json').write_text('{}')
+    (directory / 'manifest.json').write_text(json.dumps({'od3_parameters': {
+        'history_start': state.serving_meta['history_start'],
+        'visibility_delay': state.serving_meta['visibility_delay'],
+        **state.serving_meta['builder_params'],
+    }}))
     rng = np.random.default_rng(7)
     samples = rng.normal(size=(20, 1080)).astype(np.float32)
     for key in ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50'):
@@ -71,6 +75,97 @@ def artifacts(tmp_path, monkeypatch):
 def _context(start, radiant=1, dire=2):
     return {'match_id': '42', 'start_ts': start,
             'radiant_team_id': radiant, 'dire_team_id': dire}
+
+
+def test_matching_model_and_state_parameters_score(artifacts, tmp_path):
+    import kv3_shadow as shadow
+    path = tmp_path / 'journal.jsonl'
+    assert shadow.capture(_context(artifacts.start), (), tuple(range(1, 11)),
+                          artifacts.bundle, np.zeros(928), (), path=path) == 'recorded'
+    row = json.loads(path.read_text().splitlines()[0])
+    assert row['gate_reason'] is None and len(row['targets']) == 6
+
+
+@pytest.mark.parametrize('key,value', [
+    ('visibility_delay', 1200), ('history_start', 1451606400),
+    ('half_life_days', 91), ('pseudo_games', 1), ('poisson_lr', .04), ('elo_k', 21),
+])
+def test_initial_state_parameter_mismatch_disables(artifacts, tmp_path, caplog, key, value):
+    import kv3_shadow as shadow
+    from base import kills_v3_serving as serving
+    state = serving.load_state(artifacts.state_path)
+    target = state.serving_meta['builder_params'] if key in state.serving_meta['builder_params'] else state.serving_meta
+    target[key] = value
+    serving.save_state(state, artifacts.state_path)
+    path = tmp_path / 'journal.jsonl'
+    args = (_context(artifacts.start), (), tuple(range(1, 11)),
+            artifacts.bundle, np.zeros(928), ())
+    assert shadow.capture(*args, path=path) == 'recorded'
+    row = json.loads(path.read_text().splitlines()[0])
+    assert shadow.status()['disabled'] and row['targets'] == {}
+    assert key in row['error']
+    assert shadow.capture(*args, path=path) == 'disabled'
+    assert len([r for r in caplog.records if 'KV3 shadow disabled' in r.message]) == 1
+
+
+@pytest.mark.parametrize('missing_key', ['od3_parameters', 'elo_k'])
+def test_missing_model_parameters_disables(artifacts, tmp_path, missing_key):
+    import kv3_shadow as shadow
+    manifest_path = artifacts.directory / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    if missing_key == 'od3_parameters':
+        del manifest[missing_key]
+    else:
+        del manifest['od3_parameters'][missing_key]
+    manifest_path.write_text(json.dumps(manifest))
+    path = tmp_path / 'journal.jsonl'
+    assert shadow.capture(_context(artifacts.start), (), tuple(range(1, 11)),
+                          artifacts.bundle, np.zeros(928), (), path=path) == 'recorded'
+    row = json.loads(path.read_text().splitlines()[0])
+    assert shadow.status()['disabled'] and missing_key in row['error']
+
+
+def test_state_parameter_mismatch_on_reload_recovers_after_change(artifacts, tmp_path, monkeypatch):
+    import kv3_shadow as shadow
+    from base import kills_v3_serving as serving
+    candidate = shadow.Candidate(artifacts.bundle)
+    original = serving.load_state(artifacts.state_path)
+    original_mtime = artifacts.state_path.stat().st_mtime_ns
+    original.serving_meta['visibility_delay'] = 1200
+    serving.save_state(original, artifacts.state_path)
+    os.utime(artifacts.state_path, ns=(original_mtime + 10_000_000,) * 2)
+    clock = [10_000.0]
+    monkeypatch.setattr(shadow.time, 'monotonic', lambda: clock[0])
+    candidate.last_state_check = 0
+    path = tmp_path / 'journal.jsonl'
+    args = ((), tuple(range(1, 11)), artifacts.bundle, np.zeros(928), ())
+    for mid in ('101', '102'):
+        assert shadow.capture(dict(_context(artifacts.start), match_id=mid), *args,
+                              candidate=candidate, path=path) == 'recorded'
+        clock[0] += 601
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [row['gate_reason'] for row in rows] == ['state_contract_mismatch'] * 2
+    assert all('visibility_delay' in row['error'] for row in rows)
+    assert candidate.state is None and not shadow.status()['disabled']
+    original.serving_meta['visibility_delay'] = 0
+    serving.save_state(original, artifacts.state_path)
+    os.utime(artifacts.state_path, ns=(original_mtime + 20_000_000,) * 2)
+    assert shadow.capture(dict(_context(artifacts.start), match_id='103'), *args,
+                          candidate=candidate, path=path) == 'recorded'
+    row = json.loads(path.read_text().splitlines()[-1])
+    assert row['gate_reason'] is None and len(row['targets']) == 6
+
+
+def test_numpy_scalar_values_are_journaled(artifacts, tmp_path):
+    import kv3_shadow as shadow
+    path = tmp_path / 'journal.jsonl'
+    context = dict(_context(artifacts.start), radiant_team_id=np.int64(1))
+    verdicts = [SimpleNamespace(key='w_5_15', probability=np.float32(.625))]
+    assert shadow.capture(context, (), tuple(range(1, 11)), artifacts.bundle,
+                          np.zeros(928), verdicts, path=path) == 'recorded'
+    row = json.loads(path.read_text().splitlines()[0])
+    assert row['teams'][0] == 1
+    assert row['targets']['w_5_15']['p_prod'] == pytest.approx(.625)
 
 
 def test_live_context_uses_match_team_ids_and_start(monkeypatch):
