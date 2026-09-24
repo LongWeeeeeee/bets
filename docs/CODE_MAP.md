@@ -89,6 +89,17 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   `panel.json` бандла B: пороги/заголовки = A, knots из `<key>.calib.json`, полосы кэфа пересчитаны на ставочной
   популяции (`runtime/experiments/kills/kv3_serving/write_b_panel_specs.py`); ночная доставка state —
   `scripts/ops/build_kv3_state.sh --deliver` при маркере `runtime/kv3_state_deliver.on`.
+- `base/series_tempo.py` — журналируемая тень E-331 для `total_55_50`: SourceTV ledger карт серии
+  (`runtime/series_tempo_ledger.json`, env `SERIES_TEMPO_LEDGER`) и `metadata.series_tempo` в
+  `runtime/ml_panel.jsonl`; связь по `series_id`, а при его отсутствии по неупорядоченной паре team ID;
+  отдельные `match_id` упорядочиваются по времени наблюдения: предыдущая карта должна впервые появиться
+  раньше текущей и исчезнуть не позднее чем через 60 с после её первого появления;
+  `SERIES_TEMPO_LINK_WINDOW_S` задаёт максимальный разрыв (по умолчанию 14400 с).
+  `series_game_number` не задаёт порядок, но при отсутствии прежних карт служит запасным признаком
+  продолжения серии для `p_level`; `p_tempo` требует хотя бы одну карту в ledger.
+  `metadata.series_tempo` содержит `link`, `n_prev`, `sourcetv_game_number`, `continuation_source`;
+  `SERIES_TEMPO_SHADOW=0` отключает сбор и тень (по умолчанию `1`).
+  Вердикт, текст панели и ставки не меняются.
 - `runtime/experiments/kills/panel_plus_v3/run.py --save-models DIR` пишет бандл модели B (отказ, если DIR есть);
   `--drop-kv3-regex RX` — абляция колонок kv3; `compare_d86400.py` — рычаг задержки 24 ч против 1200 с.
 

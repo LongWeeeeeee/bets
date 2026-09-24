@@ -1,0 +1,169 @@
+{
+  "9014519155": {
+    "match_id": 9014519155,
+    "game_time": -79,
+    "radiant_lead": 0,
+    "radiant_score": 0,
+    "dire_score": 0,
+    "spectators": 1,
+    "radiant_team_name": "Team TpaBoMaH",
+    "dire_team_name": "Team Stray",
+    "radiant_team_id": 10271406,
+    "dire_team_id": 9731167,
+    "player_hint": {
+      "radiant": null,
+      "dire": null
+    },
+    "league_id": 20176,
+    "league_name": "BETBOOM Streamers Battle Dota 15",
+    "series_id": null,
+    "series_game_number": 2,
+    "series_type": 1,
+    "radiant_series_wins": 1,
+    "dire_series_wins": 0,
+    "_cyberscore_heroes_and_pos": {
+      "radiant": {
+        "pos2": {
+          "hero_id": 33,
+          "account_id": 81991034
+        },
+        "pos3": {
+          "hero_id": 60,
+          "account_id": 92423451
+        },
+        "pos4": {
+          "hero_id": 31,
+          "account_id": 404150207
+        },
+        "pos1": {
+          "hero_id": 21,
+          "account_id": 1220993352
+        },
+        "pos5": {
+          "hero_id": 30,
+          "account_id": 899273569
+        }
+      },
+      "dire": {
+        "pos2": {
+          "hero_id": 35,
+          "account_id": 1256269806
+        },
+        "pos1": {
+          "hero_id": 18,
+          "account_id": 195415954
+        },
+        "pos5": {
+          "hero_id": 112,
+          "account_id": 24045849
+        },
+        "pos3": {
+          "hero_id": 58,
+          "account_id": 214853734
+        },
+        "pos4": {
+          "hero_id": 64,
+          "account_id": 1183963372
+        }
+      }
+    },
+    "_pos_resolution": {
+      "radiant": {
+        "method": "permutation",
+        "raw_known": 3,
+        "raw_matched": 3,
+        "dltv_known": 5,
+        "dltv_matched": 5,
+        "stats_conf": 0.438,
+        "conf": 0.747
+      },
+      "dire": {
+        "method": "permutation",
+        "raw_known": 4,
+        "raw_matched": 4,
+        "dltv_known": 5,
+        "dltv_matched": 3,
+        "stats_conf": 0.485,
+        "conf": 0.853
+      }
+    },
+    "fast_picks": {
+      "first_team": [
+        {
+          "hero_id": 21,
+          "account_id": 1220993352,
+          "player": {
+            "title": "sourcetv_pos1"
+          }
+        },
+        {
+          "hero_id": 33,
+          "account_id": 81991034,
+          "player": {
+            "title": "sourcetv_pos2"
+          }
+        },
+        {
+          "hero_id": 60,
+          "account_id": 92423451,
+          "player": {
+            "title": "sourcetv_pos3"
+          }
+        },
+        {
+          "hero_id": 31,
+          "account_id": 404150207,
+          "player": {
+            "title": "sourcetv_pos4"
+          }
+        },
+        {
+          "hero_id": 30,
+          "account_id": 899273569,
+          "player": {
+            "title": "sourcetv_pos5"
+          }
+        }
+      ],
+      "second_team": [
+        {
+          "hero_id": 18,
+          "account_id": 195415954,
+          "player": {
+            "title": "sourcetv_pos1"
+          }
+        },
+        {
+          "hero_id": 35,
+          "account_id": 1256269806,
+          "player": {
+            "title": "sourcetv_pos2"
+          }
+        },
+        {
+          "hero_id": 58,
+          "account_id": 214853734,
+          "player": {
+            "title": "sourcetv_pos3"
+          }
+        },
+        {
+          "hero_id": 64,
+          "account_id": 1183963372,
+          "player": {
+            "title": "sourcetv_pos4"
+          }
+        },
+        {
+          "hero_id": 112,
+          "account_id": 24045849,
+          "player": {
+            "title": "sourcetv_pos5"
+          }
+        }
+      ]
+    },
+    "status": "live",
+    "timestamp": 1790279014.890889
+  }
+}

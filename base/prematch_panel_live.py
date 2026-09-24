@@ -37,6 +37,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -484,6 +485,19 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             st['duration43'] = {'ready': False, 'error': f'{type(exc).__name__}: {exc}'}
             if os.getenv('DURATION43_SERVING', '1') != '0':
                 verdicts = [v for v in verdicts if v.key != 'dur43']
+        try:
+            import series_tempo
+            match_id = (shadow_context or {}).get('match_id')
+            for index, verdict in enumerate(verdicts):
+                if verdict.key != 'total_55_50':
+                    continue
+                metadata = verdict.metadata or {}
+                correction = series_tempo.shadow(verdict.probability, match_id,
+                                                  metadata.get('model'))
+                if correction is not None:
+                    verdicts[index] = replace(verdict, metadata={**metadata, 'series_tempo': correction})
+        except Exception:  # journal-only shadow must never affect the panel
+            pass
         return verdicts
     except Exception as exc:                         # noqa: BLE001
         # Молча вернуть пустоту нельзя: панель тогда «просто не появляется», и

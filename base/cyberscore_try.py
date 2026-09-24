@@ -37850,6 +37850,11 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             except Exception as e:
                 print(f"❌ SourceTV mode: не удалось прочитать {json_path}: {e}")
                 return [], []
+            try:
+                import series_tempo
+                series_tempo.observe(matches)
+            except Exception:  # optional journal shadow
+                pass
             raw_match_count = len(matches) if isinstance(matches, dict) else 0
 
             # Отбрасываем протухшие записи (probe не обновлял >300 с — значит умер или матч кончился)
