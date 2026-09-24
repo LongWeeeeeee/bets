@@ -340,6 +340,7 @@ class History:
     def __init__(self, half_life_days: float = 90, pseudo_games: float = 5, poisson_lr: float = 0.03, elo_k: float = 20):
         self.half_life_days, self.pseudo_games = half_life_days, pseudo_games
         self.poisson_lr, self.elo_k = poisson_lr, elo_k
+        self.feature_names, self.feature_blocks = feature_layout()
         self.team: dict[int, Decayed] = {}
         self.player: dict[int, Decayed] = {}
         self.hero: dict[int, Decayed] = {}
@@ -473,6 +474,18 @@ class History:
             hero_sides.append(np.r_[sorted(map(int, events["heroes"][i, side * 5:(side + 1) * 5])), hero_sum])
         return g, np.asarray(team_sides), np.asarray(player_sides), np.asarray(hero_sides)
 
+    def query_features(self, query: dict) -> np.ndarray:
+        """Return both orientations for one prematch query using this history.
+
+        T/P consume start, team IDs and ten account IDs. G consumes league,
+        series type/number; H consumes heroes. The live T/P caller may supply
+        neutral G/H values without changing any T/P column.
+        """
+        events = {key: np.expand_dims(np.asarray(value), 0) for key, value in query.items()
+                  if key != "series_number"}
+        return _orient_features(self.features(events, 0, int(query.get("series_number", 0))),
+                                self.feature_names, self.feature_blocks)
+
 
 def _orient_features(parts: tuple, names: list[str], blocks: dict) -> np.ndarray:
     g, team, player, hero = parts
@@ -590,8 +603,10 @@ def build_dataset(rich_path: Path, db_paths: list[Path], output_dir: Path,
                 series_started[sid] += 1
             at_start += 1
         sid = int(events["series"][i])
-        parts = history.features(events, int(i), series_started[sid] + 1 if sid != 0 else 0)
-        X[qi] = _orient_features(parts, names, blocks)
+        history_query = {key: events[key][i] for key in
+                         ("start", "league", "stype", "teams", "accounts", "heroes")}
+        history_query["series_number"] = series_started[sid] + 1 if sid != 0 else 0
+        X[qi] = history.query_features(history_query)
         y[qi] = labels_for(events["final"][i], events["timeline"][i], int(events["duration"][i]))
         if cpu_pause_seconds and qi % 100 == 0:
             time.sleep(cpu_pause_seconds)
