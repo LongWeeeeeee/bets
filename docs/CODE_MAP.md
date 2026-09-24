@@ -2088,6 +2088,11 @@ SHA256; `verify_snapshot(path)` reparses the retained source and compares fields
 Valve does not expose account IDs: these archives explicitly retain unresolved
 identity and are not directly accepted as account-bound ML metadata. Tied ranks
 and duplicate nicknames are retained, never silently resolved by name/country.
+Daily schedule: `scripts/run/collect_rank_snapshots.sh` (launchd `com.ingame.rank-snapshots`, 09:00,
+installed by `scripts/ops/install-rank-snapshots.sh`) skips when a complete snapshot for the current UTC
+date exists, otherwise runs the collector into `runtime/artifacts/misc/rank_snapshots/` (log
+`collect_<YYYYMMDD UTC>.log`) and sends one admin-chat line in any outcome. It replaced the Codex
+heartbeat automation `dota-2`, which stopped on 22.09.2026 (model 403, then the Codex app closed).
 
 User-authorized offline approximation: `PlayerHistory.features(...,
 time_policy="calendar_period")` / export `--time-policy calendar_period` uses
