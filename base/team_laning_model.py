@@ -13,6 +13,19 @@ from catboost import CatBoostClassifier
 CLASS_NAMES = ("dire", "tie", "radiant")
 FEATURE_SET_DRAFT = "team_draft_v1"
 FEATURE_SET_HISTORY = "team_history_recent_v1"
+FEATURE_SET_PAIRS = "team_history_pairs_v1"
+LANE_PAIRS = ((0, 7), (0, 8), (4, 7), (4, 8), (0, 4), (7, 8),
+              (1, 6), (2, 5), (2, 9), (3, 5), (3, 9), (2, 3), (5, 9))
+
+
+def cat_feature_names(feature_set):
+    """Categorical column names shared by training and serving."""
+    if feature_set not in (FEATURE_SET_DRAFT, FEATURE_SET_HISTORY, FEATURE_SET_PAIRS):
+        raise ValueError(f"unsupported team_laning_feature_set: {feature_set}")
+    names = [f"hero_{slot}" for slot in range(10)]
+    if feature_set == FEATURE_SET_PAIRS:
+        names.extend(f"pair_{a}_{b}" for a, b in LANE_PAIRS)
+    return names
 
 
 def team_labels(team_nw10):
@@ -42,14 +55,17 @@ def _validated_heroes(heroes):
     return heroes
 
 
-def team_features(heroes, history=None):
+def team_features(heroes, history=None, pairs=False):
     """Return full-draft features, optionally flattened causal hc(10,12).
 
     History must have been computed before this map using a delayed, 30-day
     causal window.  Current map outcomes are intentionally never accepted.
     """
     heroes = _validated_heroes(heroes)
-    columns = {f"hero_{slot}": heroes[:, slot].astype(str) for slot in range(10)}
+    names = cat_feature_names(FEATURE_SET_PAIRS if pairs else FEATURE_SET_HISTORY)
+    columns = {name: heroes[:, slot].astype(str) for slot, name in enumerate(names[:10])}
+    if pairs and history is None:
+        raise ValueError("pair features require causal history")
     if history is None:
         return pd.DataFrame(columns)
     history = np.asarray(history)
@@ -62,6 +78,9 @@ def team_features(heroes, history=None):
     for role in range(5):
         for stat in range(12):
             columns[f"radiant_minus_dire_role_{role}_{stat}"] = differences[:, role, stat]
+    if pairs:
+        for name, (a, b) in zip(names[10:], LANE_PAIRS):
+            columns[name] = (heroes[:, a] * 1024 + heroes[:, b]).astype(str)
     return pd.DataFrame(columns)
 
 
@@ -82,9 +101,13 @@ class TeamLaningModel:
     """Explicit serialized contract for the independent team-NW10 model."""
 
     def __init__(self, model, with_history, temperature=1.0,
-                 availability_delay_seconds=0, recent_window_seconds=None):
+                 availability_delay_seconds=0, recent_window_seconds=None,
+                 with_pairs=False):
         self.model = model
         self.with_history = bool(with_history)
+        self.with_pairs = bool(with_pairs)
+        if self.with_pairs and not self.with_history:
+            raise ValueError("pair features require causal history")
         self.temperature = float(temperature)
         if not np.isfinite(self.temperature) or self.temperature <= 0:
             raise ValueError("temperature must be finite and positive")
@@ -103,7 +126,14 @@ class TeamLaningModel:
     def predict_proba(self, heroes, history=None):
         if self.with_history and history is None:
             raise ValueError("This artifact requires causal history (maps,10,12)")
-        result = self.model.predict_proba(team_features(heroes, history if self.with_history else None),
+        features = team_features(heroes, history if self.with_history else None,
+                                 pairs=self.with_pairs)
+        # FeaturesData places numeric features first to avoid a multi-million-row
+        # object DataFrame. CatBoost feature names keep the serving contract exact.
+        names = list(self.model.feature_names_)
+        if names != list(features.columns):
+            features = features.loc[:, names]
+        result = self.model.predict_proba(features,
                                           thread_count=1)
         return temperature_scale(result, self.temperature)
 
@@ -113,9 +143,9 @@ class TeamLaningModel:
         model.load_model(str(Path(directory) / "team.cbm"))
         metadata = model.get_metadata()
         feature_set = str(metadata.get("team_laning_feature_set", ""))
-        if feature_set not in (FEATURE_SET_DRAFT, FEATURE_SET_HISTORY):
+        if feature_set not in (FEATURE_SET_DRAFT, FEATURE_SET_HISTORY, FEATURE_SET_PAIRS):
             raise ValueError(f"unsupported team_laning_feature_set: {feature_set}")
-        with_history = feature_set == FEATURE_SET_HISTORY
+        with_history = feature_set in (FEATURE_SET_HISTORY, FEATURE_SET_PAIRS)
         try:
             temperature = float(metadata.get("team_laning_temperature", 1.0))
             delay = float(metadata.get("team_laning_history_delay_seconds", 0.0))
@@ -125,4 +155,5 @@ class TeamLaningModel:
             raise ValueError("invalid team-laning history metadata") from exc
         if with_history and window_raw is None:
             raise ValueError("history artifact requires recent-window metadata")
-        return cls(model, with_history, temperature, delay, window)
+        return cls(model, with_history, temperature, delay, window,
+                   with_pairs=feature_set == FEATURE_SET_PAIRS)

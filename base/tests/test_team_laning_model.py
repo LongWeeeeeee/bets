@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from base.team_laning_model import (
-    CLASS_NAMES, TeamLaningModel, team_features, team_labels, temperature_scale,
+    CLASS_NAMES, FEATURE_SET_PAIRS, LANE_PAIRS, TeamLaningModel,
+    cat_feature_names, team_features, team_labels, temperature_scale,
 )
 from scripts.ops.train_team_laning_model import partition_team, run
 
@@ -26,6 +27,37 @@ def test_target_and_feature_contract_excludes_same_map_outcomes():
         team_labels([np.nan])
     with pytest.raises(ValueError, match="shape"):
         team_features(heroes, history[:, :, :6])
+
+
+def test_served_artifact_probe_backward_compatibility():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    directory = root / "data/laning_models/20260909_team_nw10_v1"
+    if not (directory / "selected/team.cbm").exists() or not (directory / "verification_probe.npz").exists():
+        pytest.skip("captured served model and verification probe absent")
+    with np.load(directory / "verification_probe.npz") as probe:
+        heroes, history, expected = probe["heroes"], probe["history"], probe["probabilities"]
+    actual = TeamLaningModel.load(directory / "selected").predict_proba(heroes, history)
+    assert np.max(np.abs(actual - expected)) <= 1e-12
+
+
+def test_pairs_model_roundtrip_and_trainer_matrix_hashes(tmp_path):
+    from catboost import CatBoostClassifier
+    from scripts.ops.train_team_laning_full import features_pool, model_meta
+    heroes = np.vstack([np.roll(np.arange(1,11), i % 10) for i in range(30)]).astype(np.int32)
+    history = np.broadcast_to(np.arange(30,dtype=np.float32)[:,None,None],(30,10,12)).copy()
+    frame = team_features(heroes,history,pairs=True)
+    assert len(LANE_PAIRS) == 13 and frame.shape == (30,203)
+    assert list(frame.columns[-13:]) == cat_feature_names(FEATURE_SET_PAIRS)[10:]
+    pool,_,_ = features_pool(heroes,history,True,np.tile(np.arange(3),10))
+    model = CatBoostClassifier(iterations=3,depth=2,verbose=False,allow_writing_files=False,
+                               metadata=model_meta(True))
+    model.fit(pool)
+    model.save_model(str(tmp_path / "team.cbm"))
+    loaded = TeamLaningModel.load(tmp_path)
+    assert loaded.with_history and loaded.with_pairs
+    expected = model.predict_proba(pool,thread_count=1)
+    np.testing.assert_allclose(loaded.predict_proba(heroes,history),expected,atol=1e-12,rtol=0)
 
 
 def test_metadata_autoload_and_temperature_roundtrip(tmp_path, monkeypatch):
@@ -50,9 +82,11 @@ def test_metadata_autoload_and_temperature_roundtrip(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="requires causal history"):
         loaded.predict_proba(heroes[:1])
     from base import laning_history_store, laning_serving
-    monkeypatch.setattr(laning_history_store, "LaningHistoryStore", lambda path:
-        SimpleNamespace(manifest={"max_end_ts": 0},
-                        history=lambda *a, **kw: history[0]))
+    fake_store = lambda path: SimpleNamespace(
+        manifest={"max_end_ts": 0}, history=lambda *a, **kw: history[0])
+    monkeypatch.setattr(laning_history_store, "LaningHistoryStore", fake_store)
+    import sys
+    monkeypatch.setitem(sys.modules, "laning_history_store", laning_history_store)
     monkeypatch.setattr(laning_serving, "ENABLED", True)
     service = laning_serving.LaningService(tmp_path, tmp_path)
     np.testing.assert_allclose(service.predict(heroes[0], np.arange(101, 111), 10000),
