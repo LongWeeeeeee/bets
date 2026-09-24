@@ -79,6 +79,16 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   предупреждает, если свежайшая карта корпуса старше 36 ч; `--deliver` — scp на serv1 через tmp + sha1 + mv.
   Вызывается из `scripts/run/rebuild_prematch_snapshot.sh` (не фатально) только при наличии модели B; доставка —
   только при маркере `runtime/kv3_state_deliver.on`.
+- `base/kv3_panel_serving.py` — боевая подмена 6 вердиктов панели (w_5_15, w_10_20, w_15_25, w_20_30, rad_30_25,
+  total_55_50) моделью B при `ML_PANEL_KV3=1` (drop-in `/etc/systemd/system/cyberscore.service.d/kv3-panel.conf`
+  на serv1; откат: удалить drop-in, daemon-reload, рестарт); dur43 не меняется. Env: `KV3_PANEL_DIR`
+  (`ml-models/prematch_panel_kv3`), `KV3_STATE_PATH` (`data/kills_v3_state/state.npz`), `KV3_PANEL_MAX_STATE_AGE_S`
+  (259200). При сбое — вердикты старой модели A с пометкой « (старая)» и metadata `model=A_fallback` + reason;
+  у вердиктов B metadata `model=B_kv3`, bundle_sha, state_cutoff, a_p, a_ok, start_ts_source, team_ids_known
+  (в `runtime/ml_panel.jsonl`); неудачная загрузка/перезагрузка state не повторяется, пока файл не сменится.
+  `panel.json` бандла B: пороги/заголовки = A, knots из `<key>.calib.json`, полосы кэфа пересчитаны на ставочной
+  популяции (`runtime/experiments/kills/kv3_serving/write_b_panel_specs.py`); ночная доставка state —
+  `scripts/ops/build_kv3_state.sh --deliver` при маркере `runtime/kv3_state_deliver.on`.
 - `runtime/experiments/kills/panel_plus_v3/run.py --save-models DIR` пишет бандл модели B (отказ, если DIR есть);
   `--drop-kv3-regex RX` — абляция колонок kv3; `compare_d86400.py` — рычаг задержки 24 ч против 1200 с.
 
@@ -573,6 +583,7 @@ Rich `wins` — исход карты; `winrates` и nullable-conflated `pstats`
 - `load_specs()` читает `panel.json` из каталога артефакта и **молчит при его отсутствии** (панель не должна ронять live). `atomic_write_specs()` пишет через tmp + `os.replace`.
 - Env: `ML_PANEL_DIR` (default `ml-models/prematch_panel`), `ML_PANEL_JOURNAL` (default `runtime/ml_panel.jsonl`), `ML_PANEL_MIN_FILL` (default `0.75`).
 - `base/kv3_shadow.py` — shadow модели B панели (E-329): см. раздел «Kills-v3 panel shadow serving» выше. Вердикты, текст панели, `ml_panel.jsonl` и ставки не меняются.
+- `base/kv3_panel_serving.py` — боевая подмена 6 вердиктов моделью B за `ML_PANEL_KV3=1` (с 24.09.2026; fallback — старая модель A с пометкой « (старая)»).
 - Тесты: `base/tests/test_ml_panel.py` (23 шт.) — границы калибровки, монотонность, гейт заполненности, выбор лучшего не по сырому скору, замороженный формат журнала.
 
 ---
