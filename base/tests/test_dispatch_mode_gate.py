@@ -245,6 +245,30 @@ def test_ml_dispatch_tick_shadow_mode_logs_without_delivering(monkeypatch) -> No
     assert win_decisions[0]["target_side"] == "Radiant"
 
 
+def test_ml_dispatch_tick_logs_row_when_skipped_sides_mix_none_and_str(monkeypatch) -> None:
+    # serv1 log: 705 x "TypeError: '<' not supported between instances of
+    # 'str' and 'NoneType'" in _ml_dispatch_tick — the decision-log row of
+    # that tick was lost whenever skipped sides mixed None and a team side.
+    from base import ml_dispatch as _md
+    monkeypatch.setenv("DISPATCH_MODE", "shadow")
+    delivered_calls: list = []
+    logged: list = []
+    _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered_calls, logged=logged,
+                                 ledger=_FakeLedger())
+    real_evaluate = _md.evaluate
+
+    def _evaluate(ctx, cfg):
+        result = real_evaluate(ctx, cfg)
+        result.skipped[:] = [_md.Skipped("kills_window", None, "no_underdog", ""),
+                             _md.Skipped("kills_window", "Radiant", "window_closed", "")]
+        return result
+
+    monkeypatch.setattr(_md, "evaluate", _evaluate)
+    _call_ml_dispatch_tick()
+    assert len(logged) == 1
+    assert {s["side"] for s in logged[0]["skipped"]} == {None, "Radiant"}
+
+
 def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None:
     monkeypatch.setenv("DISPATCH_MODE", "ml")
     delivered_calls: list = []

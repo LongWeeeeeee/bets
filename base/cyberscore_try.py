@@ -12778,6 +12778,11 @@ def _ml_dispatch_draft_input(radiant, dire, details, source, resolution):
                          ("match_id", "map_key", "branch", "artifact_sha256", "snapshot_ts")}}
 
 
+def _none_safe_sort_key(row: Tuple[Any, ...]) -> Tuple[Tuple[int, str], ...]:
+    """Order tuples that may mix None and str in one position."""
+    return tuple((0, "") if x is None else (1, str(x)) for x in row)
+
+
 def _ml_dispatch_tick(
     *,
     match_key: str,
@@ -13035,12 +13040,20 @@ def _ml_dispatch_tick(
                 for name, v in verdicts_view.items()
             },
             "elo_diff": round(float(result.elo_diff or 0.0)),
+            # None sides/statuses sit next to str ones (serv1 log: 705 x
+            # "'<' not supported between 'str' and 'NoneType'", which lost the
+            # decision-log row of that tick) — sort on a None-safe key.
             "decisions": sorted(
-                (d["market"], d["target_side"], d["timing"]) for d in decisions_view
+                ((d["market"], d["target_side"], d["timing"]) for d in decisions_view),
+                key=_none_safe_sort_key,
             ),
-            "skipped": sorted((s["market"], s["side"], s["reason"]) for s in skipped_view),
+            "skipped": sorted(
+                ((s["market"], s["side"], s["reason"]) for s in skipped_view),
+                key=_none_safe_sort_key,
+            ),
             "delivered": sorted(
-                (d.get("market"), d.get("target_side"), d.get("status")) for d in delivered_view
+                ((d.get("market"), d.get("target_side"), d.get("status")) for d in delivered_view),
+                key=_none_safe_sort_key,
             ),
             "timing_phase": timing_phase,
             "mode": mode,
