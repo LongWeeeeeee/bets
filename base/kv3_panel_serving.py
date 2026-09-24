@@ -129,6 +129,7 @@ def _reload(candidate):
     previous_indices = getattr(candidate, 'tp_indices', None)
     try:
         newer = load_state(candidate.state_path)
+        cutoff = int(newer.serving_meta['cutoff'])
         candidate.state = newer
         candidate._check_state_contract()
     except Exception as exc:
@@ -139,7 +140,7 @@ def _reload(candidate):
         raise
     _failed_reload = None
     candidate.state_mtime, candidate.state_size = signature
-    candidate.cutoff = int(newer.serving_meta['cutoff'])
+    candidate.cutoff = cutoff
 
 
 def _gate(candidate, context):

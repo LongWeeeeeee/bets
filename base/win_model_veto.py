@@ -869,6 +869,19 @@ def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, matc
         _LAST_PANEL["text"] = ml_panel.render(
             wins + [v for v in verdicts if v.key == "dur43" and v.metadata],
             highlight=[best.key] if best else [])
+        _mid = None
+        if isinstance(match, dict):
+            for _k in ("id", "match_id", "map_id", "matchId", "map_key"):
+                if match.get(_k):
+                    _mid = match.get(_k)
+                    break
+        _LAST_PANEL["map_id"] = _mid
+        if verdicts:
+            ml_panel.append_journal(ml_panel.journal_row(
+                _mid or "", verdicts,
+                extra={"radiant_team": str(radiant_team_name or ""),
+                       "dire_team": str(dire_team_name or ""),
+                       "ts": int(time.time())}))
     except Exception as exc:  # noqa: BLE001 — auxiliary panel is fail-open
         _LAST_PANEL["error"] = f"{type(exc).__name__}: {exc}"
         _report_panel_silence(_LAST_PANEL["error"])

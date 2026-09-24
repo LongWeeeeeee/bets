@@ -200,6 +200,54 @@ def test_failed_reload_is_cached_until_state_changes(monkeypatch):
     assert candidate.state is old
 
 
+@pytest.mark.parametrize('invalid_meta,error', [
+    ({}, KeyError),
+    ({'cutoff': 'invalid'}, ValueError),
+])
+def test_reload_invalid_cutoff_keeps_previous_state_and_retries_after_change(
+        monkeypatch, tmp_path, invalid_meta, error):
+    import kv3_panel_serving as serving
+    from base import kills_v3_serving
+
+    state_path = tmp_path / 'state.npz'
+    state_path.write_bytes(b'old')
+    old_stat = state_path.stat()
+    old_signature = old_stat.st_mtime_ns, old_stat.st_size
+    old = SimpleNamespace(serving_meta={'cutoff': 100})
+    invalid = SimpleNamespace(serving_meta=invalid_meta)
+    valid = SimpleNamespace(serving_meta={'cutoff': 300})
+    candidate = SimpleNamespace(state=old, state_mtime=old_signature[0],
+                                state_size=old_signature[1], state_path=state_path,
+                                cutoff=100, tp_names=['old'], tp_indices=[0],
+                                _signature=lambda: (state_path.stat().st_mtime_ns,
+                                                    state_path.stat().st_size))
+    candidate._check_state_contract = lambda: None
+    calls = []
+
+    def load(path):
+        calls.append(path)
+        return invalid if len(calls) == 1 else valid
+
+    monkeypatch.setattr(kills_v3_serving, 'load_state', load)
+    state_path.write_bytes(b'invalid')
+    os.utime(state_path, ns=(old_signature[0] + 1_000_000_000,) * 2)
+    for _ in range(2):
+        with pytest.raises(error):
+            serving._reload(candidate)
+        assert candidate.state is old
+        assert candidate.cutoff == 100
+        assert (candidate.state_mtime, candidate.state_size) == old_signature
+        assert candidate.tp_names == ['old'] and candidate.tp_indices == [0]
+    assert calls == [state_path]
+
+    state_path.write_bytes(b'valid replacement')
+    os.utime(state_path, ns=(old_signature[0] + 2_000_000_000,) * 2)
+    serving._reload(candidate)
+    assert calls == [state_path, state_path]
+    assert candidate.state is valid and candidate.cutoff == 300
+    assert (candidate.state_mtime, candidate.state_size) == candidate._signature()
+
+
 @pytest.mark.parametrize('context,known', [
     ({'start_ts': 200, 'start_ts_source': 'now_fallback',
       'radiant_team_id': 1, 'dire_team_id': 2}, True),
