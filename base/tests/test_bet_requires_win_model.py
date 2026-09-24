@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -20,6 +22,11 @@ import cyberscore_try as C  # noqa: E402
 MODEL_FOR_RADIANT = "🤖 ML-модель: Radiant 63.5% | ML от кэфа: 1.54"
 MODEL_FOR_DIRE = "🤖 ML-модель: Dire 63.5% | ML от кэфа: 1.54"
 RADIANT_CTX = {"target_side": "radiant", "stake_team_name": "Team Synapse"}
+
+
+@pytest.fixture(autouse=True)
+def _legacy_model_enabled(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
 
 
 def _panel(*, model_line: str = MODEL_FOR_RADIANT, all_team: str = "Team Synapse",

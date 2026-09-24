@@ -43,6 +43,11 @@ FIXTURE_NPZ = FIXTURES / "prematch_h2h_teamid_cards.npz"
 FIXTURE_CARDS = json.loads((FIXTURES / "prematch_h2h_teamid_cards.json").read_text(encoding="utf-8"))
 
 
+@pytest.fixture(autouse=True)
+def _enabled_general_prematch_model(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
+
 # ---------------------------------------------------------------------------
 # win_model_veto._prematch_index: реальные id команд обязаны дойти до score()
 # ---------------------------------------------------------------------------

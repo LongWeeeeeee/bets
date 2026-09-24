@@ -182,6 +182,7 @@ def test_late_model_side_taken_from_context_when_panel_line_missing() -> None:
 
 
 def test_prematch_model_bet_carries_target_side_into_delivery(monkeypatch) -> None:
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     """Ставка предматчевой модели («на 00») проходит гейт со СВОЕЙ стороной.
 
     Это единственный путь «СТАВКА НА <team> x<mult>», не передававший

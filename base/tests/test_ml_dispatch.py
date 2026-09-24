@@ -322,7 +322,8 @@ def test_early_solo_block_e_env_toggle_restores_pre_e291_behavior():
 
 # --- 🤖 Prematch as a sixth win model (owner decision 15.09.2026) ---------
 
-def test_prematch_solo_star_backs_a_side():
+def test_prematch_solo_star_backs_a_side(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     # (a) 🤖 Prematch wired in 15.09.2026 as a sixth win model -- unlike
     # early_nw/early_win, it is NOT in EARLY_ONLY_BLOCK_MODELS, so a solo
     # prematch star is a plain Decision, not early_solo_blocked (E-291).
@@ -335,7 +336,8 @@ def test_prematch_solo_star_backs_a_side():
     assert win[0].expected_wr == 0.671
 
 
-def test_prematch_plus_both_early_stars_not_early_solo_blocked():
+def test_prematch_plus_both_early_stars_not_early_solo_blocked(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     # (b) early_nw + early_win + prematch all star the same side; all/late
     # are present but below threshold. prematch in models_for is enough to
     # avoid early_solo_blocked (only early_nw/early_win alone would block).
@@ -353,7 +355,8 @@ def test_prematch_plus_both_early_stars_not_early_solo_blocked():
     assert sorted(win[0].models_for) == ["early_nw", "early_win", "prematch"]
 
 
-def test_prematch_below_threshold_is_skipped():
+def test_prematch_below_threshold_is_skipped(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     # (c)
     ctx = base_ctx(prematch=ModelVerdict("Radiant", 0.58))
     result = evaluate(ctx, cfg())
@@ -362,7 +365,8 @@ def test_prematch_below_threshold_is_skipped():
     assert skip.reason == md.REASON_BELOW_THRESHOLD
 
 
-def test_prematch_radiant_vs_late_dire_vetoes_radiant():
+def test_prematch_radiant_vs_late_dire_vetoes_radiant(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     # (d) prematch is not in KILLS_EARLY_MODELS, so it never triggers the
     # 13.09.2026 late-conflict wait branch (that only watches
     # early_nw/early_win) -- plain Late veto applies directly: Late backs
@@ -706,9 +710,7 @@ def test_config_from_env_defaults_when_unset():
     result = Config.from_env({})
     assert result.min_conf == 0.60
     assert result.underdog_min_diff == 50.0
-    # prematch appended to the default 15.09.2026 (E-291 context, owner
-    # decision): the 🤖 general prematch model becomes a sixth win model.
-    assert result.win_models == ("late", "all", "early_win", "early_nw", "prematch")
+    assert result.win_models == ("late", "all", "early_win", "early_nw")
     assert result.kills_require_all is False
     assert result.timing_seconds == 600.0
     assert result.min_odds_margin == 0.12

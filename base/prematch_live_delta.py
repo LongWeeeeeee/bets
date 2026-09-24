@@ -624,6 +624,8 @@ _snap_cache: Dict[str, Any] = {"mtime": None, "ts": 0}
 
 def snapshot_ts_from_artifact(*, path: Optional[Path] = None) -> int:
     """`snapshot_ts` боевого артефакта. Ноль — не прочитали."""
+    if path is None and os.getenv("PREMATCH_ML_ENABLED", "0") != "1":
+        return 0
     p = Path(path or DEFAULT_ARTIFACT_PATH)
     try:
         mt = p.stat().st_mtime

@@ -5281,14 +5281,17 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         except Exception:
             _fallback = {}
         try:
-            _warning = _laning_serving.refusal_warning_line(
-                _ml_details, radiant_heroes_and_pos, dire_heroes_and_pos)
+            _warning = ("" if _ml_details.get("disabled") else
+                        _laning_serving.refusal_warning_line(
+                            _ml_details, radiant_heroes_and_pos, dire_heroes_and_pos))
         except Exception:
             _warning = ""
         _fallback_details = dict(_fallback or {})
         _fallback_details["refusal_reason"] = _ml_details.get("reason")
         _fallback_details["refusal_details"] = _ml_details.get("details")
         _fallback_details["refusal_warning_line"] = _warning
+        _fallback_details["panel_text"] = _ml_details.get("panel_text", "")
+        _fallback_details["kills30"] = _ml_details.get("kills30")
         # Keep the structured, card-owned refusal for the ML dispatch gate.
         # Display-only fallback verdicts remain available even on this refusal.
         from copy import deepcopy

@@ -35,6 +35,7 @@ RADIANT, DIRE = 1, -1
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     monkeypatch.setattr(W, "_FILL_HISTORY", type(W._FILL_HISTORY)(), raising=False)
     monkeypatch.setattr(W, "_STAR_DRAFT_SEEN", set(), raising=False)
     monkeypatch.setattr(W, "_STAR_DRAFT_MUTE", False, raising=False)

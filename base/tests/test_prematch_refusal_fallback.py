@@ -24,6 +24,11 @@ import cyberscore_try as C  # noqa: E402
 from base import laning_serving  # noqa: E402
 from base import win_model_veto  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _legacy_model_enabled(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
 # Точный факт с боевой карты dltv.org/matches/8995525359.0 (map 2,
 # VooDooSh Club vs Stariy_Bog Club, runtime/prematch_model_eval.jsonl 12.09.2026).
 POSITION_MISMATCH_REASON = (

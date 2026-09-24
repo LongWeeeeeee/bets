@@ -72,12 +72,13 @@ def _load_dup_pair_rows() -> list[dict]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_prematch_model_bet_dedup_state():
+def _reset_prematch_model_bet_dedup_state(monkeypatch):
     """Изоляция от других тестов/прогонов: in-memory дедуп-сет модели и
     карточный отпечаток общего реестра — модульные глобалы, живущие дольше
     одного теста. Очистка идёт ДО тела теста — тесты, которым нужен
     прогретый `_SIGNAL_DEDUP_FINGERPRINTS` (как в проде), заполняют его сами
     внутри теста, уже после этой очистки."""
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     runtime._prematch_model_bet_sent_urls.clear()
     runtime._SIGNAL_DEDUP_FINGERPRINTS.clear()
     yield

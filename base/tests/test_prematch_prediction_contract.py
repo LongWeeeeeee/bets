@@ -18,6 +18,11 @@ from base import win_model_veto as veto  # noqa: E402
 from test_prematch_ladder import _artifact  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _enabled_general_prematch_model(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
+
 def _format_win_model_line():
     source = (ROOT / "base" / "cyberscore_try.py").read_text(encoding="utf-8")
     node = next(n for n in ast.walk(ast.parse(source))

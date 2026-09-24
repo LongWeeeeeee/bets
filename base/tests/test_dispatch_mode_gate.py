@@ -302,6 +302,7 @@ def _call_ml_dispatch_tick_with_early_output(match_key: str, early_output: dict)
 
 
 def test_ml_dispatch_tick_ctx_prematch_verdict_matches_panel_line(monkeypatch) -> None:
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     # Ctx.prematch (owner decision 15.09.2026) must carry the SAME
     # side/confidence the "🤖 ML-модель: ... (оценка)" panel line prints
     # (`_format_win_model_line`, cyberscore_try.py:7979-7994): index=-17.1,

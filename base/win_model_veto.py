@@ -107,6 +107,11 @@ SOURCE_KEY = "ml_win_index_src"
 SOURCE_PREMATCH = "prematch"
 SOURCE_DRAFT = "draft"
 DETAILS_KEY = "ml_win_details"
+
+
+def prematch_ml_enabled() -> bool:
+    """Master switch for the general 35-feature prematch winner model."""
+    return os.getenv("PREMATCH_ML_ENABLED", "0") == "1"
 # Порог предматчевой модели: |индекс| >= 8 -> вето на ставку против неё.
 # Замер на 2 456 настоящих LAN-карт (forward-окна): при >=8 модель берёт 70.0%
 # на 72% потока, ставка ПРОТИВ неё окупалась бы только при кэфе выше 3.3.
@@ -841,6 +846,52 @@ def _match_team_id(match: Optional[dict], camel_key: str, snake_key: str) -> int
     return team_id if team_id > 0 else 0
 
 
+def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, match) -> dict:
+    """Keep independent draft/kills panels alive without the winner artifact."""
+    _LAST_PANEL.update(text="", verdicts=[], kills30=None, error=None)
+    slots = []
+    for side in (radiant, dire):
+        entries = [(side or {}).get(f"pos{i}") or (side or {}).get(i)
+                   or (side or {}).get(str(i)) or {} for i in range(1, 6)]
+        slots.append(([int(e.get("hero_id") or 0) for e in entries],
+                      [int(e.get("account_id") or 0) for e in entries]))
+    (rh, ra), (dh, da) = slots
+    if min(rh + dh) <= 0:
+        return {"panel_text": "", "kills30": None}
+    try:
+        import prematch_panel_live as panel
+        import ml_panel
+        verdicts = panel.evaluate_map(rh, dh, ra, da, None, (),
+                                      shadow_context=_prediction_context(match))
+        wins = [v for v in verdicts if str(v.key).startswith("w_")]
+        best = ml_panel.best_of(wins)
+        _LAST_PANEL["verdicts"] = verdicts
+        _LAST_PANEL["text"] = ml_panel.render(
+            wins + [v for v in verdicts if v.key == "dur43" and v.metadata],
+            highlight=[best.key] if best else [])
+    except Exception as exc:  # noqa: BLE001 — auxiliary panel is fail-open
+        _LAST_PANEL["error"] = f"{type(exc).__name__}: {exc}"
+        _report_panel_silence(_LAST_PANEL["error"])
+    try:
+        from kills_transfer_serving import (forecast_probabilities,
+                                            manifest_history_date, render)
+        rt_id = _match_team_id(match, "radiantTeam", "radiant_team_id")
+        dt_id = _match_team_id(match, "direTeam", "dire_team_id")
+        mid = next((match.get(k) for k in ("id", "match_id", "map_id", "matchId")
+                    if isinstance(match, dict) and match.get(k)), 0)
+        probabilities = forecast_probabilities(
+            rh, dh, ra, da, (rt_id, dt_id), elo_evaluation_timestamp(match), mid)
+        _LAST_PANEL["kills30"] = {"radiant": probabilities[0],
+                                  "dire": probabilities[1], "total": probabilities[2]}
+        kills_text = render(probabilities, manifest_history_date())
+        _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], kills_text)))
+        _LAST_PANEL["kills_error"] = None
+    except Exception as exc:  # noqa: BLE001 — kills remain optional as before
+        _LAST_PANEL["kills_error"] = f"E281 kills: {type(exc).__name__}: {exc}"
+    return {"panel_text": str(_LAST_PANEL["text"] or ""),
+            "kills30": _LAST_PANEL["kills30"]}
+
+
 def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                     radiant_team_name=None, dire_team_name=None,
                     match=None) -> Optional[float]:
@@ -851,6 +902,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
     (неизвестный игрок, протухший снимок, сломанные позиции) даёт None: молча
     подставлять дефолты нельзя, это и есть источник вранья.
     """
+    if not prematch_ml_enabled():
+        return None
     context = _prediction_context(match)
     _LAST_REFUSAL.clear()
     try:
@@ -1332,6 +1385,54 @@ def _win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
 _PREDICTION_LOCK = threading.RLock()
 
 
+def _off_position_accounts(radiant_heroes_and_pos, dire_heroes_and_pos):
+    """Account ids in position order 1..5 × 2 sides, or (None, None).
+
+    Same slot layout the prematch path reads in `_prematch_index`
+    (``pos1``..``pos5`` keys with ``1..5``/``"1".."5"`` fallbacks).
+    """
+    try:
+        def slots(d):
+            acc = []
+            for i in range(1, 6):
+                src = d or {}
+                e = src.get(f"pos{i}") or src.get(i) or src.get(str(i)) or {}
+                if not isinstance(e, dict):
+                    e = {}
+                acc.append(int(e.get("account_id") or 0))
+            return acc
+        return slots(radiant_heroes_and_pos), slots(dire_heroes_and_pos)
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _off_position_mismatch(radiant_heroes_and_pos, dire_heroes_and_pos):
+    """Hard position slots for the disabled-model path, or None.
+
+    The E-296 guard lives on ``position_mismatch`` flowing through
+    ``functions.py`` into ``cyberscore`` — the refusal path exposes it from
+    `_LAST_REFUSAL`, so the off-path computes the same list with the light
+    checker (no `PrematchScorer`, no winner artifact) and mirrors the key.
+    Fail-open throughout: broken input or artifact means None, never a block.
+    """
+    ra, da = _off_position_accounts(radiant_heroes_and_pos,
+                                    dire_heroes_and_pos)
+    if not ra or not da:
+        return None
+    try:
+        try:
+            from base import prematch_scorer as _ps
+        except ImportError:                        # noqa: BLE001 — запуск из base/
+            try:
+                import prematch_scorer as _ps     # noqa: BLE001
+            except ImportError:
+                return None
+        slots = _ps.light_position_hard_slots(ra, da)
+    except Exception:                              # noqa: BLE001 — сторож fail-open
+        return None
+    return slots or None
+
+
 def win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                       radiant_team_name=None, dire_team_name=None, match=None):
     """Return index, source and a card-owned snapshot atomically.
@@ -1341,6 +1442,19 @@ def win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
     it, so it always belongs to THIS call, never a concurrent one.
     """
     with _PREDICTION_LOCK:
+        if not prematch_ml_enabled():
+            _LAST_REFUSAL.clear()
+            try:
+                auxiliary = _off_auxiliary_panels(
+                    radiant_heroes_and_pos, dire_heroes_and_pos,
+                    radiant_team_name, dire_team_name, match)
+            except Exception:  # noqa: BLE001 — broken positions cannot block other signals
+                auxiliary = {"panel_text": "", "kills30": None}
+            mismatch = _off_position_mismatch(radiant_heroes_and_pos,
+                                              dire_heroes_and_pos)
+            return None, None, {"reason": "prematch_ml_disabled", "disabled": True,
+                                "details": [], "position_mismatch": mismatch,
+                                **auxiliary}
         index, source = _win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                                       radiant_team_name, dire_team_name, match)
         if index is not None:
@@ -1391,7 +1505,7 @@ def blocks_veto(block_sign: Any, block: Any, section: str = "") -> bool:
     и одинаково работает и в `format_output_dict`, и в диагностике блоков.
     Порог несогласия — свой у каждой секции, см. `_DEFAULT_MIN_INDEX`.
     """
-    if not VETO_ENABLED or block_sign not in (1, -1, 1.0, -1.0):
+    if not prematch_ml_enabled() or not VETO_ENABLED or block_sign not in (1, -1, 1.0, -1.0):
         return False
     if not isinstance(block, dict):
         return False
@@ -1425,6 +1539,8 @@ def draft_veto(block_sign: Any, block: Any, section: str = "") -> bool:
     модели вообще позволено возражать, и ни на карту шире.
     """
     global _STAR_DRAFT_MUTE
+    if not prematch_ml_enabled():
+        return False
     if not _STAR_DRAFT_BLOCK or block_sign not in (1, -1, 1.0, -1.0):
         return False
     if not isinstance(block, dict):
@@ -1477,6 +1593,8 @@ def model_bet(*blocks) -> Optional[dict]:
     Замера у этого правила нет, оно введено решением; снимается
     WIN_MODEL_DRAFT_AGAINST_BLOCK=0.
     """
+    if not prematch_ml_enabled():
+        return None
     index = None
     details = {}
     for block in blocks:

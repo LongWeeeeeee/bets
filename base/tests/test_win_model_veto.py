@@ -27,6 +27,11 @@ import series_surprise_shadow as SSS  # noqa: E402
 import win_model_veto as V  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _legacy_model_enabled(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
+
 class _StubEncoder:
     """Ширина боевого каталога на 1.19 млн строк."""
     n_columns = 16758

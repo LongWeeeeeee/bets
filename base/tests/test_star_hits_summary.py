@@ -82,10 +82,15 @@ def test_build_star_hits_summary_block_returns_empty_without_hits() -> None:
     assert block == ""
 
 
-def test_star_summary_shows_win_model_line_even_without_hits() -> None:
+def test_star_summary_shows_win_model_line_even_without_hits(monkeypatch) -> None:
     """Оценка ML-модели должна быть видна в КАЖДОМ сообщении, а не только при хитах."""
     import win_model_veto as V
 
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+    # Without details the summary reads the module-global last panel
+    # (cyberscore_try.py `_format_win_model_line`); a real scoring test run
+    # earlier in the same session leaves its panel there.
+    monkeypatch.setitem(V._LAST_PANEL, "text", "")
     block = runtime._build_star_hits_summary_block(
         early_output={V.INDEX_KEY: 6.3},
         mid_output={V.INDEX_KEY: 6.3},
@@ -110,9 +115,11 @@ def test_star_summary_shows_win_model_line_even_without_hits() -> None:
         early_output={}, mid_output={}, all_output={}) == ""
 
 
-def test_star_summary_keeps_model_line_together_with_hits() -> None:
+def test_star_summary_keeps_model_line_together_with_hits(monkeypatch) -> None:
     import win_model_veto as V
 
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+    monkeypatch.setitem(V._LAST_PANEL, "text", "")
     block = runtime._build_star_hits_summary_block(
         early_output={"counterpick_1vs1": 9, V.INDEX_KEY: 4.0},
         mid_output={}, all_output={})

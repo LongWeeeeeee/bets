@@ -30,6 +30,11 @@ import win_model_veto as W  # noqa: E402
 LIVE_INDEX = 14.77
 
 
+@pytest.fixture(autouse=True)
+def _enabled_general_prematch_model(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
+
 def _late_block(index: float = LIVE_INDEX) -> dict:
     return {
         "counterpick_1vs1": -6,

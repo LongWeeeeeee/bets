@@ -1,6 +1,6 @@
 """ML dispatch evaluator (stage 1 of the ML-dispatch plan).
 
-Pure decision logic for the six-model ML betting dispatch that will
+Pure decision logic for the ML betting dispatch that will
 eventually replace the STAR word-dict paths in ``cyberscore_try.py``
 (stage 2, not implemented here). This module imports nothing from
 ``cyberscore_try`` and has no side effects other than the optional
@@ -10,29 +10,21 @@ caller-driven — :func:`evaluate` itself never touches disk.
 Rules implemented (owner decisions, 12.09.2026 — see
 ``/Users/alex/.claude/plans/swirling-giggling-kurzweil.md``):
 
-- Threshold ``ML_DISPATCH_MIN_CONF`` (default 0.60) applies to all six
-  models: Early NW, Early Win, Late, All, ML Laning, 🤖 Prematch.
+- Threshold ``ML_DISPATCH_MIN_CONF`` (default 0.60) applies to the enabled
+  models: Early NW, Early Win, Late, All, ML Laning, and optional 🤖 Prematch.
 - Underdog ``U`` = side with ELO lower by >= ``ML_DISPATCH_UNDERDOG_MIN_DIFF``
   (default 50). If ``|elo_radiant - elo_dire| < diff`` there is no U/F
   split (``underdog_side is None``).
-- 🤖 Prematch (owner decision 15.09.2026, E-291 context): the 35-feature
-  general prematch model — panel line "🤖 ML-модель: SIDE NN.N% (оценка)" —
-  is wired in as a sixth ``ML_DISPATCH_WIN_MODELS`` member, ``"prematch"``,
-  appended to the default. Offline it is the single strongest model (★
-  ≥0.60 gives 71.2% n=9389, 71.5% solo) and its own dedicated delivery path
-  (``prematch_model_bet``) has been blocked by ``_dispatch_mode_reject_for_delivery``
-  since ``DISPATCH_MODE=ml`` (12.09.2026) — this is the path that lets its
-  opinion reach a bet again. It is a plain support model like Late/All/Early
-  NW/Early Win — NOT a veto model (``VETO_MODELS`` stays ``("late", "all")``)
-  and NOT in ``EARLY_ONLY_BLOCK_MODELS``, so a starred early_nw/early_win +
-  prematch pair (or a solo prematch star) is never ``early_solo_blocked``.
-  Rollback without a deploy (systemd drop-in): ``ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw``.
+- 🤖 Prematch is disabled by default through ``PREMATCH_ML_ENABLED=0``. The
+  35-feature general model supplies no verdict or win vote while disabled,
+  including when ``ML_DISPATCH_WIN_MODELS`` names it explicitly. Setting
+  ``PREMATCH_ML_ENABLED=1`` restores the previous default list with prematch
+  appended; it remains an allowed explicit win model, not a veto model.
 - Win market (x1 always): a side ``S`` is backed if at least one of the
   configured ``ML_DISPATCH_WIN_MODELS`` (default
-  ``late,all,early_win,early_nw,prematch``
-  — owner rule 12.09.2026 16:50: "если хоть одна из Early NW / Early Win /
-  All / Late имеет ★, сигнал посылается", extended to 🤖 Prematch
-  15.09.2026; ★ in the panel is exactly
+  ``late,all,early_win,early_nw``; add ``prematch`` only when enabled) —
+  owner rule 12.09.2026 16:50: "если хоть одна из Early NW / Early Win /
+  All / Late имеет ★, сигнал посылается"; ★ in the panel is exactly
   ``confidence >= ML_DISPATCH_MIN_CONF``, so any starred model is support)
   favors ``S`` at >= threshold. E-291 (owner decision 15.09.2026): a solo
   ``early_nw``/``early_win`` star with no ``all``/``late`` support in
@@ -213,7 +205,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SIDES = ("Radiant", "Dire")
 VETO_MODELS = ("late", "all")
-DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw", "prematch")
+DEFAULT_WIN_MODELS = ("late", "all", "early_win", "early_nw")
 ALLOWED_WIN_MODELS = ("late", "all", "early_win", "early_nw", "prematch")
 KILLS_EARLY_MODELS = ("early_nw", "early_win")
 EARLY_ONLY_BLOCK_MODELS = ("early_nw", "early_win")
@@ -314,7 +306,10 @@ class Config:
 
     min_conf: float = 0.60
     underdog_min_diff: float = 50.0
-    win_models: Tuple[str, ...] = DEFAULT_WIN_MODELS
+    win_models: Tuple[str, ...] = field(default_factory=lambda:
+        DEFAULT_WIN_MODELS + (("prematch",) if os.getenv("PREMATCH_ML_ENABLED", "0") == "1" else ()))
+    prematch_enabled: bool = field(default_factory=lambda:
+        os.getenv("PREMATCH_ML_ENABLED", "0") == "1")
     kills_require_all: bool = False
     timing_seconds: float = 600.0
     min_odds_margin: float = 0.12
@@ -345,11 +340,14 @@ class Config:
             except (TypeError, ValueError):
                 return float(default)
 
-        raw_models = env.get("ML_DISPATCH_WIN_MODELS", ",".join(DEFAULT_WIN_MODELS))
+        prematch_enabled = env.get("PREMATCH_ML_ENABLED", "0") == "1"
+        default_models = DEFAULT_WIN_MODELS + (("prematch",) if prematch_enabled else ())
+        raw_models = env.get("ML_DISPATCH_WIN_MODELS", ",".join(default_models))
         win_models = tuple(
             token.strip() for token in raw_models.split(",")
             if token.strip() in ALLOWED_WIN_MODELS
-        ) or DEFAULT_WIN_MODELS
+            and (token.strip() != "prematch" or prematch_enabled)
+        ) or default_models
         raw_max_game_time = env.get("ML_DISPATCH_MAX_GAME_TIME")
         max_game_time = None
         if raw_max_game_time not in (None, ""):
@@ -368,6 +366,7 @@ class Config:
             min_conf=_float("ML_DISPATCH_MIN_CONF", 0.60),
             underdog_min_diff=_float("ML_DISPATCH_UNDERDOG_MIN_DIFF", 50.0),
             win_models=win_models,
+            prematch_enabled=prematch_enabled,
             kills_require_all=str(env.get("ML_DISPATCH_KILLS_REQUIRE_ALL", "0")) == "1",
             timing_seconds=_float("ML_DISPATCH_TIMING_SECONDS", 600.0),
             min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.12),
@@ -692,7 +691,9 @@ def _evaluate_win(
         ))
         return decisions, skipped
 
-    configured = [name for name in cfg.win_models if name in ALLOWED_WIN_MODELS]
+    configured = [name for name in cfg.win_models
+                  if name in ALLOWED_WIN_MODELS
+                  and (name != "prematch" or cfg.prematch_enabled)]
     present_any = any(ctx.model(name) is not None for name in configured)
 
     support = {}

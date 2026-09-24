@@ -60,6 +60,7 @@ def _run(monkeypatch, branch, *, env_enabled):
     board are all off the critical path for this decision (fail-soft in the
     real function too) — stubbed so the test is deterministic and fast.
     """
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
     monkeypatch.setattr(veto, "win_index_draft", lambda *a, **k: 5.0)
     monkeypatch.setattr(ps_module, "get_model", lambda: _fake_model(branch))
     monkeypatch.setattr(veto, "_NO_ACCOUNT_NO_ORG_BET_ENABLED", env_enabled)

@@ -405,6 +405,15 @@ E-291 (владелец, 15.09.2026): одиночная ★ Early NW/Early Win 
 `prematch_index` (сырой индекс, только для лога, `evaluate` его не читает —
 design decision 3 докстринга `ml_dispatch.py`). Откат без деплоя —
 `ML_DISPATCH_WIN_MODELS=late,all,early_win,early_nw`.
+**С 24.09.2026 🤖 Prematch выключена по умолчанию** (`PREMATCH_ML_ENABLED=0`,
+решение владельца: модель не лучше ELO — E-307 live 69,0 % против 70,8 %,
+E-308/E-309 без значимого перевеса). Артефакт не загружается, строки
+«🤖 ML-модель» нет, `Ctx.prematch=None`, `prematch` нет в стандартном
+`ML_DISPATCH_WIN_MODELS`, отдельной ставки и гейта `BET_REQUIRE_WIN_MODEL` нет.
+Early NW/Early Win/Late, All, ML Laning, ELO, lane и kills30 продолжают
+работать (kills30 и панель w_* считаются в `_off_auxiliary_panels`). Сторож
+позиций E-296 работает без модели (`light_position_hard_slots`).
+`PREMATCH_ML_ENABLED=1` возвращает прежний путь.
 
 **Ветки ожидания при разногласии (владелец, 13.09.2026, дефолт
 `ML_DISPATCH_LATE_CONFLICT_MODE=wait`, подробности и данные —

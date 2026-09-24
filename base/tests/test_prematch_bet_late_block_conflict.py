@@ -21,6 +21,11 @@ import cyberscore_try as runtime  # noqa: E402
 import win_model_veto  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _enabled_general_prematch_model(monkeypatch):
+    monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+
+
 def test_conflict_label_covers_both_veto_kinds(monkeypatch: pytest.MonkeyPatch) -> None:
     """Оба вето позднего блока считаются расхождением с моделью."""
     seen = {}

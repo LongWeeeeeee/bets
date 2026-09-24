@@ -53,6 +53,8 @@ import hashlib
 import itertools
 import math
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
@@ -565,6 +567,150 @@ def lan_winrate(confidence: float) -> float:
     return wr
 
 
+def classify_position_slots(accs, get_games, get_pos):
+    """Разложить 10 слотов (в порядке позиций 1..5 × 2 стороны) на конфликты.
+
+    Пороги откалиброваны на корпусе (см. `PrematchModel._check_positions`):
+    у игроков с 20+ матчами «невиданная для себя позиция» встречается на 5.5%
+    карт, две сразу — на 0.3%, три и больше — на 0.0%. Поэтому жёсткий конфликт
+    (доля назначенной < 0.05 при доле обычной > 0.50) при >= 3 слотах означает
+    сломанную разметку, а мягкий (> 0.40) при >= 2 — только предупреждение.
+
+    `get_games(a)` — матчей у аккаунта или None, если снимок его не знает;
+    `get_pos(a, p)` — матчей на позиции. Возвращает (hard, soft): списки
+    (аккаунт, назначено, обычная). Единое место всех порогов: этим пользуются
+    и `PrematchModel._check_positions`, и лёгкий сторож без модели ниже.
+    """
+    hard, soft = [], []
+    for i, a in enumerate(accs):
+        a = int(a)
+        pos = (i % 5) + 1
+        games = get_games(a)
+        if games is None or float(games) < 20:   # мало матчей — судить не по чему
+            continue
+        by = {p: float(get_pos(a, p) or 0.0) for p in range(1, 6)}
+        tot = sum(by.values()) or 1.0
+        share, main = by[pos] / tot, max(by.values()) / tot
+        best = max(by, key=by.get)
+        if share < 0.05 and main > 0.50:
+            hard.append((a, pos, best))
+        if share < 0.05 and main > 0.40:
+            soft.append((a, pos, best))
+    return hard, soft
+
+
+_POSITION_GUARD_LOCK = threading.Lock()
+_POSITION_GUARD_TABLES = None
+_POSITION_GUARD_FAILED_AT = 0.0
+
+
+def _light_artifact_path(path=None):
+    if path:
+        return path
+    return os.getenv("PREMATCH_ARTIFACT", ARTIFACT_PATH)
+
+
+def _reset_light_position_tables() -> None:
+    """Сбросить кэш лёгкого сторожа (нужен тестам на синтетическом npz)."""
+    global _POSITION_GUARD_TABLES, _POSITION_GUARD_FAILED_AT
+    with _POSITION_GUARD_LOCK:
+        _POSITION_GUARD_TABLES = None
+        _POSITION_GUARD_FAILED_AT = 0.0
+
+
+def _light_position_tables(path=None):
+    """Только `accounts` (колонки 0 и 2: id и игры) и `acc_pos` — без модели.
+
+    Раскладка — та же, что видит `PrematchModel`: `AccTable` срезает ключевую
+    колонку, поэтому `games` у модели — `_val[1]`, то есть исходная колонка 2
+    (`_acc_side`: `A[i, 1] += games`, `"games": A[:, 1].mean()`).
+    `np.load` npz ленив по ключам: тяжёлые `coef`/`acc_hero`/`vs_pairs`/`h2h`
+    не читаются вовсе. Срез копируется, чтобы полный массив `accounts`
+    освободился сразу. Потокобезопасно.
+
+    Память (замер на serv1 24.09.2026, артефакт 21.09): пик 530 МБ на время
+    загрузки (весь `accounts` читается до среза), затем ~172 МБ сверх базы.
+    Ночная пересборка артефакта меняет доли позиций (на 11 записанных отказах
+    выбор снимка перевернул 4 вердикта), поэтому таблицы перечитываются, когда
+    меняется путь или mtime файла; stat — не чаще раза в 10 минут.
+    """
+    global _POSITION_GUARD_TABLES
+    art = str(_light_artifact_path(path))
+    cached = _POSITION_GUARD_TABLES
+    now = time.time()
+    if cached is not None and cached[0] == art and now - cached[2] < 600.0:
+        return cached[3]
+    with _POSITION_GUARD_LOCK:
+        cached = _POSITION_GUARD_TABLES
+        same = cached is not None and cached[0] == art
+        try:
+            mtime = os.stat(art).st_mtime
+            if same and cached[1] == mtime:
+                _POSITION_GUARD_TABLES = (art, mtime, now, cached[3])
+                return cached[3]
+            with np.load(art) as z:
+                _full = z["accounts"]
+                if _full.shape[1] < 3:
+                    raise ValueError(
+                        f"в accounts {_full.shape[1]} колонок, нет колонки игр (2)")
+                acc_slice = np.ascontiguousarray(_full[:, (0, 2)])
+                acc_pos_rows = np.ascontiguousarray(z["acc_pos"])
+                del _full
+        except Exception:
+            if same:
+                # Файл подменяют (rename) или он битый: старый снимок лучше,
+                # чем час без сторожа. Повторим через 10 минут.
+                _POSITION_GUARD_TABLES = (art, cached[1], now, cached[3])
+                return cached[3]
+            raise
+        tables = (AccTable(acc_slice), PairTable(acc_pos_rows, scalar=True))
+        _POSITION_GUARD_TABLES = (art, mtime, now, tables)
+        return tables
+
+
+def light_position_hard_slots(radiant_accounts, dire_accounts,
+                              path=None):
+    """Жёсткие конфликты позиций без построения `PrematchModel`.
+
+    Тот же порог отказа, что у модели (>= 3 hard-слота), и то же предусловие
+    из `score`: при нулевых или неизвестных снимку аккаунтах — пусто, а не
+    отказ. Артефакт missing/broken — тоже пусто (fail-open) с одним
+    предупреждением в лог: сторож не вправе ронять чужие сигналы.
+    """
+    try:
+        accs = ([int(a) for a in radiant_accounts]
+                + [int(a) for a in dire_accounts])
+    except (TypeError, ValueError):
+        return []
+    if len(accs) != 10 or any(a <= 0 for a in accs):
+        return []
+    global _POSITION_GUARD_FAILED_AT
+    if time.time() - _POSITION_GUARD_FAILED_AT < 3600.0:
+        return []                                  # не перечитывать битый артефакт каждый вызов
+    try:
+        acc, acc_pos = _light_position_tables(path)
+    except Exception as exc:                       # noqa: BLE001 — сторож fail-open
+        _POSITION_GUARD_FAILED_AT = time.time()
+        print(f"[prematch] position guard: артефакт недоступен "
+              f"({type(exc).__name__}: {exc}) — проверка пропущена на час", flush=True)
+        return []
+    try:
+        if any(acc.get(a) is None for a in accs):
+            return []
+
+        def _games(a):
+            row = acc.get(a)
+            return None if row is None else float(row[0])
+
+        hard, _soft = classify_position_slots(
+            accs, _games, lambda a, p: acc_pos.get((a, p), 0.0))
+    except Exception as exc:                       # noqa: BLE001 — сторож fail-open
+        print(f"[prematch] position guard: проверка упала "
+              f"({type(exc).__name__}: {exc}) — пропущена", flush=True)
+        return []
+    return hard if len(hard) >= 3 else []
+
+
 def veto_error_rate(confidence: float) -> tuple[float, float]:
     """Для вето: как часто оно ошибётся и какой кэф нужен ставке ПРОТИВ модели.
 
@@ -779,22 +925,15 @@ class PrematchModel:
         Порог откалиброван на корпусе: у игроков с 20+ матчами «невиданная для
         себя позиция» встречается на 5.5% карт, две сразу — на 0.3%, три и
         больше — на 0.0%. Поэтому три конфликта = разметка сломана.
+        Пороги живут в `classify_position_slots` — одном месте с лёгким
+        сторожем без модели (`light_position_hard_slots`).
         """
-        hard, soft = [], []
-        for i, a in enumerate(accs):
-            a = int(a)
-            pos = (i % 5) + 1
+        def _games(a):
             row = self.acc.get(a)
-            if row is None or row[1] < 20:            # мало матчей — судить не по чему
-                continue
-            by = {p: self.acc_pos.get((a, p), 0.0) for p in range(1, 6)}
-            tot = sum(by.values()) or 1.0
-            share, main = by[pos] / tot, max(by.values()) / tot
-            best = max(by, key=by.get)
-            if share < 0.05 and main > 0.50:
-                hard.append((a, pos, best))
-            if share < 0.05 and main > 0.40:
-                soft.append((a, pos, best))
+            return None if row is None else row[1]
+
+        hard, soft = classify_position_slots(
+            accs, _games, lambda a, p: self.acc_pos.get((a, p), 0.0))
         # калибровка на 1 500 свежих картах: жёсткий порог даёт 0.1% ложных
         # отказов и ловит 42.7% полной перестановки позиций; мягкий — 2.5% и
         # 71.2%. Поэтому жёсткий отказывает, мягкий только предупреждает.
@@ -1247,6 +1386,8 @@ _MODEL: Optional[PrematchModel] = None
 
 def get_model(path: str | os.PathLike[str] = ARTIFACT_PATH) -> PrematchModel:
     global _MODEL
+    if os.getenv("PREMATCH_ML_ENABLED", "0") != "1":
+        raise RuntimeError("general prematch ML disabled by PREMATCH_ML_ENABLED")
     if _MODEL is None:
         _MODEL = PrematchModel(path)
     return _MODEL

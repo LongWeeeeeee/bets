@@ -7995,6 +7995,8 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                     get_details = getattr(win_model_veto, "prediction_details", None)
                     details = get_details(block) if get_details else {}
                     break
+    if getattr(win_model_veto, "prematch_ml_enabled", lambda: True)() is False:
+        index = None
     standalone_all_line = str(all_model_line or "").strip()
     if index is None:
         # Owner decision 12.09.2026 20:10 MSK: even when the 35-feature
@@ -8063,6 +8065,9 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
         _fb_warning = str(_fb_details.get("refusal_warning_line") or "").strip()
         if _fb_warning:
             _fb_lines.append(_fb_warning)
+        _fb_panel = str(_fb_details.get("panel_text") or "").strip()
+        if _fb_panel:
+            _fb_lines.append(_fb_panel)
         if not _fb_lines:
             return f"{standalone_all_line}\n" if standalone_all_line else ""
         return "\n".join(_fb_lines) + "\n"
@@ -8220,11 +8225,11 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
 def _late_model_side_from_blocks(*blocks) -> Optional[str]:
     """Сторона late-модели (``radiant``/``dire``) для этой карты, либо None.
 
-    Индекс берётся точно так же, как в `_format_win_model_line`: он одинаков
-    во всех блоках и служит ключом к разложению `win_model_veto`. Возвращается
-    та же сторона, что печатается строкой «🕑 Late ML-модель», — чтобы гейт
-    доставки и late-гейт диспатча читали ОДНУ величину, а не два независимых
-    вычисления. Отказ молчаливый, как у самой модели: None — оценки нет.
+    Читает ту же оценку, что строка «🕑 Late ML-модель»: при выключенной
+    общей модели — из fallback-деталей, иначе — по индексу ансамбля.
+    При включённой модели поведение — как на HEAD: без индекса это отказ
+    (None), fallback-детали не читаются. Отказ молчаливый, как у самой
+    модели: None — оценки нет.
     """
     index = None
     for block in blocks:
@@ -8240,6 +8245,16 @@ def _late_model_side_from_blocks(*blocks) -> Optional[str]:
         if index is not None:
             break
     if index is None:
+        if win_model_veto.prematch_ml_enabled():
+            return None
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            details = block.get(win_model_veto.DETAILS_KEY)
+            if isinstance(details, dict) and details.get("refusal_reason"):
+                verdict = details.get("late")
+                side = str((verdict or {}).get("side") or "").strip().lower()
+                return side if side in ("radiant", "dire") else None
         return None
     try:
         get_details = getattr(win_model_veto, "prediction_details", None)
@@ -12514,7 +12529,8 @@ def _ml_dispatch_prematch_pair(index: Optional[float], source: Optional[str]) ->
     not a draft-only fallback) and ``index`` is not exactly 0 (no side).
     Missing/refused model -> ``None``, same as the panel line disappearing.
     """
-    if index is None or str(source or "") != win_model_veto.SOURCE_PREMATCH:
+    if (os.getenv("PREMATCH_ML_ENABLED", "0") != "1" or index is None
+            or str(source or "") != win_model_veto.SOURCE_PREMATCH):
         return None
     if index > 0:
         side = "Radiant"
@@ -12844,7 +12860,8 @@ def _ml_dispatch_tick(
         late_pair = details.get("late") if details else (
             win_model_veto.last_late(index) if index is not None else None
         )
-        kills30_pair = win_model_veto.last_kills30(index) if index is not None else None
+        kills30_pair = (win_model_veto.last_kills30(index) if index is not None
+                        else details.get("kills30"))
         kills30_radiant = kills30_pair.get("radiant") if isinstance(kills30_pair, dict) else None
         kills30_dire = kills30_pair.get("dire") if isinstance(kills30_pair, dict) else None
         # 🤖 Prematch as a sixth win model (owner decision 15.09.2026): same
@@ -13198,7 +13215,7 @@ def _win_model_reject_for_delivery(
         # ДО того, как Decision вообще появился; повторная проверка предматчевой
         # ML-модели здесь для ml-ставок избыточна и её не касается.
         return None
-    if not BET_REQUIRE_WIN_MODEL:
+    if not BET_REQUIRE_WIN_MODEL or os.getenv("PREMATCH_ML_ENABLED", "0") != "1":
         return None
     text = str(message_text or "")
     if _stake_multiplier_from_message(text) is None:
@@ -14221,9 +14238,15 @@ def _build_prematch_model_bet_message(
         stake_multiplier=1.0,
     )
     floor_line = f"Ставить от кэфа {float(min_odds):.2f}" if min_odds is not None else ""
+    if os.getenv("PREMATCH_ML_ENABLED", "0") != "1":
+        model_line = "\n".join(line for line in str(model_line or "").splitlines()
+                               if not line.lstrip().startswith("🤖 ML-модель:"))
     body = str(full_message_text or "").strip()
     if body:
         lines = body.splitlines()
+        if os.getenv("PREMATCH_ML_ENABLED", "0") != "1":
+            lines = [line for line in lines
+                     if not line.lstrip().startswith("🤖 ML-модель:")]
         if lines and lines[0].startswith("СТАВКА НА "):
             lines[0] = header                       # только таргет, блоки на месте
         else:
@@ -32409,7 +32432,8 @@ def _try_dispatch_prematch_model_bet(
     Идёт с ``defer_add_url=True``, чтобы остальные ватчеры продолжали работать
     в том же цикле, и ровно один раз за матч.
     """
-    if not match_key or not PREMATCH_MODEL_BET_ENABLED:
+    if (os.getenv("PREMATCH_ML_ENABLED", "0") != "1"
+            or not match_key or not PREMATCH_MODEL_BET_ENABLED):
         return False
     bet = win_model_veto.model_bet(early_output, mid_output, all_output)
     if not bet:
