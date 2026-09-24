@@ -187,7 +187,7 @@ def test_owner_example_8995161253_map2_backs_dire_with_all_four_stars():
     assert win[0].timing == "now"
     assert sorted(win[0].models_for) == ["all", "early_nw", "early_win"]
     assert win[0].expected_wr == 0.7324
-    assert win[0].min_odds == round(1 / 0.7324, 2)
+    assert win[0].min_odds == round(1 / (0.7324 - 0.12), 2)
 
 
 def test_lone_early_nw_star_backs_the_side_under_default_config():
@@ -652,7 +652,7 @@ def test_expected_wr_is_max_confidence_among_models_for():
     result = evaluate(ctx, cfg())
     win = [d for d in result.decisions if d.market == "win"][0]
     assert win.expected_wr == 0.80
-    assert win.min_odds == round(1 / 0.80, 2)
+    assert win.min_odds == round(1 / (0.80 - 0.12), 2)
 
 
 def test_min_odds_applies_margin():
@@ -711,8 +711,12 @@ def test_config_from_env_defaults_when_unset():
     assert result.win_models == ("late", "all", "early_win", "early_nw", "prematch")
     assert result.kills_require_all is False
     assert result.timing_seconds == 600.0
-    assert result.min_odds_margin == 0.0
+    assert result.min_odds_margin == 0.12
     assert result.early_solo_block is True
+
+
+def test_min_odds_margin_zero_env_restores_previous_floor():
+    assert Config.from_env({"ML_DISPATCH_MIN_ODDS_MARGIN": "0"}).min_odds_margin == 0.0
 
 
 # --- laning_serving.verdicts() and the ★ marker ----------------------------
@@ -1317,7 +1321,7 @@ def test_kills_early_win_plus_nw_same_side_nemesis():
     assert decision.rule == md.RULE_KILLS_EARLY_WIN_KILLS30
     assert sorted(decision.models_for) == ["early_nw", "early_win", "kills30"]
     assert decision.expected_wr == 0.604
-    assert decision.min_odds == round(1 / 0.604, 2)
+    assert decision.min_odds == round(1 / (0.604 - 0.12), 2)
     assert not [d for d in result.decisions if d.market == "win"]
     assert not [s for s in result.skipped
                 if s.market == "kills_total" and s.side in (None, "Radiant")]

@@ -363,7 +363,7 @@ _winline_shared_page_state: Dict[str, Any] = {
     "selected_pinned_page_id": None,
     "selected_pinned_key": None,
 }
-_winline_odds_orientation_state: Dict[str, Dict[str, float]] = {}
+_winline_odds_orientation_state: Dict[str, Dict[str, Any]] = {}
 _winline_current_map_scheduler_stop = threading.Event()
 _winline_current_map_scheduler_wake = threading.Event()
 _winline_current_map_scheduler_thread: Optional[threading.Thread] = None
@@ -3864,6 +3864,31 @@ def _winline_stabilize_odds_orientation(
     return payload
 
 
+def _winline_record_quote_observation(key: str, payload: Dict[str, Any], *, terminal: bool = False) -> None:
+    """Keep the poller's latest oriented, bettable quote and market status in memory."""
+    status = str(payload.get("market_status") or "").strip().lower()
+    valid = (not terminal and status in {"open", "ok", "available"}
+             and payload.get("page_valid") is not False
+             and payload.get("odds_bettable") is not False)
+    try:
+        p1, p2 = float(payload.get("p1_odds")), float(payload.get("p2_odds"))
+        valid = valid and all(math.isfinite(p) and p > 1.0 for p in (p1, p2))
+    except (TypeError, ValueError):
+        valid = False
+    with _winline_current_map_state_lock:
+        state = _winline_odds_orientation_state.setdefault(key, {})
+        if valid:
+            state.update(p1=p1, p2=p2, status="open", last_quote_mono=time.monotonic())
+        else:
+            # Retain p1/p2 for orientation history, but never gate on an
+            # earlier quote after a closed, stopped, frozen or missing market.
+            state["status"] = (
+                "terminal" if terminal else
+                "unavailable" if status in {"open", "ok", "available"} else
+                status or "unavailable"
+            )
+
+
 def _winline_observed_wall(payload: Any) -> Optional[float]:
     """Момент, когда кэфы были прочитаны со страницы (wall). None — неизвестен."""
     data = payload if isinstance(payload, dict) else {}
@@ -5079,6 +5104,8 @@ def _tick_winline_current_map_polling_impl(
                         payload = out
                     if isinstance(payload, dict):
                         payload = _winline_stabilize_odds_orientation(payload, key)
+                        _winline_record_quote_observation(
+                            key, payload, terminal=isinstance(terminal, dict))
                         epath = getattr(poller, "_evidence_path", None)
                         _winline_write_current_map_evidence(payload, path=epath)
                         if not bool(getattr(poller, "_evidence_is_custom", False)):
@@ -12618,6 +12645,7 @@ def _ml_dispatch_deliver_decision(
             full_message_text=full_message_text,
             ml_laning_line=ml_laning_line,
             all_model_line=all_model_line,
+            min_odds=decision.min_odds,
         )
     elif decision.market == "kills_window":
         window_label = ""
@@ -12648,6 +12676,7 @@ def _ml_dispatch_deliver_decision(
         "dire_team_name": str(dire_team_name or ""),
         "late_model_side": _late_model_side_from_blocks(early_output, mid_output, all_output),
         "calibration": {"expected_wr": decision.expected_wr, "min_odds": decision.min_odds},
+        "game_time_seconds": game_time_seconds,
         "ml_rule": decision.rule,
         "ml_market": decision.market,
     }
@@ -13319,23 +13348,66 @@ def _ml_dispatch_reserved_odds_from_message(message_text: Optional[str]) -> Opti
     return value if math.isfinite(value) and value > 0 else None
 
 
+def _ml_dispatch_fresh_winline_price(
+    ctx: Dict[str, Any], map_num: Any,
+) -> Optional[float]:
+    """Return the target team's fresh Winline price on this map, or None.
+
+    The orientation state is never pruned, so an earlier series between the
+    same teams or a retired card-sweep poller leaves extra entries for the
+    same map and pair (serv1 journal: 148 of 564 map slots had >1 key). Only
+    open quotes within the TTL are considered. When several fresh quotes
+    remain (two pollers on the same market), the highest target price wins:
+    the floor blocks only when every fresh quote is below it.
+    """
+    try:
+        wanted_map = int(map_num)
+    except (TypeError, ValueError):
+        return None
+    radiant = _winline_normalized_team_identity(ctx.get("radiant_team_name"))
+    dire = _winline_normalized_team_identity(ctx.get("dire_team_name"))
+    target = _winline_normalized_team_identity(ctx.get("stake_team_name"))
+    if not radiant or not dire or radiant == dire or target not in {radiant, dire}:
+        return None
+    try:
+        game_time = float(ctx.get("game_time_seconds"))
+    except (TypeError, ValueError):
+        game_time = 60.0  # unknown is never granted the longer pre-horn TTL
+    ttl = 1800.0 if math.isfinite(game_time) and game_time < 60.0 else 300.0
+    now = time.monotonic()
+    with _winline_current_map_state_lock:
+        matches = []
+        for key, state in _winline_odds_orientation_state.items():
+            quote_map, team1, team2 = _winline_parse_canonical_key(key)
+            first = _winline_normalized_team_identity(team1)
+            second = _winline_normalized_team_identity(team2)
+            if quote_map == wanted_map and {first, second} == {radiant, dire}:
+                matches.append((dict(state), first, second))
+    prices = []
+    for state, first, second in matches:
+        if state.get("status") != "open":
+            continue
+        try:
+            age = now - float(state["last_quote_mono"])
+            price = float(state["p1"] if target == first else state["p2"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0.0 <= age <= ttl and math.isfinite(price) and price > 1.0:
+            prices.append(price)
+    return max(prices) if prices else None
+
+
 def _ml_dispatch_min_odds_reject_for_delivery(
     message_text: Optional[str],
     stake_multiplier_context: Optional[Dict[str, Any]],
     match_key: Optional[str] = None,
+    map_num: Any = None,
 ) -> Optional[Dict[str, Any]]:
-    """Ценовой пол ML-ставки (дефект 3, план ml-диспатча): никто не читал
-    ``stake_multiplier_context["calibration"]`` — ML-ставка на победу уходила
-    бы без пола по кэфу. Применяется только к origin=="ml_dispatch" и
-    ml_market=="win" (у kills_window/kills_total рынка на килы нет — см.
-    план). Кэф неизвестен -> поведение как у существующего
-    ``BOOKMAKER_BLOCK_WITHOUT_ODDS`` (свой режим не изобретаем), то есть
-    блок ТОЛЬКО пока odds-гейт вообще активен (``BOOKMAKER_PREFETCH_ENABLED``
-    и ``BOOKMAKER_PREFETCH_GATE_MODE == "odds"``). При выключенном пайплайне
-    (`--no-odds`, прод 12.09.2026) общий путь возвращает
-    ``ready=True, reason="disabled"`` и отправляет без кэфа — пол здесь
-    обязан вести себя так же, иначе каждая ML-ставка на победу молча
-    режется «кэф неизвестен» (45 строк за 90 минут после включения ``ml``).
+    """Apply the ML WIN floor to a reserved or fresh in-process Winline price.
+
+    Under ``--no-odds`` an unknown/stale/ambiguous quote keeps the existing
+    pass behavior. When the ordinary odds gate is active, an unknown reserved
+    price still follows ``BOOKMAKER_BLOCK_WITHOUT_ODDS``.
     """
     ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
     if str(ctx.get("origin") or "") != "ml_dispatch":
@@ -13354,6 +13426,13 @@ def _ml_dispatch_min_odds_reject_for_delivery(
     price = _ml_dispatch_reserved_odds_from_message(message_text)
     if price is None:
         odds_gate_active = bool(BOOKMAKER_PREFETCH_ENABLED) and BOOKMAKER_PREFETCH_GATE_MODE == "odds"
+        if not odds_gate_active:
+            price = _ml_dispatch_fresh_winline_price(ctx, map_num)
+            if price is not None:
+                if price < min_odds:
+                    return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds,
+                            "price": price, "price_source": "winline_poll"}
+                return None
         if odds_gate_active and BOOKMAKER_BLOCK_WITHOUT_ODDS:
             return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds, "price": None}
         if not odds_gate_active:
@@ -14123,16 +14202,17 @@ def _build_prematch_model_bet_message(
     full_message_text: Any = None,
     ml_laning_line: str = "",
     all_model_line: str = "",
+    min_odds: Any = None,
 ) -> str:
     """Тело самостоятельной ставки предматчевой модели.
 
     Заголовок — обычный «СТАВКА НА <team> x1»: это ставка на победу, а не на
     килы. ВСЁ ОСТАЛЬНОЕ СОДЕРЖИМОЕ СООБЩЕНИЯ СОХРАНЯЕТСЯ: если вызывающий
     передал готовое тело сигнала (звёздные хиты, блоки Early/Late/All/Mix, WR,
-    ELO, линии, кэфы), переписывается ТОЛЬКО первая строка — таргет
+    ELO, линии, кэфы), переписывается первая строка — таргет
     разворачивается на сторону модели, а оператор видит ту же картину, что и в
-    обычной ставке. Строка модели с минимальным кэфом уже входит в блок
-    звёздных хитов, отдельно её добавлять не нужно.
+    обычной ставке. ML-dispatch передаёт ``min_odds`` отдельно, чтобы пол
+    находился сразу под заголовком и был виден в Telegram preview.
 
     Компактная сборка ниже — запасной путь для веток, где готового тела нет.
     """
@@ -14140,6 +14220,7 @@ def _build_prematch_model_bet_message(
         stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
         stake_multiplier=1.0,
     )
+    floor_line = f"Ставить от кэфа {float(min_odds):.2f}" if min_odds is not None else ""
     body = str(full_message_text or "").strip()
     if body:
         lines = body.splitlines()
@@ -14147,11 +14228,12 @@ def _build_prematch_model_bet_message(
             lines[0] = header                       # только таргет, блоки на месте
         else:
             lines.insert(0, header)                 # тело без заголовка (no-star ветка)
+        if floor_line:
+            lines.insert(1, floor_line)
         text = "\n".join(lines)
         if model_line and model_line.strip() and model_line.strip() not in text:
-            # Тело собрано без блока звёздных хитов — вносим строку модели сами,
-            # иначе минимальный кэф в сообщении не появится.
-            lines.insert(1, model_line.rstrip("\n"))
+            # Тело собрано без блока звёздных хитов — вносим строку модели сами.
+            lines.insert(2 if floor_line else 1, model_line.rstrip("\n"))
             text = "\n".join(lines)
         return text
     lane_block = _build_lane_block_for_bet(
@@ -14171,8 +14253,10 @@ def _build_prematch_model_bet_message(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
     )
+    floor_prefix = f"{floor_line}\n" if floor_line else ""
     return (
         f"{header}\n"
+        f"{floor_prefix}"
         f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
         f"{model_line or all_model_line or ''}"
@@ -33796,6 +33880,7 @@ def _deliver_and_persist_signal(
         message_text,
         stake_multiplier_context,
         match_key=match_key,
+        map_num=map_num,
     )
     if ml_min_odds_block is not None:
         if reservation_context is not None:

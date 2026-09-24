@@ -73,8 +73,8 @@ Rules implemented (owner decisions, 12.09.2026 — see
   ``kills_windows_open`` happens upstream (stage 2), not here.
 - ``expected_wr`` = max confidence among the models voting *for* the
   decision; ``min_odds = round(1 / (expected_wr - ML_DISPATCH_MIN_ODDS_MARGIN), 2)``
-  (margin default 0.0, i.e. the known zero-margin floor — the env var
-  exists precisely to tighten this later).
+  (margin default 0.12; ``ML_DISPATCH_MIN_ODDS_MARGIN=0`` restores the
+  previous zero-margin floor).
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -317,7 +317,7 @@ class Config:
     win_models: Tuple[str, ...] = DEFAULT_WIN_MODELS
     kills_require_all: bool = False
     timing_seconds: float = 600.0
-    min_odds_margin: float = 0.0
+    min_odds_margin: float = 0.12
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
@@ -370,7 +370,7 @@ class Config:
             win_models=win_models,
             kills_require_all=str(env.get("ML_DISPATCH_KILLS_REQUIRE_ALL", "0")) == "1",
             timing_seconds=_float("ML_DISPATCH_TIMING_SECONDS", 600.0),
-            min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.0),
+            min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.12),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,

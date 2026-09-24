@@ -503,11 +503,9 @@ def test_ml_min_odds_unknown_price_follows_bookmaker_block_without_odds(monkeypa
 def test_ml_min_odds_unknown_price_passes_when_odds_pipeline_off(monkeypatch, capsys) -> None:
     # Prod 12.09.2026: cyberscore_try.py runs with --no-odds, so
     # _bookmaker_prepare_message_for_delivery returns ready=True/"disabled"
-    # and the general path sends WITHOUT "Кэф Winline". The ML floor must
-    # not be stricter than that path: 8995259364 m1 (win Radiant, floor
-    # 1.56) and 8995387004 m1 (win Dire, floor 1.66) were blocked 45 times
-    # with "кэф неизвестен" while BOOKMAKER_BLOCK_WITHOUT_ODDS stayed at
-    # its default True.
+    # and the general path sends WITHOUT "Кэф Winline". With no matching
+    # fresh in-process quote, unknown price still passes; this avoids the
+    # 45 false blocks from 12.09.2026 when --no-odds was active.
     text = "СТАВКА НА Dawn Bulls x1\n"
     monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_ENABLED", False)
     monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_GATE_MODE", "odds")
