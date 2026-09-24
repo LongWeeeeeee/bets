@@ -396,3 +396,62 @@ def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
             expected_line = f'{b.side} {b.confidence*100:.0f}%'
             assert expected_line in render([b])
             assert render([b]) != render([a])
+
+
+def test_real_bundle_serves_fixture_kv3_features_by_name(monkeypatch):
+    import json
+    from catboost import CatBoostClassifier
+    from base import kills_v3_serving
+    import kv3_panel_serving as serving
+    import kv3_shadow
+    from ml_panel import ModelVerdict, load_specs
+
+    bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    fixture = Path(__file__).parent / 'fixtures/kv3_panel_b_maps.npz'
+    names = json.loads((bundle_dir / 'feature_names.json').read_text())
+    parameters = json.loads((bundle_dir / 'manifest.json').read_text())['od3_parameters']
+    source_names = names['kv3_source_names']
+    assert names['kv3_columns'] == ['kv3_' + name for name in source_names]
+    assert len(source_names) == 122
+    tp_names = list(np.random.default_rng(20260924).permutation(
+        source_names + [f'unused_tp_{i}' for i in range(30)]))
+    specs = {spec.key: spec for spec in load_specs(bundle_dir)}
+    models = {}
+    for key in serving.TARGETS:
+        model = CatBoostClassifier()
+        model.load_model(str(bundle_dir / (key + '.cbm')))
+        models[key] = model
+
+    candidate = SimpleNamespace(
+        panel_columns=names['panel_columns'], kv3_columns=names['kv3_columns'],
+        source_names=source_names, od3_parameters=parameters, models=models,
+        specs=specs, manifest_sha256='fixture', cutoff=1782864000,
+        state=SimpleNamespace(
+            serving_meta=dict(history_start=parameters['history_start'],
+                              visibility_delay=parameters['visibility_delay'],
+                              builder_params=parameters, tp_names=tp_names),
+            serving_last_overvisible_seconds=0),
+        _signature=lambda: (1, 1), state_mtime=1, state_size=1)
+    kv3_shadow.Candidate._check_state_contract(candidate)
+    assert candidate.tp_names == tp_names
+    assert candidate.tp_indices != list(range(122))
+
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    with np.load(fixture, allow_pickle=False) as z:
+        assert len(z['keys']) == 6
+        for i, key in enumerate(z['keys']):
+            values_by_name = dict(zip(source_names, z['kv3'][i]))
+            tp_vector = np.asarray([values_by_name.get(name, 1e6) for name in tp_names])
+            monkeypatch.setattr(kills_v3_serving, 'features_for_map',
+                                lambda *args, **kwargs: (tp_names, tp_vector))
+            incumbents = [ModelVerdict(
+                key=target, title=specs[target].title, side=specs[target].negative,
+                probability=.2, threshold=specs[target].threshold, fill=1, ok=False)
+                for target in serving.TARGETS]
+            context = dict(start_ts=int(z['ts'][i]), radiant_team_id=1,
+                           dire_team_id=2, radiant_accounts=[], dire_accounts=[])
+            result = serving.replace_verdicts(None, z['x928'][i], incumbents,
+                                               context, candidate=candidate)
+            verdict = next(v for v in result if v.key == str(key))
+            assert verdict.metadata['model'] == 'B_kv3'
+            assert abs(verdict.probability - float(z['expected_b'][i])) <= 1e-9
