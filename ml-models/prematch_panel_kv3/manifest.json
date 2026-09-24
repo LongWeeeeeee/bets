@@ -1,0 +1,114 @@
+{
+  "kind": "prematch_panel_kv3",
+  "targets": [
+    "w_5_15",
+    "w_10_20",
+    "w_15_25",
+    "w_20_30",
+    "rad_30_25",
+    "total_55_50"
+  ],
+  "run": {
+    "mode": "full",
+    "full_coverage": true,
+    "od3": "/Users/alex/Documents/ingame/data/kills_v3_20260923/od3_full_d86400/dataset.npz",
+    "panel_columns": 928,
+    "v3_columns": 122,
+    "n_maps": 482486,
+    "drop_kv3_regex": "obs_placed|sen_placed|stuns|teamfight_participation|camps_stacked",
+    "kv3_dropped": [
+      "player_own_obs_placed_sum",
+      "player_own_obs_placed_mean",
+      "player_own_sen_placed_sum",
+      "player_own_sen_placed_mean",
+      "player_own_stuns_sum",
+      "player_own_stuns_mean",
+      "player_own_teamfight_participation_sum",
+      "player_own_teamfight_participation_mean",
+      "player_own_camps_stacked_sum",
+      "player_own_camps_stacked_mean",
+      "player_own_obs_placed_effective_n_mean",
+      "player_own_sen_placed_effective_n_mean",
+      "player_own_stuns_effective_n_mean",
+      "player_own_teamfight_participation_effective_n_mean",
+      "player_own_camps_stacked_effective_n_mean",
+      "player_opp_obs_placed_sum",
+      "player_opp_obs_placed_mean",
+      "player_opp_sen_placed_sum",
+      "player_opp_sen_placed_mean",
+      "player_opp_stuns_sum",
+      "player_opp_stuns_mean",
+      "player_opp_teamfight_participation_sum",
+      "player_opp_teamfight_participation_mean",
+      "player_opp_camps_stacked_sum",
+      "player_opp_camps_stacked_mean",
+      "player_opp_obs_placed_effective_n_mean",
+      "player_opp_sen_placed_effective_n_mean",
+      "player_opp_stuns_effective_n_mean",
+      "player_opp_teamfight_participation_effective_n_mean",
+      "player_opp_camps_stacked_effective_n_mean"
+    ],
+    "coverage": {
+      "train": {
+        "covered": 456470,
+        "total": 456470
+      },
+      "sub": {
+        "covered": 365176,
+        "total": 365176
+      },
+      "val": {
+        "covered": 91294,
+        "total": 91294
+      },
+      "test": {
+        "covered": 26016,
+        "total": 26016
+      }
+    },
+    "test_from": 1774742400,
+    "params": {
+      "iterations": 3000,
+      "learning_rate": 0.03,
+      "depth": 6,
+      "l2_leaf_reg": 6,
+      "random_seed": 20260814,
+      "early_stopping_rounds": 150,
+      "verbose": false,
+      "thread_count": 6
+    },
+    "nice": 15,
+    "row_order_gate_auc": 0.6851911739941561,
+    "production_auc_gate": {
+      "w_5_15": 0.6783942168643631,
+      "w_10_20": 0.6704898574124747,
+      "w_15_25": 0.6590274614921641,
+      "w_20_30": 0.6412005971932059,
+      "rad_30_25": 0.7330417534418253,
+      "total_55_50": 0.7438954688539474
+    }
+  },
+  "od3_parameters": {
+    "half_life_days": 90,
+    "pseudo_games": 5,
+    "poisson_lr": 0.03,
+    "elo_k": 20,
+    "history_start": 1451606400,
+    "query_start": 1451606400,
+    "cpu_pause_seconds": 0,
+    "history_cutoff": null,
+    "visibility_delay": 86400,
+    "overlap_kill_sum_tolerance_per_side": 2
+  },
+  "od3_source_hashes": {
+    "/Users/alex/Documents/ingame/runtime/artifacts/misc/pro_corpus_rich.npz": "dfd75b977f2b63104d733281817f21cc3c201847d7812d53ff390671f95b5dd6",
+    "/Users/alex/Documents/ingame/runtime/artifacts/kills/opendota_windows_20260919/run/timeline.sqlite3": "dfb971f2165331dd18325bd8ebf06f04efbdd1f15557b34e84b8fc8b534c0f5f",
+    "/Users/alex/Documents/ingame/runtime/artifacts/kills/opendota_windows_20260923/run/timeline.sqlite3": "503bd521688fe850bf918114ae85d1f76af05eac33309d8dc23174469a67ca16"
+  },
+  "od3_blocks_used": [
+    "T",
+    "P"
+  ],
+  "side": 0,
+  "test_from": 1774742400
+}

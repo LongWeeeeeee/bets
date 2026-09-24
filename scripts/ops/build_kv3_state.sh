@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nightly kills-v3 serving state for the prematch panel shadow (model B).
+# Nightly kills-v3 serving state for prematch panel B.
 #
 # What: replays the kills-v3 history (base/kills_v3_serving.py build-state) up to
 # "now" with the SAME history_start and visibility_delay the deployed model was
@@ -14,8 +14,8 @@
 #
 # Delivery is opt-in: only with --deliver, and the nightly hook in
 # scripts/run/rebuild_prematch_snapshot.sh passes it only while the marker file
-# runtime/kv3_state_deliver.on exists. The shadow in the prod process reloads the
-# file when its mtime/size changes (base/kv3_shadow.py); no restart is needed.
+# runtime/kv3_state_deliver.on exists. Panel B reloads the state when its
+# mtime/size changes (base/kv3_panel_serving.py); no restart is needed.
 #
 # Usage: scripts/ops/build_kv3_state.sh [--deliver]
 # Output: data/kills_v3_state/state.npz (local), serv1:/root/main/data/kills_v3_state/state.npz

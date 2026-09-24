@@ -260,6 +260,8 @@ def status() -> dict[str, Any]:
             "card": st.get("card"), "error": st.get("error"),
             "last_error": st.get("last_error"),
             "duration43": st.get("duration43"),
+            "kv3_panel": (sys.modules["kv3_panel_serving"].status()
+                          if "kv3_panel_serving" in sys.modules else None),
             "shadow_status": st.get("shadow_status"),
             "shadow_health": shadow.status() if shadow is not None else None,
             "kills_dict": st.get("kwdict") is not None,
@@ -412,10 +414,23 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             if hblock is not None:
                 blocks["hybrid"] = hblock
         observer = None
+        kv3_panel_on = os.getenv('ML_PANEL_KV3', '0') == '1'
+        kv3_ready, kv3_reason = False, None
+        kv3_context = dict(shadow_context or {})
+        if kv3_panel_on:
+            import kv3_panel_serving
+            kv3_context.update(radiant_accounts=tuple(radiant_accounts),
+                               dire_accounts=tuple(dire_accounts))
+            kv3_ready, kv3_reason = kv3_panel_serving.prepare(bundle, kv3_context)
+            st['kv3_panel'] = kv3_panel_serving.status()
+        captured = []
         duration_shadow = shadow_context is not None and os.getenv('DURATION43_SHADOW_ENABLED', '0') == '1'
-        kv3_enabled = shadow_context is not None and os.getenv('KV3_SHADOW_ENABLED', '0') == '1'
-        if duration_shadow or kv3_enabled:
+        kv3_enabled = (not kv3_panel_on and shadow_context is not None
+                       and os.getenv('KV3_SHADOW_ENABLED', '0') == '1')
+        if duration_shadow or kv3_enabled or kv3_ready:
             def observer(x, verdicts):
+                if kv3_ready:
+                    captured.append(x)
                 if duration_shadow:
                     try:
                         import duration43_shadow
@@ -432,9 +447,32 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                             bundle, x, verdicts)
                     except Exception as exc:  # noqa: BLE001
                         _state["kv3_shadow_status"] = f'{type(exc).__name__}: {exc}'
+        draft_keys = (tuple(k for k in DRAFT_KEYS if k not in kv3_panel_serving.TARGETS)
+                      if kv3_ready else DRAFT_KEYS)
         verdicts = score(bundle, blocks, prod35_names=prod_order,
-                         with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS,
+                         with_draft=bool(DRAFT_KEYS), draft_keys=draft_keys,
                          row_observer=observer)
+        if kv3_panel_on:
+            if kv3_ready and captured:
+                verdicts = kv3_panel_serving.replace_verdicts(
+                    bundle, captured[0], verdicts, kv3_context,
+                    prod35_names=prod_order, draft_keys=DRAFT_KEYS)
+                failed = next((v.metadata.get('reason') for v in verdicts
+                               if v.key in kv3_panel_serving.TARGETS and v.metadata
+                               and v.metadata.get('model') == 'A_fallback'), None)
+                if failed:
+                    # The fast path skipped A's draft SHAP. Restore its full
+                    # verdict, including draft gate, if B failed after score().
+                    verdicts = kv3_panel_serving.fallback(
+                        score(bundle, blocks, prod35_names=prod_order,
+                              with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS), failed)
+            else:
+                if kv3_ready:
+                    verdicts = score(bundle, blocks, prod35_names=prod_order,
+                                     with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS)
+                verdicts = kv3_panel_serving.fallback(verdicts,
+                                                       kv3_reason or 'row_unavailable')
+            st['kv3_panel'] = kv3_panel_serving.status()
         # Independent causal candidate only replaces duration; other endpoints keep their inputs.
         try:
             import duration43_serving

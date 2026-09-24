@@ -402,7 +402,7 @@ def _prediction_context(match) -> dict:
             "map_key": data.get("map_key"),
             "game_time": data.get("game_time"),
             "elo_evaluation_timestamp": data.get("startDateTime")}
-    if os.getenv("KV3_SHADOW_ENABLED", "0") == "1":
+    if os.getenv("KV3_SHADOW_ENABLED", "0") == "1" or os.getenv("ML_PANEL_KV3", "0") == "1":
         # Keep the default context unchanged; malformed optional team fields
         # cannot interrupt the win/panel path even with shadow enabled.
         def _signed_team_id(camel_key, snake_key):

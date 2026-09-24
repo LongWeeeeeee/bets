@@ -175,6 +175,8 @@ runtime/winline_name_probe_*.txt
 *.npz
 !base/tests/fixtures/*.npz
 *.cbm
+# Production panel model B (E-329) ships with its code via git pull, like duration43_production/candidate.cbm.
+!ml-models/prematch_panel_kv3/*.cbm
 *.joblib
 maps_state.json
 data/prematch_model_spec*.json
