@@ -21,8 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 # Previous artifact kept on disk for rollback: LANING_MODEL_DIR=.../20260909_team_nw10_v1/selected.
 MODEL_DIR = Path(os.getenv("LANING_MODEL_DIR", str(
     ROOT / "data/laning_models/20260924_team_nw10_full_c1/refit_final")))
+# E-339 (25.09.2026): history rebuilt with the salvaged 01.09-21.09 pub crawl (7,378,146 maps,
+# only additions vs 20260909); 100k unseen pubs ll3 -0.0036 [-0.0044, -0.0028] with the same model.
+# Previous store kept on disk for rollback: LANING_HISTORY_DIR=.../20260909_stratz_v1.
 HISTORY_DIR = Path(os.getenv("LANING_HISTORY_DIR", str(
-    ROOT / "data/laning_history/20260909_stratz_v1")))
+    ROOT / "data/laning_history/20260925_stratz_v1")))
 ENABLED = os.getenv("LANING_MODEL_ENABLED", "1") == "1"
 LOG = logging.getLogger(__name__)
 
@@ -99,6 +102,20 @@ class LaningService:
 _SERVICE = LaningService()
 
 
+def _history_note(now=None):
+    """"данные до DD.MM (N дн.)" по max_end_ts загруженной истории, иначе по модели."""
+    store = getattr(_SERVICE, "history_store", None)
+    end = None
+    if store is not None:
+        try:
+            end = int(store.manifest["max_end_ts"])
+        except Exception:                             # noqa: BLE001
+            end = None
+    if end:
+        return _model_data_asof.freshness_note(end, now)
+    return _model_data_asof.model_dir_note(getattr(_SERVICE, "model_dir", MODEL_DIR), now)
+
+
 def _dispatch_min_conf():
     """``ML_DISPATCH_MIN_CONF`` read at format time (default 0.60, see ml_dispatch.py)."""
     try:
@@ -153,12 +170,12 @@ def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
             confidence = float(probability[winner])
             star = " ★" if confidence >= min_conf else ""
             line = f"ML Laning: {side} {probability[winner] * 100:.1f}% (золото, 10 мин){star}"
-            # Приписка свежести (20.09.2026): дата артефакта laning-модели —
-            # каталог `MODEL_DIR` (или его родитель `YYYYMMDD_…`), см.
+            # Приписка свежести: самые свежие данные за прогнозом — история игроков
+            # (E-339, 25.09.2026), поэтому дата берётся из загруженного хранилища
+            # (`max_end_ts`). Если хранилища нет — дата артефакта модели через
             # model_data_asof. Пусто, если дату взять неоткуда.
             try:
-                _note = _model_data_asof.model_dir_note(
-                    getattr(_SERVICE, "model_dir", MODEL_DIR))
+                _note = _history_note()
             except Exception:                         # noqa: BLE001
                 _note = ""
             if _note:

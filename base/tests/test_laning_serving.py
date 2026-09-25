@@ -167,8 +167,22 @@ def test_switched_artifact_reproduces_evaluated_pro_maps(monkeypatch):
         assert lane["side"] == item["expected_side"], item["match_id"]
         assert abs(lane["confidence"] - item["expected_confidence"]) <= 1e-9, item["match_id"]
         assert abs(lane["p_tie"] - item["probability"][1]) <= 1e-9, item["match_id"]
-    # The panel freshness note must show the real data end (04.09 from manifest.json),
-    # not the artifact directory date (24.09).
+    # The panel freshness note must show the end of the loaded player history (E-339:
+    # 21.09 for the 20260925 store), not the model manifest (04.09) or a directory date.
+    import datetime
+    expected = datetime.datetime.fromtimestamp(
+        fixture["history_max_end_ts"], tz=datetime.timezone.utc).strftime("%d.%m")
     line = module.panel_lines(fixture["maps"][-1]["radiant"], fixture["maps"][-1]["dire"],
                               fixture["maps"][-1]["timestamp"], draft_model=draft)["ml_laning_line"]
-    assert line.startswith("ML Laning: ") and "данные до 04.09" in line, line
+    assert line.startswith("ML Laning: ") and f"данные до {expected}" in line, line
+
+
+def test_freshness_note_prefers_loaded_history_over_model(monkeypatch):
+    from pathlib import Path
+    model_dir = Path("data/laning_models/20260924_team_nw10_full_c1/refit_final")
+    now = 1790300000  # 25.09.2026
+    monkeypatch.setattr(serving, "_SERVICE", SimpleNamespace(
+        history_store=SimpleNamespace(manifest={"max_end_ts": 1789997074}), model_dir=model_dir))
+    assert serving._history_note(now) == "данные до 21.09 (3 дн.)"
+    monkeypatch.setattr(serving, "_SERVICE", SimpleNamespace(history_store=None, model_dir=model_dir))
+    assert serving._history_note(now) == serving._model_data_asof.model_dir_note(model_dir, now)
