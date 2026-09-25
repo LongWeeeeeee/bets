@@ -445,7 +445,7 @@ Rich `wins` — исход карты; `winrates` и nullable-conflated `pstats`
 | `🤖 ML-модель` (прематч, `SOURCE_PREMATCH`) | `snapshot_ts` артефакта прематч-модели (`_LAST_FILL["freshness_note"]`, `win_model_veto._prematch_index`) — тот же снимок, про который лог пишет «снимок старше N суток» | `_format_win_model_line`, после `(оценка) \| WR \| кэф` |
 | `🤖 ML-модель` (драфт-ансамбль) и `🌐 All ML-модель` | `results.json` каталога `draft_model_paths.model_dir()`: `split_boundaries.train.last.start_time`, только если `counts.shipped_fit_rows == counts.train` (`win_model_veto.draft_model_freshness_note`, `laning_serving.panel_lines`) | там же / `laning_serving.py` |
 | `🕐 Early NW`, `🏁 Early Win`, `🕑 Late` | дата `YYYY-MM-DD` в имени каталога артефакта (или родителя) — это дата сборки, ВЕРХНЯЯ граница свежести корпуса: в их `results.json` границы сплита относятся к train/val/test, а модель обучена на полном корпусе | ключ `freshness_note` в словарях вердиктов (`win_model_veto._prematch_index`, `laning_serving.fallback_verdicts`) |
-| `ML Laning: … (золото, 10 мин)` | дата `YYYYMMDD` родителя `laning_serving.MODEL_DIR` (`data/laning_models/20260909_team_nw10_v1/selected` → 09.09), тоже дата сборки | `laning_serving.panel_lines`; строка живёт на месте блока Lanes и при скрытом блоке печатается вместе с `lane_adv_dict`/`Lane_adv_protracker`, без заголовка |
+| `ML Laning: … (золото, 10 мин)` | `data_asof_ts` из `manifest.json` каталога `laning_serving.MODEL_DIR` (`data/laning_models/20260924_team_nw10_full_c1/refit_final` → 04.09, конец истории игроков `LaningHistoryStore`; без манифеста — дата `YYYYMMDD` родителя, т.е. дата сборки) | `laning_serving.panel_lines`; строка живёт на месте блока Lanes и при скрытом блоке печатается вместе с `lane_adv_dict`/`Lane_adv_protracker`, без заголовка |
 
 Порядок правил `data_asof_ts`: results.json (с guard выше) → ключи `data_asof_ts`/`asof`/`snapshot_ts`/`history_last_end`
 в manifest.json/results.json → дата `YYYY-MM-DD`/`YYYYMMDD` в имени каталога/родителя/деда → новейший mtime `*.joblib|*.npz|*.cbm` → `None`
@@ -1710,7 +1710,8 @@ manifest с SHA256 массивов. `base/laning_history_store.py:LaningHistory
 recent-role-hero3. Строго `end < timestamp-delay`, нижняя граница окна включена.
 Неизвестный account0 даёт нули. Источник фиксирован; автоматического обновления нет.
 
-`LANING_MODEL_DIR` переопределяет `data/laning_models/20260909_team_nw10_v1/selected`,
+`LANING_MODEL_DIR` переопределяет `data/laning_models/20260924_team_nw10_full_c1/refit_final`
+(E-334, в бою с 25.09.2026; откат — `LANING_MODEL_DIR=…/20260909_team_nw10_v1/selected`),
 `LANING_HISTORY_DIR` — `data/laning_history/20260909_stratz_v1`;
 `LANING_MODEL_ENABLED=0` выключает строку. Lazy load сохраняет модель и mmap;
 cache256 учитывает весь драфт, аккаунты и timestamp. `ML Laning` после Top/Mid/Bot
