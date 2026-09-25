@@ -1,5 +1,6 @@
 """Series tempo ledger and the actual winner-off panel journal boundary."""
 
+import dataclasses
 import json
 import math
 import sys
@@ -39,6 +40,13 @@ def _lineups():
             {f"pos{i}": {"hero_id": i + 5, "account_id": i + 5} for i in range(1, 6)})
 
 
+B_BUNDLE = Path(__file__).resolve().parents[2] / "ml-models" / "prematch_panel_kv3"
+
+
+def _b_total_spec():
+    return {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)}["total_55_50"]
+
+
 def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
     """Run the real evaluate_map from winner-off; stub only its heavy score inputs."""
     journal = tmp_path / "ml_panel.jsonl"
@@ -46,6 +54,9 @@ def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
     monkeypatch.setenv("PREMATCH_ML_ENABLED", "0")
     monkeypatch.setenv("ML_PANEL_KV3", "0")
     monkeypatch.setattr(panel, "ENABLED", True)
+    import kv3_panel_serving
+    monkeypatch.setattr(kv3_panel_serving, "_specs",
+                        {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)})
     monkeypatch.setattr(panel, "HYBRID_ENABLED", False)
     monkeypatch.setattr(panel, "DRAFT_KEYS", ())
     monkeypatch.setattr(panel, "_load", lambda: {"bundle": SimpleNamespace(ready=True),
@@ -74,6 +85,7 @@ def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
 
 
 def test_shadow_formula_and_unshifted_journal_probability(tmp_path, monkeypatch):
+    monkeypatch.setenv("SERIES_TEMPO_APPLY", "0")   # rollback switch = journal-only shadow
     tempo.observe(_entry(101, 55, 1, 31, 40), now=100)
     tempo.observe(_entry(102, 55, 2, 0, 0), now=101)
     row = _off_journal(monkeypatch, tmp_path, 102)
@@ -87,6 +99,7 @@ def test_shadow_formula_and_unshifted_journal_probability(tmp_path, monkeypatch)
     assert abs(shadow["p_level"] - sigmoid(base_logit + tempo.A_LEVEL)) <= 1e-12
     assert abs(shadow["p_tempo"] - sigmoid(base_logit + tempo.A + tempo.BETA * (71 - tempo.MU))) <= 1e-12
     assert row["p"] == 0.56
+    assert (shadow["applied"], shadow["skip"]) == (False, "switch_off")
     assert row["metadata"]["bundle_sha"] == "fixture"
 
 
@@ -159,7 +172,8 @@ def test_pair_linkage_with_real_map_two_shape(tmp_path, monkeypatch):
     row = _off_journal(monkeypatch, tmp_path, second_row["match_id"])
     shadow = row["metadata"]["series_tempo"]
     assert (shadow["link"], shadow["series_id"], shadow["game_number"]) == ("pair", None, 2)
-    assert (shadow["n_prev"], shadow["prev_total_mean"], row["p"]) == (1, 71, 0.56)
+    assert (shadow["n_prev"], shadow["prev_total_mean"], shadow["p_raw"]) == (1, 71, 0.56)
+    assert row["p"] == round(shadow["p_tempo"], 6)
 
 
 def test_pair_does_not_link_stale_previous_map(monkeypatch):
@@ -274,4 +288,72 @@ def test_real_captured_series_boundary(tmp_path, monkeypatch):
     logit = math.log(0.56 / 0.44)
     assert abs(shadow["p_level"] - 1 / (1 + math.exp(-logit - tempo.A_LEVEL))) <= 1e-12
     assert abs(shadow["p_tempo"] - 1 / (1 + math.exp(-logit - tempo.A - tempo.BETA * (total - tempo.MU)))) <= 1e-12
-    assert row["p"] == 0.56
+    # Stage B (owner 25.09): the panel serves the tempo-corrected probability through B's own spec.
+    assert shadow["applied"] is True and shadow["variant"] == "tempo" and shadow["p_raw"] == 0.56
+    assert abs(row["p"] - round(shadow["p_tempo"], 6)) <= 1e-6
+    spec = _b_total_spec()
+    conf = shadow["p_tempo"]
+    assert row["side"] == spec.positive
+    assert (row["band_hit"], row["band_n"]) == spec.band_hit(conf)
+    assert row["ok"] is (conf >= spec.threshold)
+    served = next(v for v in veto._LAST_PANEL["verdicts"] if v.key == "total_55_50")
+    assert served.probability == conf and served.side == spec.positive
+    assert row["odds"] == round(spec.fair_odds(conf), 4)
+
+
+def _verdict(p, model="B_kv3", fill=1.0, draft_share=None):
+    spec = _b_total_spec()
+    return ml_panel.ModelVerdict("total_55_50", spec.title,
+                                 spec.positive if p >= 0.5 else spec.negative, p,
+                                 spec.threshold, fill, False, draft_share=draft_share,
+                                 metadata={"model": model})
+
+
+def _correction(p, n_prev=1, mean=70.0, game=2, model="B_kv3"):
+    tempo.observe(_entry(501, None, game, int(mean) // 2, int(mean) - int(mean) // 2, series_type=1), now=100)
+    tempo.observe(_entry(502, None, game, 0, 0, series_type=1), now=200)
+    shadow = tempo.shadow(p, 502 if n_prev else 501, model)
+    return shadow
+
+
+def test_serve_tempo_recomputes_side_band_odds_from_spec():
+    spec = _b_total_spec()
+    correction = _correction(0.48)
+    served, info = tempo.serve(_verdict(0.48), spec, correction)
+    assert info["applied"] and info["variant"] == "tempo" and info["p_raw"] == 0.48
+    assert served.probability == correction["p_tempo"] > 0.5
+    assert served.side == spec.positive
+    conf = served.probability
+    assert (served.band_hit, served.band_n) == spec.band_hit(conf)
+    assert served.odds == spec.fair_odds(conf)
+    assert served.ok is False                    # B threshold 0.99
+
+
+def test_serve_level_only_from_sourcetv_game_number():
+    spec = _b_total_spec()
+    tempo.observe(_entry(601, None, 2, 10, 10, series_type=1), now=100)
+    correction = tempo.shadow(0.7, 601, "B_kv3")
+    assert (correction["n_prev"], correction["continuation_source"]) == (0, "sourcetv_game_number")
+    served, info = tempo.serve(_verdict(0.7), spec, correction)
+    assert info["variant"] == "level" and served.probability == correction["p_level"] > 0.7
+
+
+def test_serve_leaves_first_map_fallback_and_draft_gated_verdicts():
+    spec = _b_total_spec()
+    tempo.observe(_entry(701, None, 1, 10, 10, series_type=1), now=100)
+    first = tempo.shadow(0.7, 701, "B_kv3")
+    verdict = _verdict(0.7)
+    assert tempo.serve(verdict, spec, first) == (verdict, {**first, "applied": False, "skip": "first_map"})
+    correction = _correction(0.7, model="A_fallback")
+    fallback = _verdict(0.7, model="A_fallback")
+    assert tempo.serve(fallback, spec, correction)[0] is fallback
+    gated = _verdict(0.7, draft_share=-0.1)
+    assert tempo.serve(gated, spec, _correction(0.7))[1]["skip"] == "draft_gate"
+    assert tempo.serve(verdict, None, _correction(0.7))[1]["skip"] == "spec_unavailable"
+
+
+def test_serve_keeps_min_fill_gate(monkeypatch):
+    spec = dataclasses.replace(_b_total_spec(), threshold=0.55)
+    correction = _correction(0.7)
+    assert tempo.serve(_verdict(0.7, fill=1.0), spec, correction)[0].ok is True
+    assert tempo.serve(_verdict(0.7, fill=0.5), spec, correction)[0].ok is False

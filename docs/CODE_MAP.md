@@ -99,7 +99,9 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   продолжения серии для `p_level`; `p_tempo` требует хотя бы одну карту в ledger.
   `metadata.series_tempo` содержит `link`, `n_prev`, `sourcetv_game_number`, `continuation_source`;
   `SERIES_TEMPO_SHADOW=0` отключает сбор и тень (по умолчанию `1`).
-  Вердикт, текст панели и ставки не меняются.
+  `SERIES_TEMPO_APPLY=1` (по умолчанию) применяет поправку к вероятности B `total_55_50` до
+  показа; `0` оставляет расчёт только в журнале (`metadata.series_tempo.p_raw` — исходная вероятность).
+  Поправка не меняет вход E281 для диспетчера ставок.
 - `runtime/experiments/kills/panel_plus_v3/run.py --save-models DIR` пишет бандл модели B (отказ, если DIR есть);
   `--drop-kv3-regex RX` — абляция колонок kv3; `compare_d86400.py` — рычаг задержки 24 ч против 1200 с.
 
@@ -793,6 +795,14 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 `lan_min_odds(confidence) -> float` / `lan_expected_wr(confidence) -> float` — сетка `LAN_ODDS_GRID` (уверенность в процентах 50..99 → фактический винрейт полосы на настоящих офлайн-турнирах и безубыточный кэф). Выше 85% заморожено: в полосах меньше 40 карт. `lan_winrate(confidence)`, `veto_error_rate(confidence) -> (доля ошибок, нужный кэф против модели)`.
 
 ## `base/win_model_veto.py` — индекс победы + вето и ставка по модели
+
+`ML_PANEL_KILLS_DISPLAY=b` (по умолчанию): при двух вердиктах `B_kv3`
+`rad_30_25` и `total_55_50` карточка показывает их через `ml_panel.render` после окон и перед
+`dur43`, без блока E281. Это полосовые цели ≥30 против ≤25 и ≥55 против ≤50;
+отдельной строки Dire ≥30 у B нет. При неполном B, `A_fallback` или ошибке панели
+остаётся блок E281. `ML_PANEL_KILLS_DISPLAY=e281` возвращает прежний текст без деплоя.
+В обоих режимах `_LAST_PANEL["kills30"]` продолжает получать числа E281 для гейта
+`ml_dispatch.kills_total`; показ B не меняет ставку.
 
 `base/kills_transfer_serving.py` добавляет в снимок `panel_text` три информационные
 вероятности E-281: Radiant ≥30, Dire ≥30, карта ≥55. Модель стороны считается

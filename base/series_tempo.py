@@ -1,4 +1,4 @@
-"""Fail-open live series ledger and journal-only total-kills corrections.
+"""Fail-open live series ledger and the series correction of model B total_55_50.
 
 Pair linkage can conflate two series of the same teams within four hours.
 First seen is when the bot first observed a map, not its exact start time.
@@ -6,6 +6,7 @@ First seen is when the bot first observed a map, not its exact start time.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
@@ -245,3 +246,51 @@ def shadow(p: float, match_id: Any, model: str | None = None) -> dict[str, Any] 
                 "source": "sourcetv_ledger", "model": model}
     except Exception:
         return None
+
+
+def _apply_enabled() -> bool:
+    return os.getenv("SERIES_TEMPO_APPLY", "1") != "0"
+
+
+def serve(verdict: Any, spec: Any, correction: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    """Serve the series-corrected probability of model B's verdict (owner order 25.09.2026).
+
+    Tempo when earlier maps of the series are in the ledger, level when only the SourceTV
+    game number says continuation. First maps, A fallbacks and draft-gated verdicts stay
+    unchanged. Side, the OK mark, band and fair odds are recomputed from the verdict's
+    own spec as in ml_panel.evaluate. SERIES_TEMPO_APPLY=0 returns to the journal-only
+    shadow. The original probability stays in the returned info as p_raw.
+    """
+    info = {**correction, "applied": False}
+    try:
+        if not _apply_enabled():
+            return verdict, {**info, "skip": "switch_off"}
+        if correction.get("model") != "B_kv3":
+            return verdict, {**info, "skip": "not_b"}
+        if correction.get("p_tempo") is not None:
+            probability, variant = float(correction["p_tempo"]), "tempo"
+        elif correction.get("continuation_source"):
+            probability, variant = float(correction["p_level"]), "level"
+        else:
+            return verdict, {**info, "skip": "first_map"}
+        if spec is None or getattr(spec, "key", None) != verdict.key:
+            return verdict, {**info, "skip": "spec_unavailable"}
+        if verdict.draft_share is not None or verdict.blocked:
+            return verdict, {**info, "skip": "draft_gate"}
+        if not (math.isfinite(probability) and 0.0 < probability < 1.0):
+            return verdict, {**info, "skip": "invalid_probability"}
+        import ml_panel
+
+        confidence = probability if probability >= 0.5 else 1.0 - probability
+        band = spec.band_hit(confidence)
+        served = dataclasses.replace(
+            verdict, probability=probability,
+            side=spec.positive if probability >= 0.5 else spec.negative,
+            ok=bool(confidence >= spec.threshold and verdict.fill >= ml_panel.MIN_FILL),
+            band_hit=None if band is None else band[0],
+            band_n=0 if band is None else band[1],
+            odds=spec.fair_odds(confidence))
+        return served, {**info, "applied": True, "variant": variant,
+                        "p_raw": verdict.probability}
+    except Exception:  # never break the panel; keep the served verdict
+        return verdict, {**info, "applied": False, "skip": "error"}

@@ -71,6 +71,15 @@ HYBRID_ENABLED = os.getenv("ML_PANEL_HYBRID", "1") not in ("0", "false", "False"
 DRAFT_KEYS = tuple(os.getenv("ML_PANEL_DRAFT_KEYS",
                              "w_5_15,w_10_20,w_15_25,w_20_30").split(","))
 
+
+def _served_spec(key, model):
+    """Spec that produced a served B verdict (kv3 panel.json), for the series correction."""
+    if model != 'B_kv3':
+        return None
+    specs = getattr(sys.modules.get('kv3_panel_serving'), '_specs', None)
+    return specs.get(key) if isinstance(specs, dict) else None
+
+
 WINDOWS = ("5_15", "10_20", "15_25", "20_30")
 DICT_FIELDS = ("expected_diff", "lead_probability", "games")
 
@@ -495,8 +504,10 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                 correction = series_tempo.shadow(verdict.probability, match_id,
                                                   metadata.get('model'))
                 if correction is not None:
-                    verdicts[index] = replace(verdict, metadata={**metadata, 'series_tempo': correction})
-        except Exception:  # journal-only shadow must never affect the panel
+                    served, correction = series_tempo.serve(
+                        verdict, _served_spec(verdict.key, metadata.get('model')), correction)
+                    verdicts[index] = replace(served, metadata={**metadata, 'series_tempo': correction})
+        except Exception:  # the series correction must never break the panel
             pass
         return verdicts
     except Exception as exc:                         # noqa: BLE001

@@ -846,6 +846,28 @@ def _match_team_id(match: Optional[dict], camel_key: str, snake_key: str) -> int
     return team_id if team_id > 0 else 0
 
 
+def _render_panel_kills_display(verdicts, ml_panel):
+    """Return card ML text and whether both served B kills targets replaced E281."""
+    wins = [v for v in verdicts if str(v.key).startswith("w_")]
+    best = ml_panel.best_of(wins)
+    highlight = [best.key] if best else []
+    duration = [v for v in verdicts if v.key == "dur43" and v.metadata]
+    if os.getenv("ML_PANEL_KILLS_DISPLAY", "b").lower() != "e281":
+        try:
+            targets = {v.key: v for v in verdicts
+                       if v.key in ("rad_30_25", "total_55_50")
+                       and v.metadata and v.metadata.get("model") == "B_kv3"}
+            if len(targets) == 2:
+                rendered = ml_panel.render(
+                    wins + [targets["rad_30_25"], targets["total_55_50"]] + duration,
+                    highlight=highlight)
+                if rendered:
+                    return rendered, True
+        except Exception:  # noqa: BLE001 — display error keeps the E281 block
+            pass
+    return ml_panel.render(wins + duration, highlight=highlight), False
+
+
 def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, match) -> dict:
     """Keep independent draft/kills panels alive without the winner artifact."""
     _LAST_PANEL.update(text="", verdicts=[], kills30=None, error=None)
@@ -858,17 +880,14 @@ def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, matc
     (rh, ra), (dh, da) = slots
     if min(rh + dh) <= 0:
         return {"panel_text": "", "kills30": None}
+    display_b_kills = False
     try:
         import prematch_panel_live as panel
         import ml_panel
         verdicts = panel.evaluate_map(rh, dh, ra, da, None, (),
                                       shadow_context=_prediction_context(match))
-        wins = [v for v in verdicts if str(v.key).startswith("w_")]
-        best = ml_panel.best_of(wins)
         _LAST_PANEL["verdicts"] = verdicts
-        _LAST_PANEL["text"] = ml_panel.render(
-            wins + [v for v in verdicts if v.key == "dur43" and v.metadata],
-            highlight=[best.key] if best else [])
+        _LAST_PANEL["text"], display_b_kills = _render_panel_kills_display(verdicts, ml_panel)
         _mid = None
         if isinstance(match, dict):
             for _k in ("id", "match_id", "map_id", "matchId", "map_key"):
@@ -897,7 +916,8 @@ def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, matc
         _LAST_PANEL["kills30"] = {"radiant": probabilities[0],
                                   "dire": probabilities[1], "total": probabilities[2]}
         kills_text = render(probabilities, manifest_history_date())
-        _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], kills_text)))
+        if not display_b_kills:
+            _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], kills_text)))
         _LAST_PANEL["kills_error"] = None
     except Exception as exc:  # noqa: BLE001 — kills remain optional as before
         _LAST_PANEL["kills_error"] = f"E281 kills: {type(exc).__name__}: {exc}"
@@ -1027,6 +1047,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         # --- панель окон килов: те же входы, что у предматчевой модели ---
         _LAST_PANEL["text"] = ""
         _LAST_PANEL["verdicts"] = []
+        _display_b_kills = False
         try:
             import prematch_panel_live as _panel
             import ml_panel as _mlp
@@ -1035,12 +1056,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                                       getattr(res, "features", None),
                                       list(getattr(model, "features", ()) or ()),
                                       shadow_context=context)
-            _wins = [v for v in _vs if str(v.key).startswith("w_")]
-            _best = _mlp.best_of(_wins)
             _LAST_PANEL["verdicts"] = _vs
-            _LAST_PANEL["text"] = _mlp.render(
-                _wins + [v for v in _vs if v.key == "dur43" and v.metadata],
-                highlight=[_best.key] if _best else [])
+            _LAST_PANEL["text"], _display_b_kills = _render_panel_kills_display(_vs, _mlp)
             _LAST_PANEL["error"] = None
             _mid = None
             if isinstance(match, dict):
@@ -1097,7 +1114,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                                       "dire": _kills_probabilities[1],
                                       "total": _kills_probabilities[2]}
             _kills_block = _kills_render(_kills_probabilities, _kills_history_date())
-            _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], _kills_block)))
+            if not _display_b_kills:
+                _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], _kills_block)))
             _LAST_PANEL["kills_error"] = None
         except Exception as _exc:                    # noqa: BLE001
             _kills_error = f"E281 kills: {type(_exc).__name__}: {_exc}"
