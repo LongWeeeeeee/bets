@@ -7,7 +7,10 @@
     "w_20_30",
     "rad_30_25",
     "dire_30_25",
-    "total_55_50"
+    "total_55_50",
+    "rad_ge30",
+    "dire_ge30",
+    "total_ge55"
   ],
   "run": {
     "mode": "full",

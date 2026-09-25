@@ -47,7 +47,7 @@ def _b_total_spec():
     return {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)}["total_55_50"]
 
 
-def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
+def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56, extra=None):
     """Run the real evaluate_map from winner-off; stub only its heavy score inputs."""
     journal = tmp_path / "ml_panel.jsonl"
     monkeypatch.setattr(ml_panel, "DEFAULT_JOURNAL", journal)
@@ -55,8 +55,10 @@ def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
     monkeypatch.setenv("ML_PANEL_KV3", "0")
     monkeypatch.setattr(panel, "ENABLED", True)
     import kv3_panel_serving
-    monkeypatch.setattr(kv3_panel_serving, "_specs",
-                        {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)})
+    specs = {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)}
+    if extra is not None:
+        specs[extra.key] = ml_panel.ModelSpec(extra.key, extra.title, "≥55", "≤54", 0.55)
+    monkeypatch.setattr(kv3_panel_serving, "_specs", specs)
     monkeypatch.setattr(panel, "HYBRID_ENABLED", False)
     monkeypatch.setattr(panel, "DRAFT_KEYS", ())
     monkeypatch.setattr(panel, "_load", lambda: {"bundle": SimpleNamespace(ready=True),
@@ -71,7 +73,7 @@ def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
                                     metadata={"model": "B_kv3", "bundle_sha": "fixture"})
     monkeypatch.setitem(sys.modules, "prematch_panel_scorer", SimpleNamespace(
         block_from_matrix=lambda *a: {}, block_from_prod_features=lambda *a, **k: {},
-        score=lambda *a, **k: [verdict]))
+        score=lambda *a, **k: [verdict] + ([extra] if extra is not None else [])))
     monkeypatch.setitem(sys.modules, "duration43_serving", SimpleNamespace(
         replace_verdict=lambda verdicts, *a, **k: verdicts,
         status=lambda: {"ready": False}))
@@ -81,7 +83,8 @@ def _off_journal(monkeypatch, tmp_path, match_id, probability=0.56):
     veto.win_prediction_ex(*_lineups(), "Team A", "Team B",
                            match={"id": match_id, "match_id": match_id})
     assert journal.exists(), veto._LAST_PANEL.get("error")
-    return json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])["models"][0]
+    rows = json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])["models"]
+    return rows if extra is not None else rows[0]
 
 
 def test_shadow_formula_and_unshifted_journal_probability(tmp_path, monkeypatch):
@@ -96,8 +99,9 @@ def test_shadow_formula_and_unshifted_journal_probability(tmp_path, monkeypatch)
     assert shadow["link"] == "sid"
     assert shadow["prev_total_mean"] == 71
     assert shadow["model"] == "B_kv3"
-    assert abs(shadow["p_level"] - sigmoid(base_logit + tempo.A_LEVEL)) <= 1e-12
-    assert abs(shadow["p_tempo"] - sigmoid(base_logit + tempo.A + tempo.BETA * (71 - tempo.MU))) <= 1e-12
+    constants = tempo.TEMPO_CONSTANTS["total_55_50"]
+    assert abs(shadow["p_level"] - sigmoid(base_logit + constants["a_level"])) <= 1e-12
+    assert abs(shadow["p_tempo"] - sigmoid(base_logit + constants["a"] + constants["beta"] * (71 - constants["mu"]))) <= 1e-12
     assert row["p"] == 0.56
     assert (shadow["applied"], shadow["skip"]) == (False, "switch_off")
     assert row["metadata"]["bundle_sha"] == "fixture"
@@ -113,6 +117,30 @@ def test_off_switch_and_unknown_match_do_not_attach(tmp_path, monkeypatch):
     assert tempo.shadow(0.5, 101) is None
     monkeypatch.setenv("SERIES_TEMPO_SHADOW", "1")
     assert "series_tempo" not in _off_journal(monkeypatch, tmp_path, 999)["metadata"]
+
+
+def test_plain_total_tempo_only_after_constants_are_fitted(tmp_path, monkeypatch):
+    tempo.observe(_entry(801, 888, 1, 31, 40), now=100)
+    tempo.observe(_entry(802, 888, 2, 0, 0), now=101)
+    plain = ml_panel.ModelVerdict("total_ge55", "тотал ≥55", "≥55", 0.56,
+                                  0.55, 1.0, True,
+                                  metadata={"model": "B_kv3", "bundle_sha": "fixture"})
+    fitted = tempo.TEMPO_CONSTANTS["total_ge55"]
+    monkeypatch.delitem(tempo.TEMPO_CONSTANTS, "total_ge55")
+    without = _off_journal(monkeypatch, tmp_path, 802, extra=plain)
+    assert without[1]["p"] == 0.56
+    assert "series_tempo" not in without[1]["metadata"]
+    monkeypatch.setitem(tempo.TEMPO_CONSTANTS, "total_ge55", fitted)
+    with_fit = _off_journal(monkeypatch, tmp_path, 802, extra=plain)
+    info = with_fit[1]["metadata"]["series_tempo"]
+    assert info["applied"] is True and info["variant"] == "tempo"
+    assert info["p_raw"] == 0.56
+    # Served constants (E-341): previous map 71 kills, logit(0.56) + a + beta * (71 - mu).
+    import math
+    logit = math.log(0.56 / 0.44) + fitted["a"] + fitted["beta"] * (71 - fitted["mu"])
+    assert info["p_tempo"] == pytest.approx(1 / (1 + math.exp(-logit)), abs=1e-12)
+    assert with_fit[1]["p"] == round(info["p_tempo"], 6) != 0.56
+    assert with_fit[1]["side"] == "≥55"
 
 
 def test_throttle_new_map_prune_and_time_order(tmp_path):
@@ -286,8 +314,9 @@ def test_real_captured_series_boundary(tmp_path, monkeypatch):
     assert shadow["sourcetv_game_number"] == 2
     assert shadow["continuation_source"] == "ledger"
     logit = math.log(0.56 / 0.44)
-    assert abs(shadow["p_level"] - 1 / (1 + math.exp(-logit - tempo.A_LEVEL))) <= 1e-12
-    assert abs(shadow["p_tempo"] - 1 / (1 + math.exp(-logit - tempo.A - tempo.BETA * (total - tempo.MU)))) <= 1e-12
+    constants = tempo.TEMPO_CONSTANTS["total_55_50"]
+    assert abs(shadow["p_level"] - 1 / (1 + math.exp(-logit - constants["a_level"]))) <= 1e-12
+    assert abs(shadow["p_tempo"] - 1 / (1 + math.exp(-logit - constants["a"] - constants["beta"] * (total - constants["mu"])))) <= 1e-12
     # Stage B (owner 25.09): the panel serves the tempo-corrected probability through B's own spec.
     assert shadow["applied"] is True and shadow["variant"] == "tempo" and shadow["p_raw"] == 0.56
     assert abs(row["p"] - round(shadow["p_tempo"], 6)) <= 1e-6

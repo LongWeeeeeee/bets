@@ -11,7 +11,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50')
-EXTRA_TARGETS = ('dire_30_25',)
+EXTRA_TARGETS = ('dire_30_25', 'rad_ge30', 'dire_ge30', 'total_ge55')
 _lock = threading.RLock()
 _candidate = None
 _specs = None
@@ -243,7 +243,8 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
             old = {v.key: v for v in verdicts}
             replacements = {}
             extra = tuple(key for key in EXTRA_TARGETS
-                          if os.getenv('ML_PANEL_KV3_DIRE', '1') != '0'
+                          if (os.getenv('ML_PANEL_KV3_DIRE', '1') != '0' if key == 'dire_30_25'
+                              else os.getenv('ML_PANEL_KV3_PLAIN', '1') != '0')
                           and key in candidate.models
                           and key in (_specs if candidate is _candidate else candidate.specs))
             for key in TARGETS + extra:
@@ -279,10 +280,16 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                                  **({'a_p': a.probability, 'a_ok': a.ok} if a else {})})
             _counts['served'] += 1
             served = [replacements.get(v.key, v) for v in verdicts]
-            for key in extra:
+            if 'dire_30_25' in extra:
                 index = next(i for i, verdict in enumerate(served)
                              if verdict.key == 'rad_30_25') + 1
-                served.insert(index, replacements[key])
+                served.insert(index, replacements['dire_30_25'])
+            index = next(i for i, verdict in enumerate(served)
+                         if verdict.key == 'total_55_50') + 1
+            for key in ('rad_ge30', 'dire_ge30', 'total_ge55'):
+                if key in extra:
+                    served.insert(index, replacements[key])
+                    index += 1
             return served
         except Exception as exc:  # noqa: BLE001 - no partial replacement
             return fallback(verdicts, _reason(f'{type(exc).__name__}: {exc}'))

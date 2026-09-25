@@ -847,22 +847,26 @@ def _match_team_id(match: Optional[dict], camel_key: str, snake_key: str) -> int
 
 
 def _render_panel_kills_display(verdicts, ml_panel):
-    """Return card ML text and whether both served B kills targets replaced E281."""
+    """Return card ML text and whether complete served B kills replace E281."""
     wins = [v for v in verdicts if str(v.key).startswith("w_")]
     best = ml_panel.best_of(wins)
     highlight = [best.key] if best else []
     duration = [v for v in verdicts if v.key == "dur43" and v.metadata]
-    if os.getenv("ML_PANEL_KILLS_DISPLAY", "b").lower() != "e281":
+    mode = os.getenv("ML_PANEL_KILLS_DISPLAY", "b").lower()
+    if mode != "e281":
         try:
+            keys = (("rad_30_25", "total_55_50") if mode == "band"
+                    else ("rad_ge30", "dire_ge30", "total_ge55"))
             targets = {v.key: v for v in verdicts
-                       if v.key in ("rad_30_25", "total_55_50")
+                       if v.key in keys
                        and v.metadata and v.metadata.get("model") == "B_kv3"}
-            if len(targets) == 2:
-                dire = [v for v in verdicts if v.key == "dire_30_25"
-                        and v.metadata and v.metadata.get("model") == "B_kv3"]
+            if len(targets) == len(keys):
+                dire = ([v for v in verdicts if v.key == "dire_30_25"
+                         and v.metadata and v.metadata.get("model") == "B_kv3"]
+                        if mode == "band" else [])
                 rendered = ml_panel.render(
-                    wins + [targets["rad_30_25"]] + dire[:1]
-                    + [targets["total_55_50"]] + duration,
+                    wins + [targets[keys[0]]] + dire[:1]
+                    + [targets[key] for key in keys[1:]] + duration,
                     highlight=highlight)
                 if rendered:
                     return rendered, True

@@ -498,11 +498,11 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             import series_tempo
             match_id = (shadow_context or {}).get('match_id')
             for index, verdict in enumerate(verdicts):
-                if verdict.key != 'total_55_50':
+                if verdict.key not in series_tempo.TEMPO_CONSTANTS:
                     continue
                 metadata = verdict.metadata or {}
                 correction = series_tempo.shadow(verdict.probability, match_id,
-                                                  metadata.get('model'))
+                                                  metadata.get('model'), key=verdict.key)
                 if correction is not None:
                     served, correction = series_tempo.serve(
                         verdict, _served_spec(verdict.key, metadata.get('model')), correction)

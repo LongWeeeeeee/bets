@@ -15,11 +15,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Fitted in runtime/artifacts/kills/series_tempo/fit_correction.json (E-331 §8).
-A_LEVEL = 0.20196088234669715
-A = 0.23966387274514095
-BETA = 0.009956373642896407
-MU = 63.4258321612752
+# total_55_50: runtime/artifacts/kills/series_tempo/fit_correction.json (E-331 §8).
+# total_ge55: runtime/artifacts/kills/panel_plus_v3/plain/total_ge55.tempo.json (a, beta, mu) and
+# plain_kills/fit_level.py (a_level; the same method reproduces total_55_50's a_level exactly), E-341.
+TEMPO_CONSTANTS = {"total_55_50": {
+    "a_level": 0.20196088234669715,
+    "a": 0.23966387274514095,
+    "beta": 0.009956373642896407,
+    "mu": 63.4258321612752,
+}, "total_ge55": {
+    "a_level": 0.14123391658956347,
+    "a": 0.1633323302403878,
+    "beta": 0.008860028931640574,
+    "mu": 63.11101804123711,
+}}
 _WRITE_INTERVAL = 30.0
 _KEEP_SECONDS = 48 * 60 * 60
 _DEFAULT_LINK_WINDOW_S = 4 * 60 * 60
@@ -223,8 +232,12 @@ def lookup(match_id: Any) -> tuple[int | None, int | None, list[int]] | None:
     return found[:3] if found is not None else None
 
 
-def shadow(p: float, match_id: Any, model: str | None = None) -> dict[str, Any] | None:
+def shadow(p: float, match_id: Any, model: str | None = None,
+           key: str = "total_55_50") -> dict[str, Any] | None:
     """Return prospective probabilities without changing the served verdict."""
+    constants = TEMPO_CONSTANTS.get(key)
+    if constants is None:
+        return None
     found = _lookup(match_id)
     if found is None:
         return None
@@ -241,8 +254,9 @@ def shadow(p: float, match_id: Any, model: str | None = None) -> dict[str, Any] 
         return {"series_id": series_id, "link": link, "game_number": game,
                 "sourcetv_game_number": game, "continuation_source": continuation,
                 "n_prev": len(previous), "prev_total_mean": mean,
-                "p_level": sigmoid(logit + A_LEVEL) if continuation else probability,
-                "p_tempo": sigmoid(logit + A + BETA * (mean - MU)) if mean is not None else None,
+                "p_level": sigmoid(logit + constants["a_level"]) if continuation else probability,
+                "p_tempo": sigmoid(logit + constants["a"] + constants["beta"] *
+                                   (mean - constants["mu"])) if mean is not None else None,
                 "source": "sourcetv_ledger", "model": model}
     except Exception:
         return None

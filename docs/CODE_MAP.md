@@ -89,10 +89,14 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   `panel.json` бандла B: пороги/заголовки = A, knots из `<key>.calib.json`, полосы кэфа пересчитаны на ставочной
   популяции (`runtime/experiments/kills/kv3_serving/write_b_panel_specs.py`); ночная доставка state —
   `scripts/ops/build_kv3_state.sh --deliver` при маркере `runtime/kv3_state_deliver.on`.
-  `EXTRA_TARGETS=(dire_30_25,)` добавляет вердикт B без аналога A только при наличии записи
-  в `panel.json` и обоих файлов модели/калибровки; `ML_PANEL_KV3_DIRE=0` его выключает.
+  `EXTRA_TARGETS=(dire_30_25,rad_ge30,dire_ge30,total_ge55)` добавляет вердикты B без аналога A
+  только при наличии записи в `panel.json` и обоих файлов модели/калибровки. Plain-цели:
+  радиант ≥30 против ≤29, дайр ≥30 против ≤29, тотал ≥55 против ≤54; заголовки, стороны,
+  пороги и полосы берутся из бандла. `ML_PANEL_KV3_DIRE=0` выключает только `dire_30_25`,
+  `ML_PANEL_KV3_PLAIN=0` — три plain-цели.
   Сборка через `runtime/experiments/kills/dire30/promote.py BUNDLE_SRC TARGET_DIR [--dry-run]`.
-- `base/series_tempo.py` — журналируемая тень E-331 для `total_55_50`: SourceTV ledger карт серии
+- `base/series_tempo.py` — журналируемая тень E-331 для целей в `TEMPO_CONSTANTS` (пока только
+  `total_55_50`; для `total_ge55` параметры ещё не подогнаны): SourceTV ledger карт серии
   (`runtime/series_tempo_ledger.json`, env `SERIES_TEMPO_LEDGER`) и `metadata.series_tempo` в
   `runtime/ml_panel.jsonl`; связь по `series_id`, а при его отсутствии по неупорядоченной паре team ID;
   отдельные `match_id` упорядочиваются по времени наблюдения: предыдущая карта должна впервые появиться
@@ -102,7 +106,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   продолжения серии для `p_level`; `p_tempo` требует хотя бы одну карту в ledger.
   `metadata.series_tempo` содержит `link`, `n_prev`, `sourcetv_game_number`, `continuation_source`;
   `SERIES_TEMPO_SHADOW=0` отключает сбор и тень (по умолчанию `1`).
-  `SERIES_TEMPO_APPLY=1` (по умолчанию) применяет поправку к вероятности B `total_55_50` до
+  `SERIES_TEMPO_APPLY=1` (по умолчанию) применяет поправку к вероятности B указанных целей до
   показа; `0` оставляет расчёт только в журнале (`metadata.series_tempo.p_raw` — исходная вероятность).
   Поправка не меняет вход E281 для диспетчера ставок.
 - `runtime/experiments/kills/panel_plus_v3/run.py --save-models DIR` пишет бандл модели B (отказ, если DIR есть);
@@ -801,12 +805,11 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 ## `base/win_model_veto.py` — индекс победы + вето и ставка по модели
 
-`ML_PANEL_KILLS_DISPLAY=b` (по умолчанию): при двух вердиктах `B_kv3`
-`rad_30_25` и `total_55_50` карточка показывает их через `ml_panel.render` после окон и перед
-`dur43`, без блока E281. Если присутствует вердикт B `dire_30_25`, он показывается
-после `rad_30_25` и перед `total_55_50`. Это полосовые цели ≥30 против ≤25 и
-≥55 против ≤50. При неполном B, `A_fallback` или ошибке панели
-остаётся блок E281. `ML_PANEL_KILLS_DISPLAY=e281` возвращает прежний текст без деплоя.
+`ML_PANEL_KILLS_DISPLAY=b` (по умолчанию): при трёх вердиктах `B_kv3`
+`rad_ge30`, `dire_ge30`, `total_ge55` карточка показывает их через `ml_panel.render` после окон
+и перед `dur43`, без блока E281. При отсутствии хотя бы одного, `A_fallback` или ошибке панели
+остаётся блок E281. `ML_PANEL_KILLS_DISPLAY=band` возвращает прежний B-блок с `rad_30_25`,
+опциональным `dire_30_25` и `total_55_50`; `e281` принудительно показывает E281.
 В обоих режимах `_LAST_PANEL["kills30"]` продолжает получать числа E281 для гейта
 `ml_dispatch.kills_total`; показ B не меняет ставку.
 

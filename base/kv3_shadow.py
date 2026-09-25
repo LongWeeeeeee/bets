@@ -18,7 +18,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50')
-EXTRA_TARGETS = ('dire_30_25',)
+EXTRA_TARGETS = ('dire_30_25', 'rad_ge30', 'dire_ge30', 'total_ge55')
 _QUEUE = queue.Queue(maxsize=16)
 _START_LOCK = threading.Lock()
 _LOAD_LOCK = threading.Lock()
@@ -84,7 +84,8 @@ class Candidate:
         from ml_panel import load_specs
         optional = {s.key for s in load_specs(directory)} & set(EXTRA_TARGETS)
         optional = tuple(key for key in EXTRA_TARGETS if key in optional
-                         and os.getenv('ML_PANEL_KV3_DIRE', '1') != '0'
+                         and (os.getenv('ML_PANEL_KV3_DIRE', '1') != '0' if key == 'dire_30_25'
+                              else os.getenv('ML_PANEL_KV3_PLAIN', '1') != '0')
                          and (directory / (key + '.cbm')).is_file()
                          and (directory / (key + '.calib.json')).is_file())
         for key in TARGETS + optional:
