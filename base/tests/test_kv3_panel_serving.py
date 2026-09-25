@@ -349,6 +349,7 @@ def test_live_wiring_off_and_on_with_fake_score(monkeypatch):
 
 
 def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
+    import hashlib
     import json
     from catboost import CatBoostClassifier
     import kv3_panel_serving as serving
@@ -357,8 +358,10 @@ def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
     path = Path(__file__).parent / 'fixtures/kv3_panel_b_maps.npz'
     bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
     monkeypatch.setenv('ML_PANEL_KV3', '1')
+    manifest_sha = hashlib.sha256((bundle_dir / 'manifest.json').read_bytes()).hexdigest()
     specs = {s.key: s for s in load_specs(bundle_dir)}
-    assert set(specs) == set(serving.TARGETS)
+    assert set(serving.TARGETS) <= set(specs)
+    assert set(specs) <= set(serving.TARGETS + serving.EXTRA_TARGETS)
     names = json.loads((bundle_dir / 'feature_names.json').read_text())
     models = {}
     for key in serving.TARGETS:
@@ -367,7 +370,7 @@ def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
         models[key] = model
     candidate = SimpleNamespace(panel_columns=names['panel_columns'],
                                 kv3_columns=names['kv3_columns'], models=models,
-                                specs=specs, manifest_sha256='fixture', cutoff=1782864000,
+                                specs=specs, manifest_sha256=manifest_sha, cutoff=1782864000,
                                 state=SimpleNamespace(serving_last_overvisible_seconds=0))
     with np.load(path, allow_pickle=False) as z:
         metadata = json.loads(str(z['metadata']))
@@ -392,6 +395,7 @@ def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
                                                candidate=candidate)
             b = next(v for v in result if v.key == str(key))
             assert b.metadata['model'] == 'B_kv3'
+            assert b.metadata['bundle_sha'] == manifest_sha
             assert abs(b.probability - float(z['expected_b'][i])) <= 1e-9
             expected_line = f'{b.side} {b.confidence*100:.0f}%'
             assert expected_line in render([b])

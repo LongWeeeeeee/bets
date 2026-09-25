@@ -11,6 +11,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50')
+EXTRA_TARGETS = ('dire_30_25',)
 _lock = threading.RLock()
 _candidate = None
 _specs = None
@@ -92,7 +93,7 @@ def _load_uncached(bundle):
             else:
                 os.environ['KV3_SHADOW_DIR'] = old
         specs = {s.key: s for s in load_specs(directory)}
-        if set(specs) != set(TARGETS):
+        if not set(TARGETS) <= set(specs) or set(specs) - set(TARGETS) - set(EXTRA_TARGETS):
             raise kv3_shadow.FeatureContractError('KV3 panel.json target set differs')
         incumbent = {s.key: s for s in bundle.specs}
         for key in TARGETS:
@@ -106,6 +107,13 @@ def _load_uncached(bundle):
                 raise kv3_shadow.FeatureContractError(f'{key}: panel calibration x differs')
             if tuple(specs[key].knots_y) != tuple(new_candidate.calibration[key][1]):
                 raise kv3_shadow.FeatureContractError(f'{key}: panel calibration y differs')
+        for key in EXTRA_TARGETS:
+            if key not in new_candidate.models:
+                continue
+            if (len(new_candidate.models[key].feature_names_) != 1050
+                    or tuple(specs[key].knots_x) != tuple(new_candidate.calibration[key][0])
+                    or tuple(specs[key].knots_y) != tuple(new_candidate.calibration[key][1])):
+                raise kv3_shadow.FeatureContractError(f'{key}: B model or calibration differs')
         _candidate, _specs, _error = new_candidate, specs, None
     elif _candidate.panel_columns != list(bundle.columns):
         raise kv3_shadow.FeatureContractError('Live panel columns changed after KV3 load')
@@ -234,9 +242,13 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                               prod35_names) if draft_keys else None
             old = {v.key: v for v in verdicts}
             replacements = {}
-            for key in TARGETS:
+            extra = tuple(key for key in EXTRA_TARGETS
+                          if os.getenv('ML_PANEL_KV3_DIRE', '1') != '0'
+                          and key in candidate.models
+                          and key in (_specs if candidate is _candidate else candidate.specs))
+            for key in TARGETS + extra:
                 a = old.get(key)
-                if a is None:
+                if a is None and key in TARGETS:
                     raise ValueError(f'A verdict missing: {key}')
                 spec = _specs[key] if candidate is _candidate else candidate.specs[key]
                 model = candidate.models[key]
@@ -254,7 +266,8 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                                          prod35_names, values=sv,
                                          flip=(not sides) and spec.calibrate(raw) < .5)
                 b = evaluate(spec, raw, {}, draft_share=share, parts=parts,
-                             fill=a.fill, missing=a.missing)
+                             fill=a.fill if a else 1.0,
+                             missing=a.missing if a else ())
                 replacements[key] = dataclasses.replace(
                     b, metadata={'model': 'B_kv3', 'bundle_sha': candidate.manifest_sha256,
                                  'state_cutoff': candidate.cutoff,
@@ -263,8 +276,13 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                                                         and int(context.get('dire_team_id', 0))),
                                  'kv3_overvisible_s': (int(candidate.state.serving_last_overvisible_seconds)
                                      if hasattr(candidate.state, 'serving_last_overvisible_seconds') else None),
-                                 'a_p': a.probability, 'a_ok': a.ok})
+                                 **({'a_p': a.probability, 'a_ok': a.ok} if a else {})})
             _counts['served'] += 1
-            return [replacements.get(v.key, v) for v in verdicts]
+            served = [replacements.get(v.key, v) for v in verdicts]
+            for key in extra:
+                index = next(i for i, verdict in enumerate(served)
+                             if verdict.key == 'rad_30_25') + 1
+                served.insert(index, replacements[key])
+            return served
         except Exception as exc:  # noqa: BLE001 - no partial replacement
             return fallback(verdicts, _reason(f'{type(exc).__name__}: {exc}'))

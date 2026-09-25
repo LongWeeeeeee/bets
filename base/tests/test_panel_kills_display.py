@@ -24,7 +24,7 @@ def _lineups():
              for i in range(1, 6)})
 
 
-def _verdicts(model):
+def _verdicts(model, *, dire=False):
     specs = {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)}
     assert {"rad_30_25", "total_55_50"} <= specs.keys()
     window = ml_panel.ModelVerdict("w_5_15", "окно 5-15", "Radiant", 0.72,
@@ -35,12 +35,17 @@ def _verdicts(model):
         targets.append(ml_panel.ModelVerdict(
             key, spec.title, spec.positive, probability, spec.threshold, 1.0,
             True, metadata={"model": model, "bundle_sha": "fixture"}))
+    if dire:
+        targets.insert(1, ml_panel.ModelVerdict(
+            "dire_30_25", "дайр ≥30", "≥30", 0.83, 0.78, 1.0,
+            True, metadata={"model": model, "bundle_sha": "fixture"}))
     duration = ml_panel.ModelVerdict("dur43", "Длительность", "Radiant", 0.63,
                                      0.60, 1.0, True, metadata={"model": "duration43"})
     return [window, *targets, duration]
 
 
-def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False):
+def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False,
+          dire=False):
     monkeypatch.setenv("PREMATCH_ML_ENABLED", "0")
     monkeypatch.setenv("ML_PANEL_KV3", "0")
     monkeypatch.setenv("SERIES_TEMPO_SHADOW", "0")
@@ -64,7 +69,7 @@ def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False)
                         SimpleNamespace(sym_block=lambda *a: []))
     monkeypatch.setitem(sys.modules, "prematch_panel_scorer", SimpleNamespace(
         block_from_matrix=lambda *a: {}, block_from_prod_features=lambda *a, **k: {},
-        score=lambda *a, **k: _verdicts(model)))
+        score=lambda *a, **k: _verdicts(model, dire=dire)))
     monkeypatch.setitem(sys.modules, "duration43_serving", SimpleNamespace(
         replace_verdict=lambda verdicts, *a, **k: verdicts,
         status=lambda: {"ready": True}))
@@ -99,10 +104,20 @@ def test_b_card_shows_served_band_targets_without_e281(monkeypatch, tmp_path):
     assert text.index("тотал ≥55") < text.index("Длительность")
 
 
+def test_b_card_includes_optional_dire_in_order(monkeypatch, tmp_path):
+    text = _card(monkeypatch, tmp_path, dire=True)
+    assert "дайр ≥30: ≥30 83%" in text
+    assert text.index("окно 5-15") < text.index("радиант ≥30")
+    assert text.index("радиант ≥30") < text.index("дайр ≥30")
+    assert text.index("дайр ≥30") < text.index("тотал ≥55")
+    assert text.index("тотал ≥55") < text.index("Длительность")
+    assert "Килы ML · E-281" not in text
+
+
 @pytest.mark.parametrize("model", ["A_fallback", "B_kv3"])
 def test_e281_text_when_b_unavailable_or_rollback(monkeypatch, tmp_path, model):
     display = "e281" if model == "B_kv3" else None
-    text = _card(monkeypatch, tmp_path, model=model, display=display)
+    text = _card(monkeypatch, tmp_path, model=model, display=display, dire=True)
     old_panel = ml_panel.render([_verdicts(model)[0], _verdicts(model)[-1]],
                                 highlight=["w_5_15"])
     assert text == old_panel + "\n" + kills.render(E281_NUMBERS, E281_DATE)

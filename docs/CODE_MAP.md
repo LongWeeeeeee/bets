@@ -89,6 +89,9 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   `panel.json` бандла B: пороги/заголовки = A, knots из `<key>.calib.json`, полосы кэфа пересчитаны на ставочной
   популяции (`runtime/experiments/kills/kv3_serving/write_b_panel_specs.py`); ночная доставка state —
   `scripts/ops/build_kv3_state.sh --deliver` при маркере `runtime/kv3_state_deliver.on`.
+  `EXTRA_TARGETS=(dire_30_25,)` добавляет вердикт B без аналога A только при наличии записи
+  в `panel.json` и обоих файлов модели/калибровки; `ML_PANEL_KV3_DIRE=0` его выключает.
+  Сборка через `runtime/experiments/kills/dire30/promote.py BUNDLE_SRC TARGET_DIR [--dry-run]`.
 - `base/series_tempo.py` — журналируемая тень E-331 для `total_55_50`: SourceTV ledger карт серии
   (`runtime/series_tempo_ledger.json`, env `SERIES_TEMPO_LEDGER`) и `metadata.series_tempo` в
   `runtime/ml_panel.jsonl`; связь по `series_id`, а при его отсутствии по неупорядоченной паре team ID;
@@ -798,8 +801,9 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 `ML_PANEL_KILLS_DISPLAY=b` (по умолчанию): при двух вердиктах `B_kv3`
 `rad_30_25` и `total_55_50` карточка показывает их через `ml_panel.render` после окон и перед
-`dur43`, без блока E281. Это полосовые цели ≥30 против ≤25 и ≥55 против ≤50;
-отдельной строки Dire ≥30 у B нет. При неполном B, `A_fallback` или ошибке панели
+`dur43`, без блока E281. Если присутствует вердикт B `dire_30_25`, он показывается
+после `rad_30_25` и перед `total_55_50`. Это полосовые цели ≥30 против ≤25 и
+≥55 против ≤50. При неполном B, `A_fallback` или ошибке панели
 остаётся блок E281. `ML_PANEL_KILLS_DISPLAY=e281` возвращает прежний текст без деплоя.
 В обоих режимах `_LAST_PANEL["kills30"]` продолжает получать числа E281 для гейта
 `ml_dispatch.kills_total`; показ B не меняет ставку.

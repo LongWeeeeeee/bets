@@ -858,8 +858,11 @@ def _render_panel_kills_display(verdicts, ml_panel):
                        if v.key in ("rad_30_25", "total_55_50")
                        and v.metadata and v.metadata.get("model") == "B_kv3"}
             if len(targets) == 2:
+                dire = [v for v in verdicts if v.key == "dire_30_25"
+                        and v.metadata and v.metadata.get("model") == "B_kv3"]
                 rendered = ml_panel.render(
-                    wins + [targets["rad_30_25"], targets["total_55_50"]] + duration,
+                    wins + [targets["rad_30_25"]] + dire[:1]
+                    + [targets["total_55_50"]] + duration,
                     highlight=highlight)
                 if rendered:
                     return rendered, True
