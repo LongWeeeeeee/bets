@@ -36,3 +36,9 @@ Main-цикл (`base/cyberscore_try.py` `__main__`, ~27193) выбирает sle
 ## Заметки
 - Все sleep — через `_sleep_interruptible(...)` (прерывается admin-командами/событиями).
 - Цикл ~30с при активных матчах — норма; основное время уходит на Camoufox page loads (карточки + individual match pages) и bookmaker prefetch.
+
+## Сбор публичных матчей (serv1, cron, с 25.09.2026)
+Сбор пабликов STRATZ запускает root-cron на serv1, без агентов и Codex:
+`23 * * * * /bin/bash /root/main/scripts/run/pub_recrawl_cron.sh >> /root/main/runtime/artifacts/pubs-rebuild/cron.log 2>&1`.
+Обёртка срабатывает раз в час и пишет в `cron.log` одну строку: `skip busy` (замок `runtime/pub_recrawl.lock` занят) или `skip not_due` (обход завершён, 5 дней от его старта ещё не прошли). Во всех остальных случаях она пишет `launch` и вызывает `get_pubs_full_recrawl.sh`. Этот скрипт продолжает упавший или зависший обход с прежним cutoff и курсором, а после срока начинает следующий; `base/pub_recrawl.py` сам проверяет замок и пятидневный срок. После падения обход продолжается в течение часа.
+Выключить: `crontab -e` на serv1, убрать строку. Слить осиротевшие temp-файлы без обхода: `flock -n runtime/pub_recrawl.lock venv/bin/python3 base/maps_research.py --merge-temp-files [--dry-run]`.
