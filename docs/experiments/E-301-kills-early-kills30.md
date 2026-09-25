@@ -82,5 +82,5 @@ board: `ingame-4xop`
 
 ```bash
 venv_catboost/bin/python3 -m pytest base/tests/test_ml_dispatch.py -q -p no:cacheprovider
-ssh root@23.26.193.167 "grep -c kills_early_ /root/main/runtime/ml_dispatch_decisions.jsonl"
+ssh serv1 "grep -c kills_early_ /root/main/runtime/ml_dispatch_decisions.jsonl"
 ```

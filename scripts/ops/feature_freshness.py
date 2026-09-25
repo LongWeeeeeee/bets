@@ -41,7 +41,7 @@ import numpy as np
 
 ROOT = Path(os.getenv("DRAFT_ROOT", "/Users/alex/Documents/ingame"))
 ART = ROOT / "runtime/artifacts/misc"
-SERV1 = os.getenv("FRESHNESS_SERV1", "root@23.26.193.167")
+SERV1 = os.getenv("FRESHNESS_SERV1", "serv1")  # ssh-алиас; IP не зашивать
 DAY = 86400.0
 
 # Измеренные пороги (суток). Всё, чего здесь нет, печатается без алерта.

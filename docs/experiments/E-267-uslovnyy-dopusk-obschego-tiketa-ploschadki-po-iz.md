@@ -51,7 +51,7 @@ harness: "base/tests/test_league_keywords.py + test_tier_three_allowlist.py + te
       base/tests/test_tier_three_allowlist.py \
       base/tests/test_sourcetv_paths.py -q
   # на проде после рестарта:
-  ssh root@23.26.193.167 "grep -n 'допущен по стороне tier1/2\|вне allowlist' \
+  ssh serv1 "grep -n 'допущен по стороне tier1/2\|вне allowlist' \
       /root/main/base/runtime/sourcetv_probe.log | tail -20"
   ```
 

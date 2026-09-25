@@ -32,7 +32,7 @@ set -e
 cd /Users/alex/Documents/ingame
 PY=venv_catboost/bin/python3
 LOG="${LOG:-runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log}"
-SERV1=root@23.26.193.167
+SERV1=serv1  # ssh-алиас из ~/.ssh/config. Зашитый IP устарел при переезде serv1 22.09.2026, и доставка молча падала 4 ночи
 
 run_chain() {
   ELO_SNAPSHOT_STAGED=0

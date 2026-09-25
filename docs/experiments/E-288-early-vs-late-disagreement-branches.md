@@ -115,7 +115,7 @@ board: комментарий к `ingame-otby` (карточка занята д
 venv_catboost/bin/python3 runtime/experiments/star-dispatch/phase_disagreement_by_duration.py \
     > runtime/artifacts/star-dispatch/phase_disagreement_by_duration_2026-09-13.txt
 # прод-лог (13 карт в ml, 12.09 14:24–20:37 UTC), одна ssh-сессия:
-ssh root@23.26.193.167 'python3 - ' < <(скрипт агрегации: последняя строка на (base_url,map_num), Counter по skipped.reason / decisions / ★-комбинациям)
+ssh serv1 'python3 - ' < <(скрипт агрегации: последняя строка на (base_url,map_num), Counter по skipped.reason / decisions / ★-комбинациям)
 ```
 
 ## Где искать ошибку

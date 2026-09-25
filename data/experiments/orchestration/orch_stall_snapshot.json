@@ -117,7 +117,7 @@
           "children_waiting": 1,
           "status": "todo",
           "assignee": "worker",
-          "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+          "title": "EXECUTE: migrate production Xray VLESS Reality to serv1",
           "fails": 0,
           "block_kind": "needs_input"
         }
@@ -197,7 +197,7 @@
           "status": "todo",
           "assignee": "worker",
           "why": "parents_open",
-          "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+          "title": "EXECUTE: migrate production Xray VLESS Reality to serv1",
           "parents": [
             {
               "parent": "t_74082cc1",
@@ -238,7 +238,7 @@
             {
               "parent": "t_2aad439a",
               "status": "todo",
-              "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+              "title": "EXECUTE: migrate production Xray VLESS Reality to serv1",
               "assignee": "worker"
             }
           ]

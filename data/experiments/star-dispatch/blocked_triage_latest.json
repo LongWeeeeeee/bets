@@ -113,7 +113,7 @@
           "assignee": "worker",
           "maxrt": null,
           "err": "",
-          "summary": "Authorized SSH to root@147.45.216.225 is unavailable (ICMP and TCP 22/2222/22022/443/8022 all time out from 23.26.193.167). Plan §2.1 forbids mutation until liv",
+          "summary": "Authorized SSH to root@147.45.216.225 is unavailable (ICMP and TCP 22/2222/22022/443/8022 all time out from serv1). Plan §2.1 forbids mutation until liv",
           "suggested_action": "keep blocked until host/SSH restored"
         },
         {
@@ -127,7 +127,7 @@
           "assignee": "worker",
           "maxrt": null,
           "err": "",
-          "summary": "Authorized read-only SSH to old host 147.45.216.225 unavailable: TCP/22 connection timed out from 23.26.193.167 (ICMP/mtr also fail). Historical key id_ed25519_",
+          "summary": "Authorized read-only SSH to old host 147.45.216.225 unavailable: TCP/22 connection timed out from serv1 (ICMP/mtr also fail). Historical key id_ed25519_",
           "suggested_action": "keep blocked until host/SSH restored"
         },
         {

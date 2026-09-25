@@ -23,7 +23,7 @@
         <string>-o</string><string>UserKnownHostsFile=/Users/alexford/.ssh/known_hosts</string>
         <string>-i</string><string>/Users/alexford/.ssh/id_ed25519</string>
         <string>-R</string><string>127.0.0.1:2222:127.0.0.1:22</string>
-        <string>root@23.26.193.167</string>
+        <string>serv1</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
