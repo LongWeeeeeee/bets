@@ -103,3 +103,7 @@ Rollback возвращает вместе wrapper 0.4.11, старый browser 
 Avito до миграции; не открывать обновлённый профиль старым Firefox.
 Артефакты проверки и резервные копии:
 `runtime/artifacts/odds-winline/camoufox-upgrade-20260915-beta30/`.
+25.09.2026 (с согласия владельца) оттуда удалены `stage-cache`, `fixed-cache`
+(дубль живой сборки из `~/.cache/camoufox`) и тестовые профили; набор для отката
+(`old-cache-preserved`, `avito-profile-before152`, python/wheels, отчёты) сохранён,
+см. `PRUNED-20260925.txt` там же.
