@@ -109,3 +109,66 @@ def test_equal_gold_is_a_real_class(monkeypatch):
     # even though "Равенство" itself is not a bettable side (display-only).
     assert (result['ml_laning_line'].split(' | данные до ')[0]
             == 'ML Laning: Равенство 60.0% (золото, 10 мин) ★')
+
+
+# --- E-334 production switch (24.09.2026): delivery boundary ------------------------
+SWITCH_FIXTURE = (__import__("pathlib").Path(__file__).parent
+                  / "fixtures/laning_serving_refit_c1_probe.json")
+
+
+def _fresh_default_module(monkeypatch):
+    """Import laning_serving anew with LANING_MODEL_DIR unset: the value prod gets."""
+    import importlib.util
+    monkeypatch.delenv("LANING_MODEL_DIR", raising=False)
+    monkeypatch.delenv("LANING_HISTORY_DIR", raising=False)
+    spec = importlib.util.spec_from_file_location("laning_serving_default_probe", serving.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_default_model_dir_is_e334_refit(monkeypatch):
+    import json
+    fixture = json.loads(SWITCH_FIXTURE.read_text())
+    module = _fresh_default_module(monkeypatch)
+    assert module.MODEL_DIR == module.ROOT / fixture["model_dir"]
+    assert module.HISTORY_DIR == module.ROOT / fixture["history_dir"]
+
+
+def test_switched_artifact_reproduces_evaluated_pro_maps(monkeypatch):
+    """Real pro maps (23.09, parser positions, prod-like stale history): verdicts() and
+    panel_lines() on the default artifact give the probabilities of the E-334 evaluation."""
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+    from base import win_model_veto
+
+    fixture = json.loads(SWITCH_FIXTURE.read_text())
+    module = _fresh_default_module(monkeypatch)
+    # Artifacts are git-ignored data: a verification snapshot of the tree lacks them, so the
+    # module's OWN default paths are re-rooted onto the main checkout (INGAME_ARTIFACT_ROOT).
+    root = Path(os.environ.get("INGAME_ARTIFACT_ROOT", str(module.ROOT)))
+    model_dir = root / module.MODEL_DIR.relative_to(module.ROOT)
+    history_dir = root / module.HISTORY_DIR.relative_to(module.ROOT)
+    if not (model_dir / "team.cbm").exists() or not history_dir.exists():
+        pytest.skip("default ML Laning artifact or history store absent "
+                    "(set INGAME_ARTIFACT_ROOT to the main checkout)")
+    assert hashlib.sha256((model_dir / "team.cbm").read_bytes()).hexdigest() == fixture["model_sha256"]
+    monkeypatch.setattr(module, "ENABLED", True)
+    monkeypatch.setattr(module, "_SERVICE", module.LaningService(model_dir, history_dir))
+    draft = SimpleNamespace(_heroes_vector=win_model_veto._heroes_vector,
+                            win_index_draft=lambda *args: None, MODEL_DIR=None)
+    assert len(fixture["maps"]) >= 20
+    for item in fixture["maps"]:
+        lane = module.verdicts(item["radiant"], item["dire"], item["timestamp"],
+                               draft_model=draft)["lane"]
+        assert lane is not None, item["match_id"]
+        assert lane["side"] == item["expected_side"], item["match_id"]
+        assert abs(lane["confidence"] - item["expected_confidence"]) <= 1e-9, item["match_id"]
+        assert abs(lane["p_tie"] - item["probability"][1]) <= 1e-9, item["match_id"]
+    # The panel freshness note must show the real data end (04.09 from manifest.json),
+    # not the artifact directory date (24.09).
+    line = module.panel_lines(fixture["maps"][-1]["radiant"], fixture["maps"][-1]["dire"],
+                              fixture["maps"][-1]["timestamp"], draft_model=draft)["ml_laning_line"]
+    assert line.startswith("ML Laning: ") and "данные до 04.09" in line, line

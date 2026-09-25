@@ -1,0 +1,1474 @@
+{
+ "captured": "2026-09-24/25 by runtime/experiments/laning/build_switch_fixture.py",
+ "source": "orders.npz PRO_FWD2 (parser positions) + pro_corpus_rich.npz; expected via pro_parser_eval harness",
+ "model_dir": "data/laning_models/20260924_team_nw10_full_c1/refit_final",
+ "model_sha256": "6ea4ab2c8e1dfdd0a7a3c3c0af9e97f3abeda0d2da038dbf9e2f627a9977b761",
+ "history_dir": "data/laning_history/20260909_stratz_v1",
+ "history_max_end_ts": 1788482883,
+ "maps": [
+  {
+   "match_id": 9012612710,
+   "timestamp": 1790174274,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 56,
+     "account_id": 458287006
+    },
+    "pos2": {
+     "hero_id": 19,
+     "account_id": 58513047
+    },
+    "pos3": {
+     "hero_id": 85,
+     "account_id": 190826739
+    },
+    "pos4": {
+     "hero_id": 90,
+     "account_id": 333351042
+    },
+    "pos5": {
+     "hero_id": 131,
+     "account_id": 349310876
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 21,
+     "account_id": 363758022
+    },
+    "pos2": {
+     "hero_id": 126,
+     "account_id": 111620041
+    },
+    "pos3": {
+     "hero_id": 36,
+     "account_id": 138880576
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 105045291
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 10366616
+    }
+   },
+   "probability": [
+    0.6035295546497087,
+    0.00012213820346897348,
+    0.39634830714682234
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.6035295546497087,
+   "served_20260909_probability": [
+    0.5775110847403598,
+    3.8774909236812006e-05,
+    0.42245014035040335
+   ]
+  },
+  {
+   "match_id": 9012656646,
+   "timestamp": 1790175839,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 18,
+     "account_id": 96183976
+    },
+    "pos2": {
+     "hero_id": 76,
+     "account_id": 876690044
+    },
+    "pos3": {
+     "hero_id": 155,
+     "account_id": 860264647
+    },
+    "pos4": {
+     "hero_id": 105,
+     "account_id": 123717676
+    },
+    "pos5": {
+     "hero_id": 50,
+     "account_id": 48823667
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 145,
+     "account_id": 194979527
+    },
+    "pos2": {
+     "hero_id": 7,
+     "account_id": 860145568
+    },
+    "pos3": {
+     "hero_id": 77,
+     "account_id": 1150772339
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 417235485
+    },
+    "pos5": {
+     "hero_id": 68,
+     "account_id": 217472313
+    }
+   },
+   "probability": [
+    0.325797957681751,
+    8.937667276161845e-05,
+    0.6741126656454874
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.6741126656454874,
+   "served_20260909_probability": [
+    0.38476246050931273,
+    5.58157536087252e-05,
+    0.6151817237370786
+   ]
+  },
+  {
+   "match_id": 9012664907,
+   "timestamp": 1790175944,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 46,
+     "account_id": 32995405
+    },
+    "pos2": {
+     "hero_id": 96,
+     "account_id": 43181484
+    },
+    "pos3": {
+     "hero_id": 108,
+     "account_id": 152273237
+    },
+    "pos4": {
+     "hero_id": 71,
+     "account_id": 317725979
+    },
+    "pos5": {
+     "hero_id": 111,
+     "account_id": 101385227
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 109,
+     "account_id": 356080266
+    },
+    "pos2": {
+     "hero_id": 107,
+     "account_id": 297380131
+    },
+    "pos3": {
+     "hero_id": 28,
+     "account_id": 412413765
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 117015167
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 158498049
+    }
+   },
+   "probability": [
+    0.5812981255362608,
+    0.0007198971080283823,
+    0.4179819773557109
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.5812981255362608,
+   "served_20260909_probability": [
+    0.5097421782374653,
+    3.041700564847466e-05,
+    0.4902274047568863
+   ]
+  },
+  {
+   "match_id": 9012755773,
+   "timestamp": 1790179341,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 35,
+     "account_id": 32995405
+    },
+    "pos2": {
+     "hero_id": 96,
+     "account_id": 43181484
+    },
+    "pos3": {
+     "hero_id": 69,
+     "account_id": 152273237
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 317725979
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 101385227
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 21,
+     "account_id": 356080266
+    },
+    "pos2": {
+     "hero_id": 36,
+     "account_id": 297380131
+    },
+    "pos3": {
+     "hero_id": 2,
+     "account_id": 412413765
+    },
+    "pos4": {
+     "hero_id": 86,
+     "account_id": 117015167
+    },
+    "pos5": {
+     "hero_id": 112,
+     "account_id": 158498049
+    }
+   },
+   "probability": [
+    0.6837825870858267,
+    0.00023834384850400178,
+    0.3159790690656692
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.6837825870858267,
+   "served_20260909_probability": [
+    0.6737048678942773,
+    2.9776059163760805e-05,
+    0.326265356046559
+   ]
+  },
+  {
+   "match_id": 9012759239,
+   "timestamp": 1790179468,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 21,
+     "account_id": 349495318
+    },
+    "pos2": {
+     "hero_id": 49,
+     "account_id": 421257589
+    },
+    "pos3": {
+     "hero_id": 38,
+     "account_id": 339686412
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 191116892
+    },
+    "pos5": {
+     "hero_id": 131,
+     "account_id": 180302127
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 118370366
+    },
+    "pos2": {
+     "hero_id": 23,
+     "account_id": 210167497
+    },
+    "pos3": {
+     "hero_id": 33,
+     "account_id": 1079923091
+    },
+    "pos4": {
+     "hero_id": 9,
+     "account_id": 223278490
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 293082908
+    }
+   },
+   "probability": [
+    0.27183487257878997,
+    0.00010776806302191492,
+    0.728057359358188
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.728057359358188,
+   "served_20260909_probability": [
+    0.26854664065537487,
+    4.591391318424064e-05,
+    0.731407445431441
+   ]
+  },
+  {
+   "match_id": 9012778726,
+   "timestamp": 1790180217,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 53,
+     "account_id": 354573226
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 88611330
+    },
+    "pos3": {
+     "hero_id": 98,
+     "account_id": 848532723
+    },
+    "pos4": {
+     "hero_id": 9,
+     "account_id": 250199344
+    },
+    "pos5": {
+     "hero_id": 112,
+     "account_id": 86692726
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 36,
+     "account_id": 846330847
+    },
+    "pos2": {
+     "hero_id": 47,
+     "account_id": 1085011855
+    },
+    "pos3": {
+     "hero_id": 108,
+     "account_id": 447093375
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 395159138
+    },
+    "pos5": {
+     "hero_id": 85,
+     "account_id": 1081047661
+    }
+   },
+   "probability": [
+    0.8757510831204169,
+    1.8331734567000225e-05,
+    0.12423058514501614
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.8757510831204169,
+   "served_20260909_probability": [
+    0.8584420042819878,
+    8.379563698970452e-06,
+    0.14154961615431322
+   ]
+  },
+  {
+   "match_id": 9012784253,
+   "timestamp": 1790180317,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 56,
+     "account_id": 194979527
+    },
+    "pos2": {
+     "hero_id": 59,
+     "account_id": 860145568
+    },
+    "pos3": {
+     "hero_id": 55,
+     "account_id": 1150772339
+    },
+    "pos4": {
+     "hero_id": 105,
+     "account_id": 417235485
+    },
+    "pos5": {
+     "hero_id": 51,
+     "account_id": 217472313
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 18,
+     "account_id": 96183976
+    },
+    "pos2": {
+     "hero_id": 13,
+     "account_id": 876690044
+    },
+    "pos3": {
+     "hero_id": 155,
+     "account_id": 860264647
+    },
+    "pos4": {
+     "hero_id": 110,
+     "account_id": 123717676
+    },
+    "pos5": {
+     "hero_id": 30,
+     "account_id": 48823667
+    }
+   },
+   "probability": [
+    0.25374420469581277,
+    0.00037054835040926785,
+    0.745885246953778
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.745885246953778,
+   "served_20260909_probability": [
+    0.2831763725944819,
+    3.826506888119859e-05,
+    0.7167853623366369
+   ]
+  },
+  {
+   "match_id": 9012835845,
+   "timestamp": 1790182345,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 163724404
+    },
+    "pos2": {
+     "hero_id": 13,
+     "account_id": 148883524
+    },
+    "pos3": {
+     "hero_id": 55,
+     "account_id": 948430380
+    },
+    "pos4": {
+     "hero_id": 85,
+     "account_id": 330492435
+    },
+    "pos5": {
+     "hero_id": 30,
+     "account_id": 180354636
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 137,
+     "account_id": 1631357084
+    },
+    "pos2": {
+     "hero_id": 17,
+     "account_id": 258498492
+    },
+    "pos3": {
+     "hero_id": 18,
+     "account_id": 375172824
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 1024869133
+    },
+    "pos5": {
+     "hero_id": 22,
+     "account_id": 408143745
+    }
+   },
+   "probability": [
+    0.3631653857889074,
+    3.591672707408269e-05,
+    0.6367986974840186
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.6367986974840186,
+   "served_20260909_probability": [
+    0.42248254388354295,
+    2.928496840004452e-05,
+    0.577488171148057
+   ]
+  },
+  {
+   "match_id": 9012836763,
+   "timestamp": 1790182358,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 118370366
+    },
+    "pos2": {
+     "hero_id": 47,
+     "account_id": 210167497
+    },
+    "pos3": {
+     "hero_id": 28,
+     "account_id": 1079923091
+    },
+    "pos4": {
+     "hero_id": 71,
+     "account_id": 223278490
+    },
+    "pos5": {
+     "hero_id": 87,
+     "account_id": 293082908
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 76,
+     "account_id": 349495318
+    },
+    "pos2": {
+     "hero_id": 53,
+     "account_id": 421257589
+    },
+    "pos3": {
+     "hero_id": 36,
+     "account_id": 339686412
+    },
+    "pos4": {
+     "hero_id": 14,
+     "account_id": 191116892
+    },
+    "pos5": {
+     "hero_id": 51,
+     "account_id": 180302127
+    }
+   },
+   "probability": [
+    0.7851852159690622,
+    0.00016961031688242627,
+    0.2146451737140554
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.7851852159690622,
+   "served_20260909_probability": [
+    0.7331545718360194,
+    3.576528968441942e-05,
+    0.2668096628742961
+   ]
+  },
+  {
+   "match_id": 9012906738,
+   "timestamp": 1790185162,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 354573226
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 88611330
+    },
+    "pos3": {
+     "hero_id": 155,
+     "account_id": 848532723
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 250199344
+    },
+    "pos5": {
+     "hero_id": 58,
+     "account_id": 86692726
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 48,
+     "account_id": 846330847
+    },
+    "pos2": {
+     "hero_id": 25,
+     "account_id": 1085011855
+    },
+    "pos3": {
+     "hero_id": 55,
+     "account_id": 447093375
+    },
+    "pos4": {
+     "hero_id": 90,
+     "account_id": 395159138
+    },
+    "pos5": {
+     "hero_id": 85,
+     "account_id": 1081047661
+    }
+   },
+   "probability": [
+    0.6140101425266633,
+    6.852121952732441e-05,
+    0.3859213362538093
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.6140101425266633,
+   "served_20260909_probability": [
+    0.6410822715532927,
+    2.0187855740732142e-05,
+    0.35889754059096646
+   ]
+  },
+  {
+   "match_id": 9012915370,
+   "timestamp": 1790185947,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 53,
+     "account_id": 194979527
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 860145568
+    },
+    "pos3": {
+     "hero_id": 65,
+     "account_id": 1150772339
+    },
+    "pos4": {
+     "hero_id": 88,
+     "account_id": 417235485
+    },
+    "pos5": {
+     "hero_id": 50,
+     "account_id": 217472313
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 145,
+     "account_id": 96183976
+    },
+    "pos2": {
+     "hero_id": 120,
+     "account_id": 876690044
+    },
+    "pos3": {
+     "hero_id": 23,
+     "account_id": 860264647
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 123717676
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 48823667
+    }
+   },
+   "probability": [
+    0.5690496901261506,
+    0.0008475989823003039,
+    0.43010271089154906
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.5690496901261506,
+   "served_20260909_probability": [
+    0.5662827245063022,
+    2.1318787615904044e-05,
+    0.43369595670608185
+   ]
+  },
+  {
+   "match_id": 9012936179,
+   "timestamp": 1790186447,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 874981361
+    },
+    "pos2": {
+     "hero_id": 120,
+     "account_id": 298831966
+    },
+    "pos3": {
+     "hero_id": 110,
+     "account_id": 410707457
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 242885483
+    },
+    "pos5": {
+     "hero_id": 37,
+     "account_id": 170017048
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 8,
+     "account_id": 1074436691
+    },
+    "pos2": {
+     "hero_id": 74,
+     "account_id": 1302599438
+    },
+    "pos3": {
+     "hero_id": 28,
+     "account_id": 296702734
+    },
+    "pos4": {
+     "hero_id": 86,
+     "account_id": 906660704
+    },
+    "pos5": {
+     "hero_id": 112,
+     "account_id": 993824087
+    }
+   },
+   "probability": [
+    0.282944255734032,
+    7.005744560098124e-05,
+    0.716985686820367
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.716985686820367,
+   "served_20260909_probability": [
+    0.3294201326480015,
+    3.4416201699965836e-05,
+    0.6705454511502985
+   ]
+  },
+  {
+   "match_id": 9012945506,
+   "timestamp": 1790186711,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 1101584974
+    },
+    "pos2": {
+     "hero_id": 76,
+     "account_id": 348242133
+    },
+    "pos3": {
+     "hero_id": 43,
+     "account_id": 368917218
+    },
+    "pos4": {
+     "hero_id": 21,
+     "account_id": 1203872681
+    },
+    "pos5": {
+     "hero_id": 85,
+     "account_id": 392549232
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 80,
+     "account_id": 42194754
+    },
+    "pos2": {
+     "hero_id": 49,
+     "account_id": 1232481380
+    },
+    "pos3": {
+     "hero_id": 60,
+     "account_id": 451584718
+    },
+    "pos4": {
+     "hero_id": 105,
+     "account_id": 871343127
+    },
+    "pos5": {
+     "hero_id": 5,
+     "account_id": 1289398969
+    }
+   },
+   "probability": [
+    0.4503955561650967,
+    8.706412315571489e-05,
+    0.5495173797117476
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.5495173797117476,
+   "served_20260909_probability": [
+    0.4731163941390129,
+    1.495288656866819e-05,
+    0.5268686529744183
+   ]
+  },
+  {
+   "match_id": 9012947550,
+   "timestamp": 1790186776,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 12,
+     "account_id": 1054066720
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 847836990
+    },
+    "pos3": {
+     "hero_id": 33,
+     "account_id": 177763156
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 121472096
+    },
+    "pos5": {
+     "hero_id": 131,
+     "account_id": 78967384
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 19,
+     "account_id": 324085917
+    },
+    "pos2": {
+     "hero_id": 25,
+     "account_id": 175762298
+    },
+    "pos3": {
+     "hero_id": 120,
+     "account_id": 99611577
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 1025267870
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 202963980
+    }
+   },
+   "probability": [
+    0.5233628366733966,
+    0.0003806679954828614,
+    0.4762564953311206
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.5233628366733966,
+   "served_20260909_probability": [
+    0.4954763189400115,
+    3.159409561947172e-05,
+    0.504492086964369
+   ]
+  },
+  {
+   "match_id": 9012948581,
+   "timestamp": 1790186887,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 18,
+     "account_id": 358091609
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 354160772
+    },
+    "pos3": {
+     "hero_id": 85,
+     "account_id": 136438697
+    },
+    "pos4": {
+     "hero_id": 86,
+     "account_id": 279460864
+    },
+    "pos5": {
+     "hero_id": 21,
+     "account_id": 923200030
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 12,
+     "account_id": 220621418
+    },
+    "pos2": {
+     "hero_id": 49,
+     "account_id": 235880461
+    },
+    "pos3": {
+     "hero_id": 96,
+     "account_id": 1096236210
+    },
+    "pos4": {
+     "hero_id": 62,
+     "account_id": 465095630
+    },
+    "pos5": {
+     "hero_id": 121,
+     "account_id": 193884241
+    }
+   },
+   "probability": [
+    0.5920873803168247,
+    6.897938918034204e-05,
+    0.40784364029399484
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.5920873803168247,
+   "served_20260909_probability": [
+    0.5664723095365286,
+    2.1168870936926868e-05,
+    0.43350652159253444
+   ]
+  },
+  {
+   "match_id": 9012951443,
+   "timestamp": 1790186964,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 19,
+     "account_id": 307173570
+    },
+    "pos2": {
+     "hero_id": 13,
+     "account_id": 214389279
+    },
+    "pos3": {
+     "hero_id": 96,
+     "account_id": 131040059
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 442740593
+    },
+    "pos5": {
+     "hero_id": 30,
+     "account_id": 478048631
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 46,
+     "account_id": 212656698
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 197574429
+    },
+    "pos3": {
+     "hero_id": 2,
+     "account_id": 311825195
+    },
+    "pos4": {
+     "hero_id": 21,
+     "account_id": 393927268
+    },
+    "pos5": {
+     "hero_id": 131,
+     "account_id": 341874383
+    }
+   },
+   "probability": [
+    0.5089290821494177,
+    0.00016706211597029074,
+    0.490903855734612
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.5089290821494177,
+   "served_20260909_probability": [
+    0.5027724845733369,
+    0.00014240118225995776,
+    0.49708511424440305
+   ]
+  },
+  {
+   "match_id": 9012952051,
+   "timestamp": 1790186998,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 893135754
+    },
+    "pos2": {
+     "hero_id": 128,
+     "account_id": 972243573
+    },
+    "pos3": {
+     "hero_id": 98,
+     "account_id": 289171422
+    },
+    "pos4": {
+     "hero_id": 9,
+     "account_id": 107746371
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 188710502
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 70,
+     "account_id": 165390194
+    },
+    "pos2": {
+     "hero_id": 120,
+     "account_id": 181532808
+    },
+    "pos3": {
+     "hero_id": 49,
+     "account_id": 1159912962
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 198851570
+    },
+    "pos5": {
+     "hero_id": 121,
+     "account_id": 209103998
+    }
+   },
+   "probability": [
+    0.47997912668766146,
+    4.4653945483576496e-05,
+    0.5199762193668549
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.5199762193668549,
+   "served_20260909_probability": [
+    0.49308894332286163,
+    2.0529135701515627e-05,
+    0.5068905275414368
+   ]
+  },
+  {
+   "match_id": 9013008662,
+   "timestamp": 1790189484,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 80,
+     "account_id": 1074436691
+    },
+    "pos2": {
+     "hero_id": 74,
+     "account_id": 1302599438
+    },
+    "pos3": {
+     "hero_id": 135,
+     "account_id": 296702734
+    },
+    "pos4": {
+     "hero_id": 86,
+     "account_id": 906660704
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 993824087
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 53,
+     "account_id": 874981361
+    },
+    "pos2": {
+     "hero_id": 120,
+     "account_id": 298831966
+    },
+    "pos3": {
+     "hero_id": 108,
+     "account_id": 410707457
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 242885483
+    },
+    "pos5": {
+     "hero_id": 9,
+     "account_id": 170017048
+    }
+   },
+   "probability": [
+    0.7084057769111168,
+    7.182246220352515e-05,
+    0.29152240062667956
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.7084057769111168,
+   "served_20260909_probability": [
+    0.611398639564424,
+    8.512140772300071e-05,
+    0.38851623902785315
+   ]
+  },
+  {
+   "match_id": 9013025482,
+   "timestamp": 1790190011,
+   "label_nw10": 2,
+   "radiant": {
+    "pos1": {
+     "hero_id": 18,
+     "account_id": 1054066720
+    },
+    "pos2": {
+     "hero_id": 17,
+     "account_id": 847836990
+    },
+    "pos3": {
+     "hero_id": 33,
+     "account_id": 177763156
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 121472096
+    },
+    "pos5": {
+     "hero_id": 111,
+     "account_id": 78967384
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 12,
+     "account_id": 324085917
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 175762298
+    },
+    "pos3": {
+     "hero_id": 135,
+     "account_id": 99611577
+    },
+    "pos4": {
+     "hero_id": 9,
+     "account_id": 1025267870
+    },
+    "pos5": {
+     "hero_id": 87,
+     "account_id": 202963980
+    }
+   },
+   "probability": [
+    0.30798922498211734,
+    0.00032927735073088287,
+    0.6916814976671517
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.6916814976671517,
+   "served_20260909_probability": [
+    0.3147757634944453,
+    2.62586350246452e-05,
+    0.68519797787053
+   ]
+  },
+  {
+   "match_id": 9013020079,
+   "timestamp": 1790190303,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 76,
+     "account_id": 234119750
+    },
+    "pos2": {
+     "hero_id": 21,
+     "account_id": 1153798101
+    },
+    "pos3": {
+     "hero_id": 55,
+     "account_id": 1675517497
+    },
+    "pos4": {
+     "hero_id": 9,
+     "account_id": 435139370
+    },
+    "pos5": {
+     "hero_id": 79,
+     "account_id": 1172719712
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 73,
+     "account_id": 125445069
+    },
+    "pos2": {
+     "hero_id": 47,
+     "account_id": 40805086
+    },
+    "pos3": {
+     "hero_id": 28,
+     "account_id": 148612029
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 276449590
+    },
+    "pos5": {
+     "hero_id": 112,
+     "account_id": 1048617659
+    }
+   },
+   "probability": [
+    0.6027932026911778,
+    8.016157681740893e-05,
+    0.3971266357320049
+   ],
+   "expected_side": "Dire",
+   "expected_confidence": 0.6027932026911778,
+   "served_20260909_probability": [
+    0.6186794842424386,
+    3.879481005959104e-05,
+    0.38128172094750185
+   ]
+  },
+  {
+   "match_id": 9013033866,
+   "timestamp": 1790190370,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 82,
+     "account_id": 220621418
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 235880461
+    },
+    "pos3": {
+     "hero_id": 55,
+     "account_id": 1096236210
+    },
+    "pos4": {
+     "hero_id": 51,
+     "account_id": 465095630
+    },
+    "pos5": {
+     "hero_id": 112,
+     "account_id": 193884241
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 358091609
+    },
+    "pos2": {
+     "hero_id": 93,
+     "account_id": 354160772
+    },
+    "pos3": {
+     "hero_id": 128,
+     "account_id": 136438697
+    },
+    "pos4": {
+     "hero_id": 71,
+     "account_id": 279460864
+    },
+    "pos5": {
+     "hero_id": 9,
+     "account_id": 923200030
+    }
+   },
+   "probability": [
+    0.45703427990783446,
+    0.00037248722680650154,
+    0.5425932328653591
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.5425932328653591,
+   "served_20260909_probability": [
+    0.4771689467282997,
+    4.3949939572217184e-05,
+    0.5227871033321281
+   ]
+  },
+  {
+   "match_id": 9013056606,
+   "timestamp": 1790191361,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 67,
+     "account_id": 165390194
+    },
+    "pos2": {
+     "hero_id": 17,
+     "account_id": 181532808
+    },
+    "pos3": {
+     "hero_id": 85,
+     "account_id": 1159912962
+    },
+    "pos4": {
+     "hero_id": 123,
+     "account_id": 209103998
+    },
+    "pos5": {
+     "hero_id": 3,
+     "account_id": 198851570
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 53,
+     "account_id": 893135754
+    },
+    "pos2": {
+     "hero_id": 7,
+     "account_id": 972243573
+    },
+    "pos3": {
+     "hero_id": 77,
+     "account_id": 289171422
+    },
+    "pos4": {
+     "hero_id": 62,
+     "account_id": 107746371
+    },
+    "pos5": {
+     "hero_id": 105,
+     "account_id": 188710502
+    }
+   },
+   "probability": [
+    0.45605038796220637,
+    7.923250431919085e-05,
+    0.5438703795334745
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.5438703795334745,
+   "served_20260909_probability": [
+    0.5169358143272446,
+    2.774049285567916e-05,
+    0.48303644517989963
+   ]
+  },
+  {
+   "match_id": 9013123199,
+   "timestamp": 1790194631,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 54,
+     "account_id": 42194754
+    },
+    "pos2": {
+     "hero_id": 49,
+     "account_id": 1232481380
+    },
+    "pos3": {
+     "hero_id": 137,
+     "account_id": 451584718
+    },
+    "pos4": {
+     "hero_id": 101,
+     "account_id": 871343127
+    },
+    "pos5": {
+     "hero_id": 5,
+     "account_id": 1289398969
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 48,
+     "account_id": 1101584974
+    },
+    "pos2": {
+     "hero_id": 106,
+     "account_id": 348242133
+    },
+    "pos3": {
+     "hero_id": 28,
+     "account_id": 368917218
+    },
+    "pos4": {
+     "hero_id": 105,
+     "account_id": 1203872681
+    },
+    "pos5": {
+     "hero_id": 110,
+     "account_id": 392549232
+    }
+   },
+   "probability": [
+    0.38835103600985577,
+    0.0001325607563915472,
+    0.6115164032337527
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.6115164032337527,
+   "served_20260909_probability": [
+    0.4676790399286053,
+    4.753226591220159e-05,
+    0.5322734278054825
+   ]
+  },
+  {
+   "match_id": 9013136077,
+   "timestamp": 1790195298,
+   "label_nw10": 0,
+   "radiant": {
+    "pos1": {
+     "hero_id": 145,
+     "account_id": 125445069
+    },
+    "pos2": {
+     "hero_id": 28,
+     "account_id": 40805086
+    },
+    "pos3": {
+     "hero_id": 69,
+     "account_id": 148612029
+    },
+    "pos4": {
+     "hero_id": 3,
+     "account_id": 276449590
+    },
+    "pos5": {
+     "hero_id": 45,
+     "account_id": 1048617659
+    }
+   },
+   "dire": {
+    "pos1": {
+     "hero_id": 53,
+     "account_id": 234119750
+    },
+    "pos2": {
+     "hero_id": 90,
+     "account_id": 1153798101
+    },
+    "pos3": {
+     "hero_id": 78,
+     "account_id": 1675517497
+    },
+    "pos4": {
+     "hero_id": 119,
+     "account_id": 1172719712
+    },
+    "pos5": {
+     "hero_id": 100,
+     "account_id": 435139370
+    }
+   },
+   "probability": [
+    0.4729833586255446,
+    0.0012384665423480353,
+    0.5257781748321073
+   ],
+   "expected_side": "Radiant",
+   "expected_confidence": 0.5257781748321073,
+   "served_20260909_probability": [
+    0.49025844603412555,
+    7.291799579011894e-05,
+    0.5096686359700844
+   ]
+  }
+ ]
+}

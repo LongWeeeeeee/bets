@@ -16,8 +16,11 @@ except ImportError:                                    # запуск не из 
     from base import model_data_asof as _model_data_asof
 
 ROOT = Path(__file__).resolve().parents[1]
+# E-334 (25.09.2026): C1 recipe (all train maps, no tree cap) refit on all 6,692,272 public
+# maps; sealed TEST ll3 0.63292 -> 0.62126 (refit_check), pro parser-order FWD1 0.6520 -> 0.6420.
+# Previous artifact kept on disk for rollback: LANING_MODEL_DIR=.../20260909_team_nw10_v1/selected.
 MODEL_DIR = Path(os.getenv("LANING_MODEL_DIR", str(
-    ROOT / "data/laning_models/20260909_team_nw10_v1/selected")))
+    ROOT / "data/laning_models/20260924_team_nw10_full_c1/refit_final")))
 HISTORY_DIR = Path(os.getenv("LANING_HISTORY_DIR", str(
     ROOT / "data/laning_history/20260909_stratz_v1")))
 ENABLED = os.getenv("LANING_MODEL_ENABLED", "1") == "1"
