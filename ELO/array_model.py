@@ -35,7 +35,7 @@ from .array_store import (FloatStore, HashedStore, IntCounts, IntStore,
                           PairCounts, RoleStore, StringValues, hash_key)
 
 #: Плоские поля с числовым ключом.
-_FLAT_NUMERIC = ("player_global", "player_global_last_seen_ts", "player_k24")
+_FLAT_NUMERIC = ("player_global", "player_global_last_seen_ts", "player_k24", "player_a", "player_a_games")
 #: Плоские поля со строковым ключом — ключ пакуется хешем.
 _HASHED_FLAT = ("lineup_match_counts",)
 #: Поля, разложенные по тирам лиг.
@@ -73,6 +73,10 @@ def _empty_raw() -> dict:
         "pair_vals": [],
         "k24_player_map_present": False,
         "k24_player_map_valid": True,
+        "a_rating_map_present": False,
+        "a_games_map_present": False,
+        "a_rating_map_valid": True,
+        "a_games_map_valid": True,
     }
 
 
@@ -102,6 +106,11 @@ def _accumulate_state(path: Path, prefix: str, raw: dict) -> None:
         for prefix, event, value in ijson.parse(fh):
             if prefix == f"{P}player_k24" and event == "start_map":
                 raw["k24_player_map_present"] = True
+            for field, flag in (("player_a", "a_rating"), ("player_a_games", "a_games")):
+                if prefix == f"{P}{field}" and event == "start_map":
+                    raw[f"{flag}_map_present"] = True
+                if prefix.startswith(f"{P}{field}.") and event not in ("number", "string"):
+                    raw[f"{flag}_map_valid"] = False
             if prefix.startswith(f"{P}player_k24.") and event not in ("number", "string"):
                 raw["k24_player_map_valid"] = False
             if event not in ("number", "string") or not prefix.startswith(P):
@@ -119,6 +128,17 @@ def _accumulate_state(path: Path, prefix: str, raw: dict) -> None:
                             continue
                     except (TypeError, ValueError, OverflowError):
                         raw["k24_player_map_valid"] = False
+                        continue
+                if head in ("player_a", "player_a_games"):
+                    flag = "a_rating" if head == "player_a" else "a_games"
+                    try:
+                        if (int(tail) <= 0 or tail != str(int(tail))
+                                or (head == "player_a" and not math.isfinite(float(value)))
+                                or (head == "player_a_games" and (type(value) is not int or value <= 0))):
+                            raw[f"{flag}_map_valid"] = False
+                            continue
+                    except (TypeError, ValueError, OverflowError):
+                        raw[f"{flag}_map_valid"] = False
                         continue
                 b = flat.setdefault(head, ([], []))
                 b[0].append(int(tail))
@@ -171,6 +191,15 @@ def _stores_from_raw(raw: dict) -> dict:
         arr(flat.get("player_k24", ([], []))[1], np.float64))
     out["_k24_player_map_present"] = bool(raw["k24_player_map_present"])
     out["_k24_player_map_valid"] = bool(raw["k24_player_map_valid"])
+    out["player_a"] = FloatStore(
+        arr(flat.get("player_a", ([], []))[0], np.int64),
+        arr(flat.get("player_a", ([], []))[1], np.float64))
+    out["player_a_games"] = IntStore(
+        arr(flat.get("player_a_games", ([], []))[0], np.int64),
+        arr(flat.get("player_a_games", ([], []))[1], np.int64))
+    for flag in ("a_rating", "a_games"):
+        out[f"_{flag}_map_present"] = bool(raw[f"{flag}_map_present"])
+        out[f"_{flag}_map_valid"] = bool(raw[f"{flag}_map_valid"])
     out["lineup_match_counts"] = HashedStore(
         arr(flat.get("lineup_match_counts", ([], []))[0], np.int64),
         arr(flat.get("lineup_match_counts", ([], []))[1], np.int64),
@@ -286,6 +315,9 @@ def save_state_arrays(src: Path, prefix: str = "model_state.",
     arrays["schema_version"] = np.int64(ARRAYS_SIDECAR_SCHEMA_VERSION)
     arrays["k24_player_map_present"] = np.int8(bool(raw["k24_player_map_present"]))
     arrays["k24_player_map_valid"] = np.int8(bool(raw["k24_player_map_valid"]))
+    for flag in ("a_rating", "a_games"):
+        arrays[f"{flag}_map_present"] = np.int8(bool(raw[f"{flag}_map_present"]))
+        arrays[f"{flag}_map_valid"] = np.int8(bool(raw[f"{flag}_map_valid"]))
 
     out = Path(out) if out is not None else sidecar_path(src)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -341,6 +373,11 @@ def load_state_arrays_cached(path: Path, prefix: str = "model_state.") -> dict:
                 raw["k24_player_map_present"] = bool(z["k24_player_map_present"])
             if "k24_player_map_valid" in z.files:
                 raw["k24_player_map_valid"] = bool(z["k24_player_map_valid"])
+            for flag in ("a_rating", "a_games"):
+                for suffix in ("present", "valid"):
+                    key = f"{flag}_map_{suffix}"
+                    if key in z.files:
+                        raw[key] = bool(z[key])
             if "org_names" in z.files:
                 names = [str(n) for n in z["org_names"]]
                 raw["org_names"] = names
@@ -356,6 +393,8 @@ _KEEP_AS_IS = (
     "config", "current_patch_key", "side_bias", "roster_tracker",
     "k24_schema_version", "k24_available", "k24_highwater_timestamp",
     "k24_history_coverage_since", "k24_history",
+    "a_schema_version", "a_available", "a_highwater_timestamp",
+    "a_history_coverage_since", "a_history",
 )
 
 
@@ -433,6 +472,8 @@ def _small_parts(path: Path) -> dict:
             if prefix == "model_state" and event == "map_key":
                 if value == "player_k24":
                     out["_k24_player_map_present"] = True
+                if value in ("player_a", "player_a_games"):
+                    out[f"_{'a_rating' if value == 'player_a' else 'a_games'}_map_present"] = True
                 active_key = value if value in _KEEP_AS_IS else None
                 builder = ObjectBuilder() if active_key is not None else None
                 depth = 0
@@ -483,9 +524,14 @@ def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
     except Exception:  # malformed streamed state is unavailable, never defaulted
         return HybridPlayerRosterEloModel.from_state({"config": {}})
     small_parts["_k24_player_map_deferred"] = True
+    small_parts["_a_player_maps_deferred"] = True
     model = HybridPlayerRosterEloModel.from_state(small_parts)
     player_map_present = bool(arrays.pop("_k24_player_map_present", False))
     player_map_valid = bool(arrays.pop("_k24_player_map_valid", False))
+    a_rating_present = bool(arrays.pop("_a_rating_map_present", False))
+    a_games_present = bool(arrays.pop("_a_games_map_present", False))
+    a_rating_valid = bool(arrays.pop("_a_rating_map_valid", False))
+    a_games_valid = bool(arrays.pop("_a_games_map_valid", False))
     by_name = {t.name: t for t in LeagueTier}
     for field, value in arrays.items():
         if isinstance(value, dict):
@@ -497,6 +543,11 @@ def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
         player_map_present=bool(small_parts.get("_k24_player_map_present"))
         and player_map_present,
         player_map_valid=player_map_valid,
+    )
+    model.validate_a_state(
+        rating_map_present=bool(small_parts.get("_a_rating_map_present")) and a_rating_present,
+        games_map_present=bool(small_parts.get("_a_games_map_present")) and a_games_present,
+        rating_map_valid=a_rating_valid, games_map_valid=a_games_valid,
     )
     return model
 
@@ -708,6 +759,10 @@ def _build_overlay_model(snapshot_path: Path, delta_path: Path | None = None,
     # Header guards only bind the delta to its snapshot.  K24 metadata and
     # changed ratings need one reconstructed-state validation before serving.
     model.validate_k24_state(player_map_present=bool(getattr(base, "_k24_player_map_validated", False)))
+    model.validate_a_state(
+        rating_map_present=bool(getattr(base, "_a_player_maps_validated", False)),
+        games_map_present=bool(getattr(base, "_a_player_maps_validated", False)),
+    )
     if delta_is_valid and key != _overlay_key(snapshot_path, delta_path):
         return None
     model._overlay_applied = applied

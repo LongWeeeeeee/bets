@@ -204,6 +204,11 @@ def _all_only_half_stake_case() -> BranchScenario:
 
 
 def _prepare_all_only(monkeypatch) -> None:
+    # This dispatch fixture has no live browser or laning model artifacts.
+    monkeypatch.setattr(runtime, "start_winline_current_map_polling_scheduler", lambda **_kw: None)
+    monkeypatch.setattr(runtime, "_build_laning_panel_lines", lambda *_args, **_kw: {
+        "ml_laning_line": "", "all_model_line": "",
+    })
     _patch_early_late_wr(monkeypatch, early_level=60, late_level=65, all_level=70)
     monkeypatch.setattr(
         runtime,

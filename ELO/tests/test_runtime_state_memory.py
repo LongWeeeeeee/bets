@@ -326,7 +326,7 @@ def test_rebase_replays_post_snapshot_live_result_once_and_keeps_pending(tmp_pat
     assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
                         "--progress", str(progress_path)]) == 0
     expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
-    expected.process_match(result_record(completed, 1_080))
+    expected.process_match(result_record(completed, 1_080), duration_seconds=completed.duration_seconds)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["model_state"] == expected.export_state()
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -337,6 +337,61 @@ def test_rebase_replays_post_snapshot_live_result_once_and_keeps_pending(tmp_pat
     before = state_path.read_bytes(), progress_path.read_bytes()
     assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
                         "--progress", str(progress_path)]) == 0
+    assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+
+
+def test_rebase_pre_a_snapshot_preserves_k24_with_outstanding_live_result(tmp_path) -> None:
+    snapshot_path, snapshot = _ledger_snapshot(tmp_path)
+    legacy = dict(snapshot["model_state"])
+    for key in list(legacy):
+        if key.startswith("a_") or key.startswith("player_a"):
+            del legacy[key]
+    snapshot["model_state"] = legacy
+    _write(snapshot_path, snapshot)
+    record = _live_record(9001, start=1_010)
+    state_path, progress_path = tmp_path / "state.json", tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "same-history-signature",
+                        "model_state": legacy})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "same-history-signature",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(record, observed_at=1_080)}})
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    expected = HybridPlayerRosterEloModel.from_state(legacy)
+    expected.process_match(result_record(record, 1_080), duration_seconds=record.duration_seconds)
+    restored = HybridPlayerRosterEloModel.from_state(json.loads(state_path.read_text())["model_state"])
+    assert restored.k24_available and not restored.a_available
+    assert restored.player_k24 == expected.player_k24
+    assert restored.k24_history == expected.k24_history
+
+
+def test_rebase_refuses_when_available_a_loses_result_order(tmp_path, capsys) -> None:
+    snapshot_path, snapshot = _ledger_snapshot(tmp_path)
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    future = _live_record(9000, start=1_900)
+    model.process_match(result_record(future, 2_000), duration_seconds=future.duration_seconds)
+    state = model.export_state()
+    state["a_history_coverage_since"] = 1_500
+    assert HybridPlayerRosterEloModel.from_state(state).a_available
+    snapshot["model_state"] = state
+    _write(snapshot_path, snapshot)
+    record = _live_record(9001, start=1_010)
+    state_path, progress_path = tmp_path / "state.json", tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "same-history-signature",
+                        "model_state": state})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "same-history-signature",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(record, observed_at=1_080)}})
+    before = state_path.read_bytes(), progress_path.read_bytes()
+
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 1
+    assert "A result order is unavailable" in capsys.readouterr().err
     assert (state_path.read_bytes(), progress_path.read_bytes()) == before
 
 
@@ -702,7 +757,7 @@ def test_rebase_recovers_overlay_marker_once_and_invalidates_compatible_delta(tm
     assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
                         "--progress", str(progress_path)]) == 0
     expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
-    expected.process_match(result_record(record, 1_080))
+    expected.process_match(result_record(record, 1_080), duration_seconds=record.duration_seconds)
     assert json.loads(state_path.read_text(encoding="utf-8"))["model_state"] == expected.export_state()
     progress = json.loads(progress_path.read_text(encoding="utf-8"))
     assert "pending_overlay_commit" not in progress
@@ -843,7 +898,7 @@ def test_rebase_collapses_alias_twin_applied_within_window(tmp_path, capsys) -> 
                         "--progress", str(progress_path)]) == 0
 
     expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
-    expected.process_match(result_record(twin_a, 1_080))
+    expected.process_match(result_record(twin_a, 1_080), duration_seconds=twin_a.duration_seconds)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["model_state"] == expected.export_state()
 
@@ -882,8 +937,8 @@ def test_rebase_keeps_far_apart_same_match_id_maps_as_two_applications(tmp_path)
                         "--progress", str(progress_path)]) == 0
 
     expected = HybridPlayerRosterEloModel.from_state(snapshot["model_state"])
-    expected.process_match(result_record(map_a, 1_080))
-    expected.process_match(result_record(map_b, 1_080 + 1_200))
+    expected.process_match(result_record(map_a, 1_080), duration_seconds=map_a.duration_seconds)
+    expected.process_match(result_record(map_b, 1_080 + 1_200), duration_seconds=map_b.duration_seconds)
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     assert payload["model_state"] == expected.export_state()
 

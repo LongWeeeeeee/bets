@@ -19,6 +19,16 @@ K24_SCHEMA_VERSION = 1
 K24_K = 24.0
 K24_INITIAL_RATING = 1500.0
 K24_HISTORY_RETENTION_SECONDS = 14 * _SECONDS_PER_DAY
+A_SCHEMA_VERSION = 1
+A_DURATION_REFERENCE_SECONDS = 1981.0
+K24_CONTRACT = {"schema_version": K24_SCHEMA_VERSION, "k": K24_K,
+                "initial_rating": K24_INITIAL_RATING, "scale": 400.0}
+A_CONTRACT = {"schema_version": A_SCHEMA_VERSION, "k": K24_K,
+              "initial_rating": K24_INITIAL_RATING, "scale": 400.0,
+              "duration_reference_seconds": A_DURATION_REFERENCE_SECONDS,
+              "duration_floor_seconds": 600.0, "duration_multiplier_min": 0.6,
+              "duration_multiplier_max": 1.6, "edge_factor": 2.2,
+              "edge_slope": 0.001, "games_bonus": 2.0, "games_scale": 30.0}
 # Compatibility export for existing parameter sweeps. Boundary construction
 # below uses canonical timestamps, not these date-only display values.
 _PATCH_RELEASES_RAW: tuple[tuple[str, str], ...] = tuple(
@@ -98,6 +108,38 @@ def _load_k24_history(value: Any) -> tuple[deque[dict[str, Any]], bool]:
         previous = timestamp
         out.append({"timestamp": timestamp, "radiant_player_ids": radiant_ids,
                     "dire_player_ids": dire_ids, "delta": delta, "radiant_win": winner})
+    return out, True
+
+
+def _load_a_history(value: Any) -> tuple[deque[dict[str, Any]], bool]:
+    if not isinstance(value, list):
+        return deque(), False
+    out = deque()
+    previous = -1
+    for row in value:
+        if not isinstance(row, dict):
+            return deque(), False
+        timestamp = _coerce_k24_timestamp(row.get("timestamp"))
+        radiant, dire = row.get("radiant_player_ids"), row.get("dire_player_ids")
+        deltas = row.get("deltas")
+        duration = row.get("duration_seconds")
+        if (timestamp is None or timestamp < previous or not isinstance(radiant, list)
+                or not isinstance(dire, list) or len(radiant) != 5 or len(dire) != 5
+                or any(type(i) is not int or i <= 0 for i in radiant + dire)
+                or len(set(radiant + dire)) != 10 or not isinstance(deltas, list)
+                or len(deltas) != 10 or type(row.get("radiant_win")) is not bool
+                or (duration is not None and (type(duration) is not int or duration <= 0))):
+            return deque(), False
+        try:
+            if any(isinstance(item, bool) for item in deltas):
+                return deque(), False
+            converted = [float(value) for value in deltas]
+        except (TypeError, ValueError, OverflowError):
+            return deque(), False
+        if any(not math.isfinite(value) for value in converted):
+            return deque(), False
+        out.append({**row, "deltas": converted})
+        previous = timestamp
     return out, True
 
 
@@ -206,6 +248,19 @@ def k24_lineup_summary(
         "tier_gap_bonus": 0.0,
         "tier_gap_key": None,
     }
+
+
+def a_lineup_summary(model, **kwargs) -> dict[str, Any] | None:
+    """Variant A at the same strict as-of boundary as K24."""
+    # Reuse the K24 payload contract, with the independent A preview.
+    class _Preview:
+        preview_k24_lineup = model.preview_a_lineup
+
+    summary = k24_lineup_summary(_Preview(), **kwargs)
+    if summary is None:
+        return None
+    summary["source"] = "elo_composition_a"
+    return summary
 
 
 def _build_simple_step(
@@ -415,6 +470,63 @@ class HybridPlayerRosterEloModel:
         self.k24_history_coverage_since: int | None = None
         self.k24_history: deque[dict[str, Any]] = deque()
         self._k24_player_map_validated = True
+        self.player_a: dict[int, float] = {}
+        self.player_a_games: dict[int, int] = {}
+        self.a_schema_version = A_SCHEMA_VERSION
+        self.a_available = True
+        self.a_highwater_timestamp: int | None = None
+        self.a_history_coverage_since: int | None = None
+        self.a_history: deque[dict[str, Any]] = deque()
+        self._a_player_maps_validated = True
+
+    def validate_a_state(self, *, rating_map_present: bool = True,
+                         games_map_present: bool = True,
+                         rating_map_valid: bool = True,
+                         games_map_valid: bool = True) -> bool:
+        valid = (self.a_schema_version == A_SCHEMA_VERSION and self.a_available is True
+                 and self.k24_available is True
+                 and rating_map_present and games_map_present and rating_map_valid and games_map_valid)
+        rating_ids = set()
+        if valid:
+            for player_id, rating in self.player_a.items():
+                if type(player_id) is not int or player_id <= 0 or not math.isfinite(float(rating)):
+                    valid = False
+                    break
+                rating_ids.add(player_id)
+        game_ids = set()
+        if valid:
+            for player_id, games in self.player_a_games.items():
+                if (type(player_id) is not int or player_id <= 0 or not isinstance(games, (int, float))
+                        or not math.isfinite(games) or games <= 0 or int(games) != games):
+                    valid = False
+                    break
+                game_ids.add(player_id)
+        if valid and rating_ids != game_ids:
+            valid = False
+        previous = -1
+        if valid:
+            for row in self.a_history:
+                ids = row.get("radiant_player_ids", []) + row.get("dire_player_ids", [])
+                deltas = row.get("deltas")
+                ts = row.get("timestamp")
+                if (type(ts) is not int or ts < previous or len(ids) != 10 or len(set(ids)) != 10
+                        or any(type(i) is not int or i <= 0 or i not in self.player_a for i in ids)
+                        or not isinstance(deltas, list) or len(deltas) != 10
+                        or any(isinstance(d, bool) or not math.isfinite(float(d)) for d in deltas)
+                        or type(row.get("radiant_win")) is not bool):
+                    valid = False
+                    break
+                previous = ts
+        if not self.a_history:
+            valid = valid and self.a_highwater_timestamp is None and self.a_history_coverage_since is None and not self.player_a
+        else:
+            valid = (valid and type(self.a_highwater_timestamp) is int
+                     and type(self.a_history_coverage_since) is int
+                     and 0 <= self.a_history_coverage_since <= self.a_history[0]["timestamp"]
+                     and self.a_history[-1]["timestamp"] == self.a_highwater_timestamp)
+        self.a_available = bool(valid)
+        self._a_player_maps_validated = bool(valid)
+        return bool(valid)
 
     def validate_k24_state(self, *, player_map_present: bool = True,
                            player_map_valid: bool = True) -> bool:
@@ -589,11 +701,20 @@ class HybridPlayerRosterEloModel:
             "side_bias": {tier.value: float(value) for tier, value in self.side_bias.items()},
             "roster_tracker": self.roster_tracker.export_state(),
             "k24_schema_version": int(self.k24_schema_version),
+            "k24_contract": dict(K24_CONTRACT),
+            "a_contract": dict(A_CONTRACT),
             "player_k24": {str(player_id): float(rating) for player_id, rating in self.player_k24.items()},
             "k24_available": bool(self.k24_available),
             "k24_highwater_timestamp": self.k24_highwater_timestamp,
             "k24_history_coverage_since": self.k24_history_coverage_since,
             "k24_history": deepcopy(list(self.k24_history)),
+            "a_schema_version": int(self.a_schema_version),
+            "player_a": {str(i): float(r) for i, r in self.player_a.items()},
+            "player_a_games": {str(i): int(n) for i, n in self.player_a_games.items()},
+            "a_available": bool(self.a_available),
+            "a_highwater_timestamp": self.a_highwater_timestamp,
+            "a_history_coverage_since": self.a_history_coverage_since,
+            "a_history": deepcopy(list(self.a_history)),
         }
 
     @classmethod
@@ -899,6 +1020,45 @@ class HybridPlayerRosterEloModel:
         else:
             model.k24_available = False
             model.k24_schema_version = 0
+        if state.get("a_schema_version") == A_SCHEMA_VERSION:
+            model.a_schema_version = A_SCHEMA_VERSION
+            raw_ratings = state.get("player_a")
+            raw_games = state.get("player_a_games")
+            deferred = bool(state.get("_a_player_maps_deferred"))
+            model.player_a, ratings_valid = _load_k24_player_map(raw_ratings)
+            model.player_a_games = {}
+            games_valid = isinstance(raw_games, dict)
+            if games_valid:
+                for raw_id, raw_count in raw_games.items():
+                    try:
+                        player_id = int(raw_id)
+                        if (raw_id != str(player_id) or player_id <= 0
+                                or type(raw_count) is not int or raw_count <= 0):
+                            games_valid = False
+                            break
+                        model.player_a_games[player_id] = raw_count
+                    except (TypeError, ValueError, OverflowError):
+                        games_valid = False
+                        break
+            model.a_available = state.get("a_available")
+            model.a_highwater_timestamp = _coerce_k24_timestamp(state.get("a_highwater_timestamp"))
+            model.a_history_coverage_since = _coerce_k24_timestamp(state.get("a_history_coverage_since"))
+            history = state.get("a_history")
+            model.a_history, history_valid = _load_a_history(history)
+            if deferred:
+                # Array stores are attached after this small-parts restore.
+                model.a_available = bool(model.a_available and history_valid)
+            else:
+                model.validate_a_state(
+                    rating_map_present=isinstance(raw_ratings, dict) and history_valid,
+                    games_map_present=isinstance(raw_games, dict),
+                    rating_map_valid=ratings_valid, games_map_valid=games_valid,
+                )
+        else:
+            model.a_schema_version = 0
+            model.a_available = False
+        if not model.k24_available:
+            model.a_available = False
         model.player_global_last_seen_ts = _load_player_ts_map(state.get("player_global_last_seen_ts"))
         model.player_local = _load_tiered_player_map(state.get("player_local"))
         model.player_local_last_seen_ts = _load_tiered_player_ts_map(state.get("player_local_last_seen_ts"))
@@ -1009,9 +1169,98 @@ class HybridPlayerRosterEloModel:
             "k24_history_coverage_since": coverage_since,
         }
 
-    def _process_k24_completed_result(self, match: MatchRecord) -> None:
+    def preview_a_lineup(self, raw_player_ids, timestamp: int) -> dict[str, Any] | None:
+        """A ratings at a strict query time, undoing retained finished maps."""
+        if self.a_schema_version != A_SCHEMA_VERSION or not self.a_available:
+            return None
+        try:
+            ids = tuple(int(player_id) for player_id in raw_player_ids)
+            query_timestamp = int(timestamp)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if query_timestamp <= 0 or len(ids) != 5 or min(ids) <= 0 or len(set(ids)) != 5:
+            return None
+        highwater = self.a_highwater_timestamp
+        coverage_since = self.a_history_coverage_since
+        if highwater is not None and query_timestamp <= highwater:
+            if coverage_since is None or query_timestamp < coverage_since:
+                return None
+        ratings = {i: float(self.player_a.get(i, K24_INITIAL_RATING)) for i in ids}
+        if not all(math.isfinite(r) for r in ratings.values()):
+            return None
+        if highwater is not None and query_timestamp <= highwater:
+            for row in reversed(self.a_history):
+                if row["timestamp"] < query_timestamp:
+                    break
+                for player_id, delta in zip(row["radiant_player_ids"] + row["dire_player_ids"], row["deltas"]):
+                    if player_id in ratings:
+                        ratings[player_id] -= delta
+        rating = _mean(list(ratings.values()))
+        return {
+            "rating": rating, "base_rating": rating, "rating_source": "composition_a",
+            "lineup_player_ids": list(ids), "lineup_player_count": 5,
+            "a_schema_version": A_SCHEMA_VERSION,
+            "a_highwater_timestamp": highwater,
+            "a_history_coverage_since": coverage_since,
+        }
+
+    def _rewind_a_suffix(self, timestamp: int) -> list[dict[str, Any]]:
+        if not self.a_available or self.a_highwater_timestamp is None or timestamp >= self.a_highwater_timestamp:
+            return []
+        if self.a_history_coverage_since is None or timestamp < self.a_history_coverage_since:
+            self.a_available = False
+            return []
+        suffix = [row for row in self.a_history if row["timestamp"] > timestamp]
+        for row in reversed(suffix):
+            for player_id, delta in zip(row["radiant_player_ids"] + row["dire_player_ids"], row["deltas"]):
+                self.player_a[player_id] -= delta
+                self.player_a_games[player_id] -= 1
+                if self.player_a_games[player_id] == 0:
+                    del self.player_a_games[player_id]
+                    del self.player_a[player_id]
+        self.a_history = deque(row for row in self.a_history if row["timestamp"] <= timestamp)
+        return suffix
+
+    def _apply_a_event(self, timestamp, radiant_ids, dire_ids, radiant_win,
+                       duration_seconds: int | None) -> None:
+        if not self.a_available:
+            return
+        radiant_rating = sum(self.player_a.get(i, K24_INITIAL_RATING) for i in radiant_ids)
+        dire_rating = sum(self.player_a.get(i, K24_INITIAL_RATING) for i in dire_ids)
+        diff = (radiant_rating - dire_rating) / 5.0
+        expected = _elo_probability(diff, 400.0)
+        if type(duration_seconds) is not int or duration_seconds <= 0:
+            duration_seconds = None
+            duration_multiplier = 1.0
+        else:
+            duration_multiplier = max(0.6, min(1.6, A_DURATION_REFERENCE_SECONDS / max(duration_seconds, 600.0)))
+        edge = diff if radiant_win else -diff
+        k = K24_K * duration_multiplier * 2.2 / (2.2 + 0.001 * max(edge, -1000.0))
+        error = (1.0 if radiant_win else 0.0) - expected
+        deltas = []
+        for player_id, sign in [(i, 1) for i in radiant_ids] + [(i, -1) for i in dire_ids]:
+            old = self.player_a.get(player_id, K24_INITIAL_RATING)
+            games = self.player_a_games.get(player_id, 0)
+            delta = sign * k * (1.0 + 2.0 / (1.0 + games / 30.0)) * error
+            self.player_a[player_id] = old + delta
+            self.player_a_games[player_id] = games + 1
+            deltas.append(delta)
+        self.a_highwater_timestamp = timestamp
+        self.a_history.append({
+            "timestamp": timestamp, "radiant_player_ids": list(radiant_ids),
+            "dire_player_ids": list(dire_ids), "radiant_win": radiant_win,
+            "duration_seconds": duration_seconds, "deltas": deltas,
+        })
+        coverage_since = max(0, timestamp - K24_HISTORY_RETENTION_SECONDS)
+        while self.a_history and self.a_history[0]["timestamp"] < coverage_since:
+            self.a_history.popleft()
+        self.a_history_coverage_since = coverage_since
+
+    def _process_k24_completed_result(self, match: MatchRecord,
+                                      duration_seconds: int | None = None) -> None:
         """Apply exactly one no-tier/no-decay K24 update for a result record."""
         if self.k24_schema_version != K24_SCHEMA_VERSION or not self.k24_available:
+            self.a_available = False
             return
         timestamp = int(match.timestamp)
         radiant_ids = tuple(int(player_id) for player_id in match.radiant_player_ids)
@@ -1023,11 +1272,14 @@ class HybridPlayerRosterEloModel:
         if self.k24_highwater_timestamp is not None and timestamp < self.k24_highwater_timestamp:
             if self.k24_history_coverage_since is None or timestamp < self.k24_history_coverage_since:
                 self.k24_available = False
+                self.a_available = False
                 return
             replay = [row for row in self.k24_history if row["timestamp"] > timestamp]
             if any(type(row.get("radiant_win")) is not bool for row in replay):
                 self.k24_available = False
+                self.a_available = False
                 return
+            a_replay = self._rewind_a_suffix(timestamp)
             # Undo only the K24 suffix; hybrid keeps its existing semantics.
             for row in reversed(replay):
                 for player_id in row["radiant_player_ids"]:
@@ -1035,10 +1287,20 @@ class HybridPlayerRosterEloModel:
                 for player_id in row["dire_player_ids"]:
                     self.player_k24[player_id] += row["delta"]
             self.k24_history = deque(row for row in self.k24_history if row["timestamp"] <= timestamp)
+        else:
+            a_replay = []
         self._apply_k24_event(timestamp, radiant_ids, dire_ids, bool(match.radiant_win))
-        for row in replay:
+        self._apply_a_event(timestamp, radiant_ids, dire_ids, bool(match.radiant_win), duration_seconds)
+        for index, row in enumerate(replay):
             self._apply_k24_event(row["timestamp"], row["radiant_player_ids"],
                                   row["dire_player_ids"], row["radiant_win"])
+            if self.a_available:
+                if index >= len(a_replay) or a_replay[index]["timestamp"] != row["timestamp"]:
+                    self.a_available = False
+                else:
+                    self._apply_a_event(row["timestamp"], row["radiant_player_ids"],
+                                        row["dire_player_ids"], row["radiant_win"],
+                                        a_replay[index]["duration_seconds"])
 
     def _apply_k24_event(self, timestamp, radiant_ids, dire_ids, radiant_win) -> None:
         """Append one chronologically ordered event to the independent state."""
@@ -1622,8 +1884,9 @@ class HybridPlayerRosterEloModel:
         )
         return True
 
-    def process_match(self, match: MatchRecord) -> StepResult:
-        self._process_k24_completed_result(match)
+    def process_match(self, match: MatchRecord, *, duration_seconds: int | None = None) -> StepResult:
+        """Apply an observed result; pass original map duration separately from result_record."""
+        self._process_k24_completed_result(match, duration_seconds)
         self._maybe_apply_patch_local_reset(match.timestamp)
         step, radiant_context, dire_context, tier, side_bias = self._preview_match(match, mutate=True)
         actual = 1.0 if match.radiant_win else 0.0

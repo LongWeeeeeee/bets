@@ -3,7 +3,7 @@
 **Capture date:** 2026-09-12 (MSK)
 
 **Source:** 
-- Host: serv1 (root@23.26.193.167)
+- Host: serv1
 - File: /root/main/runtime/ml_dispatch_decisions.jsonl
 - Record match_key: `dltv.org/matches/8995161253.61`
 - Commit: 7d60666
@@ -11,7 +11,7 @@
 
 **Capture command:**
 ```bash
-ssh -o ConnectTimeout=15 root@23.26.193.167 'cd /root/main && python3 -' < /private/tmp/claude-501/-Users-alex-Documents-ingame/e5d7376a-5572-42cf-9d23-4c97fdf26548/scratchpad/shadow_permap.py
+ssh -o ConnectTimeout=15 serv1 'cd /root/main && python3 -' < /private/tmp/claude-501/-Users-alex-Documents-ingame/e5d7376a-5572-42cf-9d23-4c97fdf26548/scratchpad/shadow_permap.py
 ```
 
 **Record content:**

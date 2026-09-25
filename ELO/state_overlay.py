@@ -58,6 +58,8 @@ FIELD_SPECS: dict[str, tuple[str, str, str]] = {
     "player_global": ("flat", "int", "float"),
     "player_global_last_seen_ts": ("flat", "int", "int"),
     "player_k24": ("flat", "int", "float"),
+    "player_a": ("flat", "int", "float"),
+    "player_a_games": ("flat", "int", "int"),
     "lineup_match_counts": ("flat", "str", "int"),
     "player_local": ("tiered", "int", "float"),
     "player_local_last_seen_ts": ("tiered", "int", "int"),
@@ -74,6 +76,7 @@ FIELD_SPECS: dict[str, tuple[str, str, str]] = {
 SMALL_PARTS = (
     "current_patch_key", "side_bias", "roster_tracker", "k24_schema_version",
     "k24_available", "k24_highwater_timestamp", "k24_history_coverage_since", "k24_history",
+    "a_schema_version", "a_available", "a_highwater_timestamp", "a_history_coverage_since", "a_history",
 )
 
 DELTA_VERSION = 2
@@ -305,11 +308,12 @@ def collect_small_parts(model: Any) -> dict[str, Any]:
         out["roster_tracker"] = deepcopy(tracker)
     for field in (
         "k24_schema_version", "k24_available", "k24_highwater_timestamp",
-        "k24_history_coverage_since", "k24_history",
+        "k24_history_coverage_since", "k24_history", "a_schema_version", "a_available",
+        "a_highwater_timestamp", "a_history_coverage_since", "a_history",
     ):
         if hasattr(model, field):
             value = deepcopy(getattr(model, field))
-            out[field] = list(value) if field == "k24_history" else value
+            out[field] = list(value) if field in ("k24_history", "a_history") else value
     return out
 
 
@@ -334,7 +338,8 @@ def restore_small_parts(model: Any, parts: dict[str, Any]) -> None:
         model.roster_tracker = RosterLineageTracker.from_state(raw_tracker)
     for field in (
         "k24_schema_version", "k24_available", "k24_highwater_timestamp",
-        "k24_history_coverage_since", "k24_history",
+        "k24_history_coverage_since", "k24_history", "a_schema_version", "a_available",
+        "a_highwater_timestamp", "a_history_coverage_since", "a_history",
     ):
         if field in parts:
             value = deepcopy(parts[field])
@@ -344,6 +349,15 @@ def restore_small_parts(model: Any, parts: dict[str, Any]) -> None:
                     model.k24_available = False
                 else:
                     model.k24_history = deque(value)
+            elif field == "a_history":
+                if not isinstance(value, (list, tuple, deque)):
+                    model.a_history = deque()
+                    model.a_available = False
+                else:
+                    from .models import _load_a_history
+                    model.a_history, valid = _load_a_history(list(value))
+                    if not valid:
+                        model.a_available = False
             else:
                 setattr(model, field, value)
 

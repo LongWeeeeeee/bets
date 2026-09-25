@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 import sys
@@ -12,6 +13,7 @@ from bisect import bisect_right
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,7 +23,8 @@ if __package__ is None or __package__ == "":
 from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier, MatchRecord
-from ELO.models import K24_SCHEMA_VERSION, HybridPlayerRosterEloModel
+from ELO.models import (A_CONTRACT, A_SCHEMA_VERSION, K24_CONTRACT,
+                        K24_SCHEMA_VERSION, HybridPlayerRosterEloModel)
 from ELO.replay import REPLAY_VERSION, replay_events, result_record
 from ELO.series_data import build_series_bundles
 from ELO.team_identity import TEAM_ID_TO_ORG_KEY, resolve_org_key
@@ -48,6 +51,27 @@ DEFAULT_DATA_DIR = (
 DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_elo_snapshot.json"
 DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
 DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"
+_LOGGER = logging.getLogger(__name__)
+_A_MISSING_LOGGED = False
+_INVALID_COMPOSITION_LOGGED = False
+
+
+def _served_composition() -> str:
+    value = os.environ.get("ELO_SERVED_COMPOSITION", "a").strip().lower()
+    if value not in ("a", "k24"):
+        global _INVALID_COMPOSITION_LOGGED
+        if not _INVALID_COMPOSITION_LOGGED:
+            _LOGGER.warning("Invalid ELO_SERVED_COMPOSITION=%r; serving K24", value)
+            _INVALID_COMPOSITION_LOGGED = True
+        return "k24"
+    return value
+
+
+def _log_missing_a_once() -> None:
+    global _A_MISSING_LOGGED
+    if not _A_MISSING_LOGGED:
+        _LOGGER.warning("A composition state is missing or unavailable; serving K24")
+        _A_MISSING_LOGGED = True
 
 # A rebase needs to know whether a just-finished live map is already part of a
 # newly-built snapshot.  Keeping every historical id would make the snapshot
@@ -569,20 +593,38 @@ def _model_config_signature(model_state: dict[str, Any] | None) -> str:
     config_payload = model_state.get("config")
     if not isinstance(config_payload, dict):
         return ""
-    raw = json.dumps(config_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    # A pre-A runtime has no explicit contracts. Freeze its historical K24
+    # parameters here: using the current code constant would silently accept
+    # a future K24 parameter change while rebasing that old runtime.
+    legacy_k24_contract = {"schema_version": 1, "k": 24.0,
+                           "initial_rating": 1500.0, "scale": 400.0}
+    normalized = {"config": config_payload,
+                  "k24_contract": model_state.get("k24_contract", legacy_k24_contract),
+                  "a_contract": model_state.get("a_contract", A_CONTRACT)}
+    raw = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _rating_replay_meta() -> dict[str, str]:
     calendar = [(p.label, p.release_ts) for p in PATCH_RELEASES]
-    return {"rating_replay_version": f"{REPLAY_VERSION}+k24_v1",
+    return {"rating_replay_version": f"{REPLAY_VERSION}+k24_v1+a_v1",
             "rating_calendar_signature": hashlib.sha256(json.dumps(calendar).encode()).hexdigest(),
-            "k24_schema_version": str(K24_SCHEMA_VERSION)}
+            "k24_schema_version": str(K24_SCHEMA_VERSION),
+            "a_schema_version": str(A_SCHEMA_VERSION)}
 
 
 def _snapshot_replay_is_current(snapshot: dict[str, Any] | None) -> bool:
     meta = (snapshot or {}).get("meta") or {}
     return all(meta.get(k) == v for k, v in _rating_replay_meta().items())
+
+
+def _snapshot_is_k24_pre_a(snapshot: dict[str, Any] | None) -> bool:
+    """Recognize the last K24 build for read-only serving during A migration."""
+    meta = (snapshot or {}).get("meta") or {}
+    current = _rating_replay_meta()
+    return (meta.get("rating_replay_version") == f"{REPLAY_VERSION}+k24_v1"
+            and meta.get("rating_calendar_signature") == current["rating_calendar_signature"]
+            and meta.get("k24_schema_version") == current["k24_schema_version"])
 
 
 def _rating_history_signature(matches: list[MatchRecord], config_signature: str) -> str:
@@ -592,7 +634,7 @@ def _rating_history_signature(matches: list[MatchRecord], config_signature: str)
         row = [m.match_id, m.timestamp, m.result_timestamp, m.radiant_win,
                m.radiant_team_id, m.dire_team_id, m.radiant_team_name, m.dire_team_name,
                m.radiant_player_ids, m.dire_player_ids, m.radiant_player_positions,
-               m.dire_player_positions, m.derived_league_tier.value]
+               m.dire_player_positions, m.derived_league_tier.value, m.duration_seconds]
         digest.update(json.dumps(row, separators=(",", ":")).encode())
         digest.update(b"\n")
     return digest.hexdigest()
@@ -1494,6 +1536,7 @@ def rebase_runtime_model_state(
     if _snapshot_replay_is_current(snapshot) and base_state.get("k24_schema_version") != K24_SCHEMA_VERSION:
         raise RuntimeRebaseError("K24-current snapshot lacks explicit K24 state; rebase is blocked")
     model = HybridPlayerRosterEloModel.from_state(base_state) if replay_rows else None
+    base_a_available = model.a_available if model is not None else False
     for result_timestamp, _order, map_key, raw, match in sorted(replay_rows):
         assert model is not None
         match_id = _coerce_optional_int(match.match_id)
@@ -1511,10 +1554,15 @@ def rebase_runtime_model_state(
         elif team_pair is not None:
             _applied_kept.append((match_id, team_pair, result_timestamp))
         if not is_twin:
-            model.process_match(result_record(match, result_timestamp))
+            model.process_match(result_record(match, result_timestamp),
+                                duration_seconds=match.duration_seconds)
             if not model.k24_available:
                 raise RuntimeRebaseError(
                     "K24 result order is unavailable during rebase; refusing to promote runtime state"
+                )
+            if base_a_available and not model.a_available:
+                raise RuntimeRebaseError(
+                    "A result order is unavailable during rebase; refusing to promote runtime state"
                 )
         # The ledger entry itself is recorded either way (`rebased_applied`
         # semantics for a future rebase do not change for a skipped twin);
@@ -1877,6 +1925,25 @@ def _k24_leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
     return {org_key: index + 1 for index, (org_key, _rating, _name) in enumerate(rows)}
 
 
+def _a_leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
+    """Ranks from the snapshot's A lineup ratings at its reference instant."""
+    teams = snapshot.get("teams_by_org_key")
+    if not isinstance(teams, dict):
+        return {}
+    rows = []
+    for org_key, row in teams.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            rating = float(row["a_strength"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(rating):
+            rows.append((str(org_key), rating, str(row.get("team_name") or org_key)))
+    rows.sort(key=lambda item: (-item[1], item[2].casefold()))
+    return {key: index + 1 for index, (key, _rating, _name) in enumerate(rows)}
+
+
 # E-224: у одной серии на живом пути применялась ровно одна карта из всех
 # сыгранных ("Live ELO updated from completed map" 101 против "finalized
 # from orphaned finished series" 638). Причина в двух местах разом:
@@ -2101,7 +2168,9 @@ def _build_live_applied_update(
     current_scores: dict[str, int],
     first_team_is_radiant: bool,
     result_timestamp: int | None = None,
+    duration_seconds: int | None = None,
 ) -> dict[str, Any]:
+    """Apply a finished map; A2 passes its original Stratz durationSeconds here."""
     meta = snapshot.get("meta") or {}
     # The score change is observed now. Reusing the registration/start time
     # would move decay and patch state backwards when parallel games finish.
@@ -2116,7 +2185,7 @@ def _build_live_applied_update(
         match=match,
         tier_matchup_elo_bonus=meta.get("tier_matchup_elo_bonus"),
     )
-    step = model.process_match(match)
+    step = model.process_match(match, duration_seconds=duration_seconds)
     after_summary = _preview_live_matchup_from_model(
         model=model,
         match=match,
@@ -2210,6 +2279,7 @@ def _apply_one_pending_map(
     current_scores: dict[str, int],
     normalized_series_key: str,
     series_url: str,
+    duration_seconds: int | None = None,
 ) -> dict[str, Any] | None:
     """Apply one queued map context to team ratings, or return None.
 
@@ -2238,6 +2308,8 @@ def _apply_one_pending_map(
     pending_match = _deserialize_match_record(pm_rec, radiant_win=radiant_won)
     if pending_match is None:
         return None
+    if duration_seconds is not None:
+        pending_match = replace(pending_match, duration_seconds=duration_seconds)
     # This is the timestamp used by `process_match`, not an inferred source
     # finish.  Rebase persists it separately from the original record so it
     # can replay the identical live event without pretending it proves
@@ -2252,6 +2324,7 @@ def _apply_one_pending_map(
         "result_timestamp": applied_result_timestamp,
         "match_id": int(pending_match.match_id),
         "match_record": _serialize_match_record(pending_match),
+        "duration_seconds": pending_match.duration_seconds,
     }
     return _build_live_applied_update(
         snapshot=snapshot,
@@ -2266,6 +2339,7 @@ def _apply_one_pending_map(
         current_scores=current_scores,
         first_team_is_radiant=first_radiant_pending,
         result_timestamp=applied_result_timestamp,
+        duration_seconds=pending_match.duration_seconds,
     )
 
 
@@ -2280,6 +2354,7 @@ def _drain_pending_map_queue(
     normalized_series_key: str,
     series_url: str,
     winner_lookup: Any = None,
+    score_duration_lookup: Any = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Resolve as many queued map contexts as the observed score explains.
 
@@ -2287,7 +2362,9 @@ def _drain_pending_map_queue(
     oldest-resolved-first (FIFO: the queued map that started first is
     credited with the first observed win). See
     `_winner_slots_from_score_advance` for what counts as explained by the
-    score jump. When it can't tell (both sides moved and not by exactly one
+    score jump. For a score advance, only `score_duration_lookup` is called;
+    the production callback reads the Stratz cache without querying the network.
+    When the score can't tell (both sides moved and not by exactly one
     map each) and a `winner_lookup` was given, only the oldest queued map is
     tried against it directly — the same single-map path `register_live_map_context`
     always had; the live path's series score never moves within one poll
@@ -2297,12 +2374,35 @@ def _drain_pending_map_queue(
     """
     remaining = list(pending_maps)
     applied_updates: list[dict[str, Any]] = []
+
+    def looked_up(pending_map: dict[str, Any], lookup: Any) -> tuple[bool | None, int | None]:
+        if lookup is None:
+            return None, None
+        try:
+            looked = lookup(str(pending_map.get("map_key") or ""), pending_map)
+        except Exception:
+            return None, None
+        if isinstance(looked, bool):
+            return looked, None
+        if not isinstance(looked, dict) or not isinstance(looked.get("radiant_won"), bool):
+            return None, None
+        try:
+            duration = int(looked.get("duration_seconds") or 0)
+        except (TypeError, ValueError):
+            duration = 0
+        return looked["radiant_won"], duration if duration > 0 else None
+
     winner_slots = _winner_slots_from_score_advance(previous_scores, current_scores)
     if winner_slots is not None:
         for winner_slot in winner_slots:
             if not remaining:
                 break
             pending_map = remaining.pop(0)
+            looked_won, duration = looked_up(pending_map, score_duration_lookup)
+            score_won = winner_slot == (
+                "first" if pending_map.get("first_team_is_radiant") else "second")
+            if looked_won is not None and looked_won != score_won:
+                duration = None
             update = _apply_one_pending_map(
                 pending_map=pending_map,
                 winner_slot=winner_slot,
@@ -2313,6 +2413,7 @@ def _drain_pending_map_queue(
                 current_scores=current_scores,
                 normalized_series_key=normalized_series_key,
                 series_url=series_url,
+                duration_seconds=duration,
             )
             if update is not None:
                 applied_updates.append(update)
@@ -2323,11 +2424,8 @@ def _drain_pending_map_queue(
         pending_map_key = str(pending_map.get("map_key") or "").strip()
         first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
         if pending_map_key:
-            try:
-                looked = winner_lookup(pending_map_key, pending_map)
-            except Exception:
-                looked = None
-            if isinstance(looked, bool):
+            looked, duration = looked_up(pending_map, winner_lookup)
+            if looked is not None:
                 winner_slot = (
                     ("first" if first_radiant_pending else "second") if looked
                     else ("second" if first_radiant_pending else "first")
@@ -2343,6 +2441,7 @@ def _drain_pending_map_queue(
                     current_scores=current_scores,
                     normalized_series_key=normalized_series_key,
                     series_url=series_url,
+                    duration_seconds=duration,
                 )
                 if update is not None:
                     applied_updates.append(update)
@@ -2480,7 +2579,7 @@ def _build_snapshot_dict(
     # proxy for finish order. Unknown durations are counted and never guessed.
     for event, observed_at, match in replay_events(matches):
         if event == "result":
-            model.process_match(result_record(match, observed_at))
+            model.process_match(result_record(match, observed_at), duration_seconds=match.duration_seconds)
 
     for match in matches:
         for is_radiant, team_id, team_name, player_ids in (
@@ -2519,6 +2618,11 @@ def _build_snapshot_dict(
         )
         if k24_preview is None:
             raise RuntimeError("K24 snapshot construction requires an available K24 state")
+        a_preview = model.preview_a_lineup(
+            tuple(int(player_id) for player_id in snapshot["player_ids"]), reference_timestamp + 1,
+        )
+        if a_preview is None:
+            raise RuntimeError("A snapshot construction requires an available A state")
         days_inactive = max(0.0, (reference_timestamp - int(snapshot["timestamp"])) / SECONDS_PER_DAY)
         current_strength = _decay_strength_for_leaderboard(
             raw_strength=float(preview["team_strength"]),
@@ -2540,6 +2644,7 @@ def _build_snapshot_dict(
             "roster_weight": float(preview["roster_weight"]),
             "roster_key": str(preview["roster_key"]),
             "k24_strength": float(k24_preview["rating"]),
+            "a_strength": float(a_preview["rating"]),
             "k24_player_ids": list(k24_preview["lineup_player_ids"]),
             "days_inactive": days_inactive,
             "is_active": bool(days_inactive <= active_cutoff_days),
@@ -2637,7 +2742,7 @@ def load_live_snapshot(
     разбор 366-мегабайтного файла здесь не происходит.
     """
     base = load_snapshot(snapshot_path)
-    if base is None or not _snapshot_replay_is_current(base):
+    if base is None or not (_snapshot_replay_is_current(base) or _snapshot_is_k24_pre_a(base)):
         return None
     return _snapshot_with_runtime_model_state(
         base, runtime_model_state_path=runtime_model_state_path)
@@ -2803,6 +2908,10 @@ def ensure_snapshot(
     display_decay_half_life_days: float = DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS,
 ) -> dict[str, Any] | None:
     snapshot = load_snapshot(snapshot_path)
+    if _snapshot_is_k24_pre_a(snapshot):
+        # During the staged code/snapshot rollout, keep its real K24 state.
+        # A foreground request must not launch a multi-GB history rebuild.
+        return snapshot
     # A code/calendar migration requires an explicit offline rebuild. Pinning
     # cannot authorize legacy state, and a live request must not trigger a
     # multi-GB historical rebuild as a side effect.
@@ -3042,8 +3151,8 @@ def get_matchup_summary(
     rebuild_if_missing: bool = True,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
 ) -> dict[str, Any] | None:
-    """Primary live K24 composition ELO; ML hybrid remains a separate feature."""
-    from ELO.models import k24_lineup_summary
+    """Serve the selected composition at the requested strict as-of instant."""
+    from ELO.models import a_lineup_summary, k24_lineup_summary
 
     # Without a supplied map start, the only honest query point is the next
     # second: a result observed in this second is not strictly before `now`.
@@ -3055,12 +3164,26 @@ def get_matchup_summary(
         model = _restore_model_from_snapshot(current_snapshot)
         if model is None:
             return None
-        result = k24_lineup_summary(
+        composition = _served_composition()
+        if composition == "a" and not getattr(model, "a_available", False):
+            composition = "k24"
+            _log_missing_a_once()
+        summarize_lineup = a_lineup_summary if composition == "a" else k24_lineup_summary
+        result = summarize_lineup(
             model, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
             radiant_account_ids=radiant_account_ids, dire_account_ids=dire_account_ids,
             timestamp=evaluation_timestamp,
         )
+        if result is None and composition == "a":
+            composition = "k24"
+            _log_missing_a_once()
+            result = k24_lineup_summary(
+                model, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
+                radiant_account_ids=radiant_account_ids, dire_account_ids=dire_account_ids,
+                timestamp=evaluation_timestamp,
+            )
         if result is not None:
+            result["composition"] = composition
             meta = current_snapshot.get("meta") or {}
             result["reference_timestamp"] = meta.get("reference_timestamp")
             source_kind = (
@@ -3073,6 +3196,8 @@ def get_matchup_summary(
                 "reference_timestamp": meta.get("reference_timestamp"),
                 "k24_highwater_timestamp": getattr(model, "k24_highwater_timestamp", None),
                 "k24_history_coverage_since": getattr(model, "k24_history_coverage_since", None),
+                "a_highwater_timestamp": getattr(model, "a_highwater_timestamp", None),
+                "a_history_coverage_since": getattr(model, "a_history_coverage_since", None),
             }
             # Snapshot ranks are constructed at its reference instant.  They
             # are not a causal reconstruction for historical/equal queries.
@@ -3080,7 +3205,8 @@ def get_matchup_summary(
                 rank_is_causal = evaluation_timestamp > int(meta.get("reference_timestamp"))
             except (TypeError, ValueError):
                 rank_is_causal = False
-            ranks = _k24_leaderboard_rank_map(current_snapshot) if rank_is_causal else {}
+            ranks = ((_a_leaderboard_rank_map(current_snapshot) if composition == "a"
+                      else _k24_leaderboard_rank_map(current_snapshot)) if rank_is_causal else {})
             for side, team_id in (("radiant", radiant_team_id), ("dire", dire_team_id)):
                 result[side]["team_id"] = team_id
                 org_key = resolve_org_key(team_id, result[side]["team_name"])
@@ -3143,6 +3269,7 @@ def register_live_map_context(
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
     runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
     winner_lookup: Any = None,
+    score_duration_lookup: Any = None,
     observed_game_time: float | int | None = None,
 ) -> dict[str, Any] | None:
     normalized_series_key = str(series_key or "").strip() or str(match_record.series_id or series_url or map_key)
@@ -3230,6 +3357,7 @@ def register_live_map_context(
                 normalized_series_key=normalized_series_key,
                 series_url=str(series_state.get("series_url") or series_url),
                 winner_lookup=winner_lookup,
+                score_duration_lookup=score_duration_lookup,
             )
             if applied_updates:
                 applied_update = applied_updates[-1]
@@ -3407,6 +3535,8 @@ def finalize_live_series_from_scores(
     progress_path: Path = DEFAULT_RUNTIME_PROGRESS_PATH,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
     runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
+    winner_lookup: Any = None,
+    score_duration_lookup: Any = None,
 ) -> dict[str, Any] | None:
     normalized_series_key = str(series_key or "").strip() or str(series_url or "").strip()
     if not normalized_series_key:
@@ -3478,9 +3608,8 @@ def finalize_live_series_from_scores(
             # Same FIFO drain as register_live_map_context (E-224): the final
             # score can explain more than one still-queued map (a missed poll,
             # or the series simply ending two maps after the last observation).
-            # This function has no winner_lookup, so genuinely ambiguous
-            # remainders just stay unresolved below — the unconditional pop
-            # at series end already discarded them before this fix too.
+            # A score advance uses the cache-only duration lookup; ambiguous
+            # remainders may use the winner lookup before series cleanup.
             _remaining, applied_updates = _drain_pending_map_queue(
                 pending_maps=pending_maps_queue,
                 previous_scores=previous_scores,
@@ -3490,6 +3619,8 @@ def finalize_live_series_from_scores(
                 model_getter=_model,
                 normalized_series_key=normalized_series_key,
                 series_url=str(series_state.get("series_url") or series_url),
+                winner_lookup=winner_lookup,
+                score_duration_lookup=score_duration_lookup,
             )
             if applied_updates:
                 applied_update = applied_updates[-1]

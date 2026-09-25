@@ -28091,7 +28091,7 @@ def _live_delta_retry():
         logger.exception('prematch live delta retry failed')
 
 
-def _live_elo_winner_lookup(map_key, pending_map=None):
+def _live_elo_winner_lookup(map_key, pending_map=None, *, with_duration=False, cache_only=False):
     # Победил ли радиант ОТЛОЖЕННОЙ карты. None означает «не знаем».
     #
     # По ключу карту опознать нельзя: прод пишет `match_id = series_id`, и все
@@ -28105,7 +28105,11 @@ def _live_elo_winner_lookup(map_key, pending_map=None):
         dire = int(rec.get('dire_team_id') or 0)
         if rad <= 0 or dire <= 0:
             return None
-        hist = stratz_map_result.series_history(rad, dire)
+        if cache_only:
+            hist = stratz_map_result.series_history(
+                rad, dire, query=lambda _team_id, _since: None)
+        else:
+            hist = stratz_map_result.series_history(rad, dire)
         if not hist:
             return None
         # СОПОСТАВЛЕНИЕ ПО НОМЕРУ КАРТЫ, А НЕ ПО ВРЕМЕНИ. Обе прежние версии
@@ -28155,13 +28159,16 @@ def _live_elo_winner_lookup(map_key, pending_map=None):
             except Exception:                       # noqa: BLE001
                 rad_stratz, dire_stratz = rad, dire
         stratz_radiant = int(best.get('radiant_team_id') or 0)
+        duration = _coerce_int(best.get('duration_seconds'))
+        duration = duration if duration > 0 else None
         if stratz_radiant in (rad, rad_stratz):
-            return won
-        if stratz_radiant in (dire, dire_stratz):
-            return not won
-        # Id не совпал ни с одной стороной ни в одном пространстве: молчание
-        # дешевле инверсии — карта подождёт следующего прохода или OpenDota.
-        return None
+            result = won
+        elif stratz_radiant in (dire, dire_stratz):
+            result = not won
+        else:
+            # Неизвестная ориентация: нельзя приписать ни исход, ни длительность.
+            return None
+        return {"radiant_won": result, "duration_seconds": duration} if with_duration else result
     except Exception:
         logger.exception('live ELO winner lookup failed for %s', map_key)
         return None
@@ -28257,7 +28264,10 @@ def _register_completed_live_map_for_elo(
             # наблюдения одной серии он не меняется, поэтому применений
             # покарточным путём было ровно ноль. Справка не бросает и на
             # неизвестном исходе возвращает None — тогда всё как было.
-            winner_lookup=_live_elo_winner_lookup,
+            winner_lookup=lambda key, pending: _live_elo_winner_lookup(
+                key, pending, with_duration=True),
+            score_duration_lookup=lambda key, pending: _live_elo_winner_lookup(
+                key, pending, with_duration=True, cache_only=True),
             # Отличает отставшую строку ДОИГРАННОЙ sourcetv-карты (видна ~15
             # мин под новым .<kills> ключом с тем же match_id-алиасом) от
             # ГЕНУИННОЙ следующей карты серии под тем же алиасом: вторая
@@ -28299,6 +28309,10 @@ def _finalize_finished_live_series_for_elo(
             series_url=str(series_url or ""),
             first_team_score=first_score,
             second_team_score=second_score,
+            winner_lookup=lambda key, pending: _live_elo_winner_lookup(
+                key, pending, with_duration=True),
+            score_duration_lookup=lambda key, pending: _live_elo_winner_lookup(
+                key, pending, with_duration=True, cache_only=True),
         )
     except Exception:
         logger.exception("Failed to finalize live ELO series context for %s", normalized_series_key)
@@ -28830,6 +28844,8 @@ def _format_team_elo_block(
 
     source = summary.get("source")
     heading = (
+        "ELO состава (A):" if source == "elo_composition_a"
+        else
         "ELO состава (K24):" if source == "elo_composition_k24"
         else "ELO состава (как в ML):" if source == "elo_prematch_hybrid"
         else "ELO команды:"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -201,7 +202,7 @@ def test_snapshot_model_updates_interleaved_series_in_global_chronology(tmp_path
     attach_league_tiers_asof(matches)
     reference = HybridPlayerRosterEloModel(config)
     for match in sorted(matches, key=lambda m: (m.result_timestamp, m.match_id)):
-        reference.process_match(result_record(match))
+        reference.process_match(result_record(match), duration_seconds=match.duration_seconds)
 
     assert snapshot["model_state"] == reference.export_state()
     assert snapshot["model_state"]["current_patch_key"] == "7.40c"
@@ -1029,7 +1030,8 @@ def test_finalize_live_series_from_scores_applies_pending_final_map_once(tmp_pat
     _reset_live_team_strength_caches()
 
 
-def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> None:
+def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ELO_SERVED_COMPOSITION", "k24")
     _reset_live_team_strength_caches()
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -1291,6 +1293,32 @@ def test_winner_lookup_applies_pending_map_when_series_score_stands_still(tmp_pa
     assert r2["applied_update"] is not None
     assert r2["applied_update"]["map_key"] == "dltv.org/matches/425663.0"
     assert r2["applied_update"]["radiant_win"] is False
+
+
+def test_winner_lookup_threads_finished_map_duration_into_a(tmp_path) -> None:
+    """The resolved map's duration changes the first A update by its exact multiplier."""
+    from ELO.models import HybridPlayerRosterEloModel
+
+    # Captured real map from the offline ELO corpus; live Stratz capture was unavailable.
+    real_map = json.loads((Path(__file__).parent /
+                           "variant_a_real_maps_20260925.json").read_text())["maps"][0]
+    for duration in (real_map["duration_seconds"], None, 0):
+        _reset_live_team_strength_caches()
+        env = _live_env(tmp_path / str(duration))
+        common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+        register_live_map_context(
+            map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+            first_team_is_radiant=True, match_record=_rec(101), **common)
+        result = register_live_map_context(
+            map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+            first_team_is_radiant=True, match_record=_rec(102),
+            winner_lookup=lambda key, pm: {"radiant_won": True, "duration_seconds": duration},
+            **common)
+        assert result["applied_update"] is not None
+        state = json.loads(env["runtime_model_state_path"].read_text())
+        model = HybridPlayerRosterEloModel.from_state(state["model_state"])
+        multiplier = max(0.6, min(1.6, 1981 / max(duration, 600))) if duration else 1.0
+        assert model.player_a[1] == pytest.approx(1500 + 36 * multiplier)
 
 
 def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:

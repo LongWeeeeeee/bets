@@ -1,0 +1,57 @@
+{
+ "team": {
+  "id": 9572001,
+  "matches": [
+   {
+    "id": 8960991322,
+    "seriesId": 1133004,
+    "startDateTime": 1787486918,
+    "endDateTime": 1787490780,
+    "durationSeconds": 3862,
+    "radiantTeamId": 9572001,
+    "direTeamId": 7119388,
+    "didRadiantWin": false
+   },
+   {
+    "id": 8960882635,
+    "seriesId": 1133004,
+    "startDateTime": 1787482181,
+    "endDateTime": 1787484839,
+    "durationSeconds": 2658,
+    "radiantTeamId": 9572001,
+    "direTeamId": 7119388,
+    "didRadiantWin": true
+   },
+   {
+    "id": 8960762254,
+    "seriesId": 1133004,
+    "startDateTime": 1787476452,
+    "endDateTime": 1787479208,
+    "durationSeconds": 2756,
+    "radiantTeamId": 7119388,
+    "direTeamId": 9572001,
+    "didRadiantWin": true
+   },
+   {
+    "id": 8960655084,
+    "seriesId": 1133004,
+    "startDateTime": 1787470563,
+    "endDateTime": 1787474432,
+    "durationSeconds": 3869,
+    "radiantTeamId": 9572001,
+    "direTeamId": 7119388,
+    "didRadiantWin": true
+   },
+   {
+    "id": 8960577698,
+    "seriesId": 1133004,
+    "startDateTime": 1787465757,
+    "endDateTime": 1787468532,
+    "durationSeconds": 2775,
+    "radiantTeamId": 7119388,
+    "direTeamId": 9572001,
+    "didRadiantWin": true
+   }
+  ]
+ }
+}

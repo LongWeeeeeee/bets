@@ -241,6 +241,7 @@ def team_matches(team_id: int, *, now: Optional[int] = None,
                 "radiant_team_id": int(m.get("radiantTeamId") or 0),
                 "dire_team_id": int(m.get("direTeamId") or 0),
                 "radiant_won": bool(m["didRadiantWin"]),
+                "duration_seconds": max(int(m.get("durationSeconds") or 0), 0) or None,
             })
         except Exception:
             continue
@@ -332,6 +333,7 @@ def refresh(team_ids, *, cache_path: Optional[Path] = None,
                     "radiant_team_id": int(m.get("radiantTeamId") or 0),
                     "dire_team_id": int(m.get("direTeamId") or 0),
                     "radiant_won": bool(m["didRadiantWin"]),
+                    "duration_seconds": max(int(m.get("durationSeconds") or 0), 0) or None,
                 })
             except Exception:
                 continue

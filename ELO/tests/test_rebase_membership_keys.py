@@ -470,3 +470,61 @@ def test_config_hash_guard_blocks_rebase_when_model_config_changed(tmp_path, cap
     err = capsys.readouterr().err
     assert "конфиг модели изменился" in err
     assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+
+
+@pytest.mark.parametrize("old_has_a", [False, True])
+def test_a_snapshot_rebases_old_and_new_progress_without_config_signature_change(tmp_path, old_has_a):
+    old_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    if not old_has_a:
+        for key in list(old_state):
+            if key.startswith("a_") or key.startswith("player_a"):
+                del old_state[key]
+        del old_state["k24_contract"]
+    new_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    assert lts._model_config_signature(old_state) == lts._model_config_signature(new_state)
+    completed = _live_record(9_600_101, start=500)
+    snapshot_path = tmp_path / "snapshot.json"
+    _write(snapshot_path, {
+        "meta": {"reference_timestamp": 2_000, "model_config_signature": "new-history-a",
+                 "recent_completed_match_ids_coverage_since": 0,
+                 "recent_completed_match_ids": [completed.match_id]},
+        "model_state": new_state,
+    })
+    state_path, progress_path = tmp_path / "state.json", tmp_path / "progress.json"
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "old-history-k24",
+                        "model_state": old_state})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "old-history-k24",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(completed, observed_at=1_500)}})
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    rebased = json.loads(state_path.read_text())
+    assert rebased["model_state"]["a_schema_version"] == 1
+    assert rebased["base_model_config_signature"] == "new-history-a"
+    assert json.loads(progress_path.read_text())["applied_maps"]["map-1"]["snapshot_covered"]
+
+
+def test_rebase_rejects_changed_k24_contract_with_outstanding_work(tmp_path, capsys):
+    old_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    new_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    new_state["k24_contract"]["k"] = 30.0
+    assert lts._model_config_signature(old_state) != lts._model_config_signature(new_state)
+    completed = _live_record(9_600_102, start=500)
+    snapshot_path, state_path, progress_path = [tmp_path / name for name in
+                                                 ("snapshot.json", "state.json", "progress.json")]
+    _write(snapshot_path, {"meta": {"reference_timestamp": 2_000,
+                                    "model_config_signature": "changed-k24-history"},
+                           "model_state": new_state})
+    _write(state_path, {"base_reference_timestamp": 900,
+                        "base_model_config_signature": "old-k24-history", "model_state": old_state})
+    _write(progress_path, {"base_reference_timestamp": 900,
+                           "base_model_config_signature": "old-k24-history",
+                           "pending_series": {},
+                           "applied_maps": {"map-1": _applied_entry(completed, observed_at=1_500)}})
+    before = state_path.read_bytes(), progress_path.read_bytes()
+    assert rebase_main(["--snapshot", str(snapshot_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 1
+    assert "конфиг модели изменился" in capsys.readouterr().err
+    assert (state_path.read_bytes(), progress_path.read_bytes()) == before
