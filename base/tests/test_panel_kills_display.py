@@ -24,7 +24,7 @@ def _lineups():
              for i in range(1, 6)})
 
 
-def _verdicts(model, *, dire=False, plain=False):
+def _verdicts(model, *, dire=False, plain=False, plain_probabilities=(0.36, 0.83, 0.41)):
     specs = {spec.key: spec for spec in ml_panel.load_specs(B_BUNDLE)}
     assert {"rad_30_25", "total_55_50"} <= specs.keys()
     window = ml_panel.ModelVerdict("w_5_15", "окно 5-15", "Radiant", 0.72,
@@ -40,10 +40,10 @@ def _verdicts(model, *, dire=False, plain=False):
             "dire_30_25", "дайр ≥30", "≥30", 0.83, 0.78, 1.0,
             True, metadata={"model": model, "bundle_sha": "fixture"}))
     if plain:
-        for key, title, side, probability in (
-                ("rad_ge30", "радиант ≥30", "≤29", 0.36),
-                ("dire_ge30", "дайр ≥30", "≥30", 0.83),
-                ("total_ge55", "тотал ≥55", "≤54", 0.41)):
+        for (key, title, side), probability in zip((
+                ("rad_ge30", "радиант ≥30", "≤29"),
+                ("dire_ge30", "дайр ≥30", "≥30"),
+                ("total_ge55", "тотал ≥55", "≤54")), plain_probabilities):
             targets.append(ml_panel.ModelVerdict(
                 key, title, side, probability, 0.65, 1.0, True,
                 metadata={"model": model, "bundle_sha": "fixture"}))
@@ -53,7 +53,7 @@ def _verdicts(model, *, dire=False, plain=False):
 
 
 def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False,
-          dire=False, plain=False):
+          dire=False, plain=False, plain_probabilities=(0.36, 0.83, 0.41)):
     monkeypatch.setenv("PREMATCH_ML_ENABLED", "0")
     monkeypatch.setenv("ML_PANEL_KV3", "0")
     monkeypatch.setenv("SERIES_TEMPO_SHADOW", "0")
@@ -77,7 +77,8 @@ def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False,
                         SimpleNamespace(sym_block=lambda *a: []))
     monkeypatch.setitem(sys.modules, "prematch_panel_scorer", SimpleNamespace(
         block_from_matrix=lambda *a: {}, block_from_prod_features=lambda *a, **k: {},
-        score=lambda *a, **k: _verdicts(model, dire=dire, plain=plain)))
+        score=lambda *a, **k: _verdicts(model, dire=dire, plain=plain,
+                                       plain_probabilities=plain_probabilities)))
     monkeypatch.setitem(sys.modules, "duration43_serving", SimpleNamespace(
         replace_verdict=lambda verdicts, *a, **k: verdicts,
         status=lambda: {"ready": True}))
@@ -102,16 +103,27 @@ def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False,
     return details["panel_text"]
 
 
-def test_b_card_shows_plain_targets_without_e281(monkeypatch, tmp_path):
-    text = _card(monkeypatch, tmp_path, plain=True)
-    assert "радиант ≥30: ≤29 64%" in text
-    assert "дайр ≥30: ≥30 83%" in text
-    assert "тотал ≥55: ≤54 59%" in text
-    assert "радиант ≥30: ≥30 82%" not in text
+@pytest.mark.parametrize("probabilities", [(0.385, 0.83, 0.41),
+                                             (0.72, 0.46, 0.68)])
+def test_b_card_shows_positive_event_probabilities(monkeypatch, tmp_path, probabilities):
+    text = _card(monkeypatch, tmp_path, plain=True,
+                 plain_probabilities=probabilities)
+    verdicts = _verdicts("B_kv3", plain=True,
+                         plain_probabilities=probabilities)
+    window_and_duration = ml_panel.render([verdicts[0], verdicts[-1]],
+                                          highlight=["w_5_15"]).splitlines()
+    threshold = kills.star_min_prob()
+    def expected_line(label, probability):
+        return f"{label}: {probability:.1%}" + (" ★" if probability >= threshold else "")
+
+    expected_lines = ["Килы ML · B",
+                      expected_line("Radiant ≥30 килов", probabilities[0]),
+                      expected_line("Dire ≥30 килов", probabilities[1]),
+                      expected_line("Карта ≥55 килов", probabilities[2])]
+    assert text.splitlines() == [*window_and_duration[:-1], *expected_lines,
+                                 window_and_duration[-1]]
+    assert "≤29" not in text and "≤54" not in text
     assert "Килы ML · E-281" not in text
-    assert text.index("окно 5-15") < text.index("радиант ≥30")
-    assert text.index("радиант ≥30") < text.index("дайр ≥30") < text.index("тотал ≥55")
-    assert text.index("тотал ≥55") < text.index("Длительность")
 
 
 def test_band_rollback_includes_optional_dire_in_order(monkeypatch, tmp_path):
@@ -147,7 +159,9 @@ def test_three_plain_b_verdicts_required_by_shared_renderer(monkeypatch):
     monkeypatch.delenv("ML_PANEL_KILLS_DISPLAY", raising=False)
     rendered, use_b = veto._render_panel_kills_display(verdicts, ml_panel)
     assert use_b is True
-    assert "радиант ≥30" in rendered and "дайр ≥30" in rendered and "тотал ≥55" in rendered
+    assert "Radiant ≥30 килов: 36.0%" in rendered
+    assert "Dire ≥30 килов: 83.0%" in rendered
+    assert "Карта ≥55 килов: 41.0%" in rendered
     rendered, use_b = veto._render_panel_kills_display(
         [v for v in verdicts if v.key != "dire_ge30"], ml_panel)
     assert use_b is False

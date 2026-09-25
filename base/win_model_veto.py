@@ -869,6 +869,24 @@ def _render_panel_kills_display(verdicts, ml_panel):
                     + [targets[key] for key in keys[1:]] + duration,
                     highlight=highlight)
                 if rendered:
+                    if mode == "b":
+                        from kills_transfer_serving import star_min_prob
+
+                        threshold = star_min_prob()
+                        def plain_line(label, value):
+                            return f"{label}: {value:.1%}" + (" ★" if value >= threshold else "")
+
+                        lines = rendered.splitlines()
+                        if len(lines) != 1 + len(wins) + len(keys) + len(duration):
+                            raise ValueError("unexpected B kills panel layout")
+                        start = 1 + len(wins)
+                        lines[start:start + len(keys)] = [
+                            "Килы ML · B",
+                            plain_line("Radiant ≥30 килов", targets['rad_ge30'].probability),
+                            plain_line("Dire ≥30 килов", targets['dire_ge30'].probability),
+                            plain_line("Карта ≥55 килов", targets['total_ge55'].probability),
+                        ]
+                        rendered = "\n".join(lines)
                     return rendered, True
         except Exception:  # noqa: BLE001 — display error keeps the E281 block
             pass
