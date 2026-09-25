@@ -26,7 +26,7 @@ from base.build_draft_phase_corpus import (
 SCHEMA_VERSION = 1
 MIN_DURATION_SECONDS = 600
 ROWS_NAME = "rows.npz"
-SKIP_FILENAMES = frozenset({"merge_patch_summary.json", "scan_manifest.json"})
+SKIP_FILENAMES = frozenset({"merge_patch_summary.json", "scan_manifest.json", "part_counters.json"})
 LANE_CODES = {
     "DIRE_STOMP": 0,
     "DIRE_VICTORY": 1,

@@ -145,11 +145,16 @@ def test_ineligible_queried_player_does_not_expand_participant_ids(fake_transpor
     {"data": {"players": []}},
     {"data": {"players": [{"steamAccount": {"id": 1}, "matches": None}]}},
 ])
-def test_malformed_or_partial_response_raises_without_processing(fake_transport, payload):
+def test_malformed_or_partial_response_is_nonfatal_without_processing(fake_transport, payload):
     fake_transport(lambda _ids, _skip: payload)
+    existing = set()
 
-    with pytest.raises(maps_research.PubPaginationError):
-        asyncio.run(_collect(player_ids=[1, 2], start_date_time=1_700_000_000))
+    events = asyncio.run(_collect(player_ids=[1, 2], start_date_time=1_700_000_000,
+                                 existing_match_ids=existing))
+
+    assert [event[3] for event in events] == [{1, 2}]
+    assert all(event[0] == set() and event[1] == [] for event in events)
+    assert existing == set()
 
 
 @pytest.mark.parametrize("payload", [
@@ -182,7 +187,7 @@ def test_transient_invalid_pub_response_retries_same_page_without_losing_matches
     assert existing == {55}
 
 
-def test_persistent_missing_players_stops_after_three_attempts_without_completion(monkeypatch):
+def test_persistent_missing_players_skipped_after_three_attempts_without_completion(monkeypatch):
     async def no_sleep(_seconds):
         pass
 
@@ -190,10 +195,11 @@ def test_persistent_missing_players_stops_after_three_attempts_without_completio
     monkeypatch.setattr(maps_research, "get_proxy_pool", lambda: pool)
     monkeypatch.setattr(maps_research.asyncio, "sleep", no_sleep)
     existing = {99}
-    with pytest.raises(maps_research.PubPaginationError, match="no players list"):
-        asyncio.run(_collect(player_ids=[1], start_date_time=1_700_000_000,
-                              existing_match_ids=existing))
+    events = asyncio.run(_collect(player_ids=[1], start_date_time=1_700_000_000,
+                                  existing_match_ids=existing))
     assert pool.calls == [(0, (1,))] * 3
+    assert [event[3] for event in events] == [{1}]
+    assert all(event[0] == set() for event in events)
     assert existing == {99}
 
 
@@ -330,3 +336,42 @@ def test_pro_wrapper_remains_compatible_for_empty_team_response(monkeypatch):
         ids_to_graph=[1], pro=True, start_date_time=1_700_000_000))
 
     assert matches == [] and player_ids == set()
+
+
+def test_persistent_contract_error_is_nonfatal_and_sweep_continues(monkeypatch):
+    """One bad page (prod 19.09: 'pub response has no players list') must not
+    abort the sweep: its ids are reported via failed_ids, later pages still
+    yield, and the dedup set keeps only successfully parsed matches."""
+    cutoff = 1_700_000_000
+
+    async def no_sleep(_seconds):
+        pass
+
+    def responder(ids, skip):
+        if skip == 0 and ids == (1, 2):
+            return _response({
+                1: [_match(1000 + n, cutoff + 1) for n in range(100)],
+                2: [_match(2000 + n, cutoff + 1) for n in range(100)],
+            })
+        if skip == 0:
+            assert ids == (3, 4)
+            return {"data": None}  # prod traceback payload, retried 3 times
+        assert skip == 100
+        return _response({pid: [] for pid in ids})
+
+    pool = _Pool(responder)
+    monkeypatch.setattr(maps_research, "get_proxy_pool", lambda: pool)
+    monkeypatch.setattr(maps_research.asyncio, "sleep", no_sleep)
+    existing = set()
+    events = asyncio.run(_collect(player_ids=[1, 2, 3, 4], start_date_time=cutoff,
+                                 batch_size=2, batch_concurrency=1,
+                                 existing_match_ids=existing))
+
+    bad_calls = [call for call in pool.calls if call[1] == (3, 4)]
+    assert bad_calls == [(0, (3, 4))] * 3  # retries exhausted, then skipped
+    failed = set().union(*(event[3] for event in events))
+    assert failed == {3, 4}
+    assert set().union(*(event[0] for event in events)) == {1, 2}
+    yielded_ids = {match["id"] for event in events for match in event[1]}
+    assert yielded_ids == set(range(1000, 1100)) | set(range(2000, 2100))
+    assert existing == yielded_ids  # failed page published nothing

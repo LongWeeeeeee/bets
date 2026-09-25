@@ -1086,11 +1086,12 @@ async def get_maps_new(ids, mkdir,
                         json.dump(invalid_positions_matches, f)
 
                 save_get_maps_state(maps_to_save, processed_ids, {}, player_ids, all_teams, phase=1, saved_count=saved_count)
+                skipped_suffix = f", skipped {failed_batches}" if failed_batches else ""
                 if trash_reasons:
                     top_reasons = ", ".join(f"{k}:{v}" for k, v in trash_reasons.most_common(5))
-                    print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)} (top: {top_reasons}), IDs {len(processed_graph_ids)}")
+                    print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)} (top: {top_reasons}), IDs {len(processed_graph_ids)}{skipped_suffix}")
                 else:
-                    print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)}, IDs {len(processed_graph_ids)}")
+                    print(f"💾 Чекпоинт #{len(processed_ids)}: сохранено {saved_count}, trash {len(trash_maps)}, IDs {len(processed_graph_ids)}{skipped_suffix}")
                 if len(processed_ids) >= next_checkpoint:
                     next_checkpoint += CHECKPOINT_INTERVAL
                 pub_pages_since_checkpoint = 0
@@ -1176,6 +1177,7 @@ async def get_maps_new(ids, mkdir,
     print("\n⚠️ Обработка pub не завершена: часть игроков будет повторена" if incomplete_pub_crawl
           else "\n✅ Обработка завершена!")
     print(f"🎮 Собрано валидных матчей: {maps_counter}")
+    print(f"⏭️  Пропущено pub-страниц: {failed_batches}")
     print(f"🗑️  Отклонено trash maps: {len(trash_maps)}")
     if not skip_auxiliary_files:
         print(f"📋 ВСЕГО уникальных IDs в базе (накопительно): {len(processed_graph_ids)}")
@@ -1194,6 +1196,11 @@ async def get_maps_new(ids, mkdir,
         print(f"✅ Временные файлы объединены: {len(merged_files)} файлов")
     if incomplete_pub_crawl:
         raise RuntimeError(f"pub crawl incomplete: {failed_batches} page batch(es) failed")
+    return {
+        "maps_collected": maps_counter,
+        "failed_batches": failed_batches,
+        "merged_files": list(merged_files),
+    }
 
 
 def _process_single_json_file(file_path, maps, output):
@@ -1476,11 +1483,19 @@ async def iter_pub_pages(player_ids, *, skip=0, batch_size=PUB_MAX_PLAYERS_PER_R
                     non_retryable_exceptions=(PubPaginationCapError,), raise_last_error=True,
                 ) for batch in batches
             ], return_exceptions=True)
-            contract_error = next((result for result in results
-                                   if isinstance(result, PubPaginationError)), None)
-            if contract_error is not None:
-                raise contract_error
+            cap_error = next((result for result in results
+                              if isinstance(result, PubPaginationCapError)), None)
+            if cap_error is not None:
+                raise cap_error
             for batch, result in zip(batches, results):
+                if isinstance(result, PubPaginationError):
+                    # Retries inside retry_request_with_proxy_rotation are
+                    # exhausted; a bad page (prod 19.09: no players list) is
+                    # non-fatal. Report the batch via failed_ids and continue.
+                    print(f"⚠️ Pub-страница пропущена (контракт Stratz): "
+                          f"{len(batch)} игроков остаются неопрошенными")
+                    yield set(), [], set(), set(batch)
+                    continue
                 if isinstance(result, BaseException):
                     yield set(), [], set(), set(batch)
                     continue
@@ -2259,6 +2274,7 @@ def merge_temp_files_by_patch(
     cleanup=False,
     clear_output_dir=False,
     patch_specs=None,
+    dry_run=False,
 ):
     """
     Объединяет temp_files в patch-part файлы с глобальной дедупликацией по normalized match_id.
@@ -2270,6 +2286,8 @@ def merge_temp_files_by_patch(
     Фильтрация по startDateTime:
       - 7.40: 2025-12-15 <= ts < 2026-03-24
       - 7.41: 2026-03-24 <= ts
+
+    dry_run=True: только считает и печатает сводку, ничего не пишет.
     """
     return merge_temp_files_by_patch_streaming(
         mkdir=mkdir,
@@ -2278,6 +2296,7 @@ def merge_temp_files_by_patch(
         cleanup=cleanup,
         clear_output_dir=clear_output_dir,
         patch_specs=patch_specs,
+        dry_run=dry_run,
     )
 
     from decimal import Decimal
@@ -2652,6 +2671,40 @@ def _save_part_counters(output_dir, counters) -> None:
             {str(k): int(v) for k, v in counters.items()},
             option=orjson.OPT_INDENT_2,
         ))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
+
+
+class MergeIncompleteError(RuntimeError):
+    """Merge завершён по хорошим файлам, но часть temp-файлов битая.
+
+    Атрибут broken_files — отсортированный список имён битых файлов.
+    Поднято ПОСЛЕ публикации (part-файлы, processed_ids.txt, summary уже
+    записаны атомарно), поэтому вызовший код видит незавершённость, а не
+    тихий успех. CLI превращает это в exit code 1.
+    """
+
+    def __init__(self, broken_files):
+        self.broken_files = sorted(str(name) for name in broken_files)
+        super().__init__(
+            "merge incomplete: %d broken temp file(s) skipped: %s"
+            % (len(self.broken_files), ", ".join(self.broken_files))
+        )
+
+
+def _atomic_write_bytes(path, payload) -> None:
+    """Записать payload в path через "<name>.tmp" + fsync + os.replace.
+
+    Прерванный процесс оставляет либо старый файл целиком, либо .tmp-хвост,
+    но никогда полузаписанный целевой файл. Формат байтов не меняется.
+    """
+    path = Path(path)
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "wb") as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, path)
 
 
@@ -2684,15 +2737,26 @@ def merge_temp_files_by_patch_streaming(
     cleanup=False,
     clear_output_dir=False,
     patch_specs=None,
+    dry_run=False,
 ):
     """
     Быстро объединяет temp_files в patch-part JSON без дублей.
 
     Записи пишутся сразу в compact JSON, поэтому нет 500MB dict-буфера
     и повторной сериализации целого файла.
+
+    dry_run=True: только считает (файлы, записи, уникальные новые,
+    дубликаты) и печатает сводку; ничего не пишет (ни part-файлов, ни
+    processed_ids.txt/summary/manifest/counters) и не удаляет temp-файлы.
+    Под dry_run запрещены mkdir, move и любая запись: несуществующие
+    temp_files/output каталоги НЕ создаются, clear_output_dir игнорируется.
+    Битые temp-файлы всё равно ведут к MergeIncompleteError после подсчёта.
     """
     temp_folder = Path(mkdir) / "temp_files"
     if not temp_folder.exists():
+        if dry_run:
+            print(f"⚠️ В папке {temp_folder} нет .txt файлов")
+            return []
         temp_folder.mkdir(parents=True, exist_ok=True)
         print(f"📁 Создана папка: {temp_folder} (была пустая, нечего объединять)")
         return []
@@ -2701,12 +2765,16 @@ def merge_temp_files_by_patch_streaming(
         output_dir = Path(mkdir) / "json_parts_split_from_object"
     else:
         output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if dry_run:
+        if clear_output_dir:
+            print("🔍 Dry-run: clear_output_dir игнорируется (записи нет)")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     if patch_specs is None:
         patch_specs = DOTA_PATCH_SPECS
 
-    if clear_output_dir and any(output_dir.iterdir()):
+    if clear_output_dir and not dry_run and output_dir.exists() and any(output_dir.iterdir()):
         backup_dir = output_dir.parent / f"{output_dir.name}__backup_before_stream_merge_{int(time.time())}"
         backup_dir.mkdir(parents=True, exist_ok=True)
         for path in list(output_dir.iterdir()):
@@ -2829,7 +2897,8 @@ def merge_temp_files_by_patch_streaming(
                   f"(всего {len(processed_ids)})")
         print(f"🔁 дедуп-набор: {len(processed_ids)} id, пересканировано файлов "
               f"{rescanned} из {len(existing_part_files)} (остальные из кеша)")
-        _save_scan_manifest(output_dir, fresh)
+        if not dry_run:
+            _save_scan_manifest(output_dir, fresh)
 
     existing_processed_ids_count = len(processed_ids)
     patch_names_all = [str(p[0]) for p in patch_specs]
@@ -2845,6 +2914,8 @@ def merge_temp_files_by_patch_streaming(
     invalid_id_count = 0
     skipped_outside_patch = 0
     broken_files_skipped = 0
+    total_records = 0
+    dry_run_new = set()
 
     states = {
         str(patch_name): {
@@ -2860,13 +2931,19 @@ def merge_temp_files_by_patch_streaming(
     }
 
     def _open_part(patch_name):
+        # Rebuild-then-replace: пишем в "<name>.tmp", публикуем через
+        # fsync + os.replace. Merge создаёт ТОЛЬКО новые part-файлы
+        # (номера > max на диске), дописывания существующих нет, поэтому
+        # copy/extend не нужен. Формат идентичен чтению build_laning_corpus.
         state = states[patch_name]
         filename = f"{patch_name}_part{state['part_number']:03d}.json"
         path = output_dir / filename
-        fh = open(path, "wb")
+        tmp_path = path.with_name(path.name + ".tmp")
+        fh = open(tmp_path, "wb")
         fh.write(b"{")
         state["fh"] = fh
         state["path"] = path
+        state["tmp_path"] = tmp_path
         state["current_size"] = 1
         state["current_matches"] = 0
 
@@ -2875,25 +2952,38 @@ def merge_temp_files_by_patch_streaming(
         fh = state["fh"]
         if fh is None:
             return
-        fh.write(b"}")
-        fh.close()
+        tmp_path = state.get("tmp_path")
         path = state["path"]
-        file_size = path.stat().st_size
-        if state["current_matches"] == 0:
-            path.unlink(missing_ok=True)
-        else:
-            output_files.append(str(path))
-            state["written_files"] += 1
-            state["written_matches"] += state["current_matches"]
-            print(
-                f"  ✅ {path}: {state['current_matches']} матчей "
-                f"({file_size / (1024 * 1024):.1f} МБ)"
-            )
-        state["fh"] = None
-        state["path"] = None
-        state["current_size"] = 0
-        state["current_matches"] = 0
-        state["part_number"] += 1
+        try:
+            fh.write(b"}")
+            fh.flush()
+            os.fsync(fh.fileno())
+            fh.close()
+            state["fh"] = None
+            if state["current_matches"] == 0:
+                tmp_path.unlink(missing_ok=True)
+            else:
+                file_size = tmp_path.stat().st_size
+                os.replace(tmp_path, path)
+                output_files.append(str(path))
+                state["written_files"] += 1
+                state["written_matches"] += state["current_matches"]
+                print(
+                    f"  ✅ {path}: {state['current_matches']} матчей "
+                    f"({file_size / (1024 * 1024):.1f} МБ)"
+                )
+        finally:
+            if state["fh"] is not None:
+                try:
+                    state["fh"].close()
+                except Exception:
+                    pass
+            state["fh"] = None
+            state["path"] = None
+            state["tmp_path"] = None
+            state["current_size"] = 0
+            state["current_matches"] = 0
+            state["part_number"] += 1
 
     def _write_entry(patch_name, canonical_key, match_data):
         state = states[patch_name]
@@ -2935,18 +3025,21 @@ def merge_temp_files_by_patch_streaming(
         f"лимит {max_size_mb} МБ"
     )
 
+    broken_files = []
     try:
         for index, file_path in enumerate(temp_files, 1):
             try:
                 data = _load_temp_file(file_path)
             except Exception as e:
                 broken_files_skipped += 1
+                broken_files.append(Path(file_path).name)
                 print(f"  ⚠️ Ошибка при чтении {file_path}: {e}")
                 continue
 
             for raw_match_id, raw_match_data in data.items():
                 if not isinstance(raw_match_data, dict):
                     continue
+                total_records += 1
 
                 match_id_norm = _normalize_match_id(raw_match_id)
                 if match_id_norm is None:
@@ -2955,16 +3048,23 @@ def merge_temp_files_by_patch_streaming(
                     invalid_id_count += 1
                     continue
 
-                if match_id_norm in processed_ids:
+                if match_id_norm in processed_ids or match_id_norm in dry_run_new:
                     duplicates_count += 1
                     continue
 
+                # Patch-фильтр применяется ДО подсчёта dry_run, иначе dry-run
+                # 'unique new' считает id, которые реальный прогон отбросит
+                # под MERGE_DROP_OUTSIDE_PATCH=1.
                 patch_name = _resolve_patch_name(raw_match_data.get("startDateTime"))
                 if patch_name is None:
                     skipped_outside_patch += 1
                     if MERGE_DROP_OUTSIDE_PATCH:
                         continue
                     patch_name = OUTSIDE_PATCH_BUCKET
+
+                if dry_run:
+                    dry_run_new.add(match_id_norm)
+                    continue
 
                 match_data = dict(raw_match_data)
                 match_data["id"] = int(match_id_norm)
@@ -2993,11 +3093,26 @@ def merge_temp_files_by_patch_streaming(
                 updated_part_counters[_patch_name] = max(
                     int(updated_part_counters.get(_patch_name, 0)), _state["part_number"] - 1
                 )
-        if updated_part_counters != part_counters:
+        if not dry_run and updated_part_counters != part_counters:
             _save_part_counters(output_dir, updated_part_counters)
 
-    with open(processed_ids_file, "wb") as f:
-        f.write(orjson.dumps(sorted(processed_ids)))
+    if dry_run:
+        print("\n🔍 Dry-run: ничего не записано (только подсчёт)")
+        print(f"   temp-файлов: {len(temp_files)}")
+        print(f"   записей всего: {total_records}")
+        print(f"   уникальных новых: {len(dry_run_new)}")
+        print(f"   дубликатов: {duplicates_count}")
+        print(f"   невалидных id: {invalid_id_count}")
+        print(f"   вне патчей: {skipped_outside_patch}")
+        print(f"   битых файлов: {broken_files_skipped}")
+        if broken_files:
+            print(f"   битые файлы: {', '.join(sorted(broken_files))}")
+        print("   частей к записи: 0")
+        if broken_files:
+            raise MergeIncompleteError(broken_files)
+        return []
+
+    _atomic_write_bytes(processed_ids_file, orjson.dumps(sorted(processed_ids)))
 
     summary = {
         "patches": {
@@ -3013,29 +3128,38 @@ def merge_temp_files_by_patch_streaming(
         "invalid_ids_skipped": invalid_id_count,
         "outside_patch_skipped": skipped_outside_patch,
         "broken_files_skipped": broken_files_skipped,
+        "broken_files": sorted(broken_files),
         "source_temp_files": len(temp_files),
+        "total_records_scanned": total_records,
+        "dry_run": False,
     }
     summary_path = output_dir / "merge_patch_summary.json"
-    with open(summary_path, "wb") as f:
-        f.write(orjson.dumps(summary, option=orjson.OPT_INDENT_2))
+    _atomic_write_bytes(summary_path, orjson.dumps(summary, option=orjson.OPT_INDENT_2))
 
     print("\n🎉 Streaming patch merge завершён!")
+    print(f"📊 temp-файлов: {len(temp_files)}, записей всего: {total_records}")
     for patch, state in sorted(states.items(), key=lambda item: _patch_sort_key(item[0])):
         print(f"   {patch}: {state['written_matches']} матчей, файлов: {state['written_files']}")
     print(f"🔄 Дубликатов отфильтровано: {duplicates_count}")
     print(f"🆔 Невалидных ID пропущено: {invalid_id_count}")
     print(f"🗓️ Вне 7.40/7.41 пропущено: {skipped_outside_patch}")
     if broken_files_skipped:
-        print(f"⚠️ Полностью пропущено битых файлов: {broken_files_skipped}")
+        print(f"⚠️ Полностью пропущено битых файлов: {broken_files_skipped}: "
+              f"{', '.join(sorted(broken_files))}")
     print(f"📄 summary: {summary_path}")
 
-    if cleanup:
+    if cleanup and broken_files:
+        # Broken temp files are the only copy of their matches: never delete them.
+        print(f"⚠️ Папка {temp_folder} НЕ удалена: есть битые temp-файлы")
+    elif cleanup:
         try:
             shutil.rmtree(temp_folder)
             print(f"🗑️ Папка {temp_folder} удалена")
         except Exception as e:
             print(f"⚠️ Не удалось удалить {temp_folder}: {e}")
 
+    if broken_files:
+        raise MergeIncompleteError(broken_files)
     return output_files
 
 
@@ -3286,9 +3410,10 @@ def save_temp_file(new_data, mkdir, another_counter):
     unique_suffix = int(time.time() * 1000)  # Миллисекунды для уникальности
     path = f'{temp_folder}/{another_counter}_{unique_suffix}.txt'
 
-    # Сохранение данных во временный файл
-    with open(path, 'w') as f:
-        json.dump(new_data, f)
+    # Atomic publish: a crawl killed mid-write must not leave a truncated .txt,
+    # which the merge would then report as broken on every later sweep. The tail
+    # "<name>.txt.tmp" is never matched by the "*.txt" temp scans.
+    _atomic_write_bytes(path, json.dumps(new_data).encode())
 
 
 def save_json_file(filepath, data):
@@ -4108,6 +4233,29 @@ def save_pub_player_ids(ids, path=None, *, source=None, last_crawl_completed_utc
     return path
 
 
+def salvage_pub_temp_files(dry_run=False, mkdir=None, max_size_mb=500):
+    """Сливает уже собранные temp_files в корпус БЕЗ нового обхода.
+
+    Тот же merge_temp_files_by_patch_streaming с тем же дедупом
+    (processed_ids.txt + ключи лежащих part-файлов), что и merge в конце
+    get_maps_new. Нужен, когда обход погиб до финального merge и temp-файлы
+    остались несобранными (16-22.09.2026: 1616 файлов, 4.2 ГБ).
+
+    temp-файлы после слияния НЕ удаляются (cleanup=False, как в get_maps_new).
+    dry_run=True: только считает и печатает сводку, ничего не пишет.
+    Битые temp-файлы: хорошие сливаются, затем поднимается
+    MergeIncompleteError со списком имён (CLI даёт exit code 1).
+    """
+    if mkdir is None:
+        mkdir = ANALYSE_PUB_DIR
+    return merge_temp_files_by_patch_streaming(
+        mkdir=mkdir,
+        max_size_mb=max_size_mb,
+        cleanup=False,
+        dry_run=dry_run,
+    )
+
+
 def get_pubs():
     """Собирает pub-матчи через get_maps_new(); источник player id — см.
     PUBS_IDS_MODE. serv1 после 16.09.2026 не держит 36 ГБ part-файлов
@@ -4236,6 +4384,21 @@ if __name__ == "__main__":
             help="Построить/обновить pub_player_steam_ids.json сканом корпуса",
         )
         _cli_parser.add_argument(
+            "--merge-temp-files", action="store_true",
+            help=("Слить ANALYSE_PUB_DIR/temp_files в корпус тем же "
+                  "merge_temp_files_by_patch_streaming с тем же дедупом "
+                  "(processed_ids.txt + ключи part-файлов), что и merge в конце "
+                  "get_maps_new. Temp-файлы после слияния НЕ удаляются "
+                  "(cleanup=False, как в get_maps_new)."),
+        )
+        _cli_parser.add_argument(
+            "--dry-run", action="store_true",
+            help=("Только для --merge-temp-files: посчитать файлы/записи/ "
+                  "уникальные новые/дубликаты и напечатать сводку; ничего не "
+                  "писать (ни part-файлов, ни processed_ids.txt/summary/ "
+                  "manifest/counters) и не удалять temp-файлы."),
+        )
+        _cli_parser.add_argument(
             "--source-dir", default=None,
             help="Каталог part-файлов корпуса для скана (по умолчанию PUBS_SOURCE_DIR)",
         )
@@ -4245,7 +4408,17 @@ if __name__ == "__main__":
         )
         _cli_args = _cli_parser.parse_args()
 
-        if _cli_args.build_player_ids:
+        if _cli_args.merge_temp_files:
+            if _cli_args.dry_run:
+                print("🔍 --dry-run: только подсчёт, записи не будет")
+            try:
+                _cli_merged = salvage_pub_temp_files(dry_run=_cli_args.dry_run)
+            except MergeIncompleteError as _cli_incomplete:
+                print(f"❌ salvage merge incomplete: битые temp-файлы: "
+                      f"{', '.join(_cli_incomplete.broken_files)}")
+                sys.exit(1)
+            print(f"✅ salvage merge: частей записано: {len(_cli_merged)}")
+        elif _cli_args.build_player_ids:
             _cli_ids, _cli_provenance = build_pub_player_ids_from_corpus(_cli_args.source_dir)
             _cli_out_path = Path(_cli_args.out) if _cli_args.out else PUBS_PLAYER_IDS_FILE
             _cli_previous = load_pub_player_ids(_cli_out_path)
