@@ -23,9 +23,11 @@ MODEL_DIR = Path(os.getenv("LANING_MODEL_DIR", str(
     ROOT / "data/laning_models/20260924_team_nw10_full_c1/refit_final")))
 # E-339 (25.09.2026): history rebuilt with the salvaged 01.09-21.09 pub crawl (7,378,146 maps,
 # only additions vs 20260909); 100k unseen pubs ll3 -0.0036 [-0.0044, -0.0028] with the same model.
-# Previous store kept on disk for rollback: LANING_HISTORY_DIR=.../20260909_stratz_v1.
+# E-339 (26.09.2026): full five-day pub sweep (+333,141 maps, 7,711,287 total, events to 25.09,
+# only additions vs 20260925); 100k unseen pubs ll3 -0.0007 [-0.0010, -0.0004], pro maps within noise.
+# Previous stores kept on disk for rollback: LANING_HISTORY_DIR=.../20260925_stratz_v1 (or 20260909).
 HISTORY_DIR = Path(os.getenv("LANING_HISTORY_DIR", str(
-    ROOT / "data/laning_history/20260925_stratz_v1")))
+    ROOT / "data/laning_history/20260926_stratz_v1")))
 ENABLED = os.getenv("LANING_MODEL_ENABLED", "1") == "1"
 LOG = logging.getLogger(__name__)
 

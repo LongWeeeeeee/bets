@@ -168,7 +168,7 @@ def test_switched_artifact_reproduces_evaluated_pro_maps(monkeypatch):
         assert abs(lane["confidence"] - item["expected_confidence"]) <= 1e-9, item["match_id"]
         assert abs(lane["p_tie"] - item["probability"][1]) <= 1e-9, item["match_id"]
     # The panel freshness note must show the end of the loaded player history (E-339:
-    # 21.09 for the 20260925 store), not the model manifest (04.09) or a directory date.
+    # 25.09 for the 20260926 store), not the model manifest (04.09) or a directory date.
     import datetime
     expected = datetime.datetime.fromtimestamp(
         fixture["history_max_end_ts"], tz=datetime.timezone.utc).strftime("%d.%m")
