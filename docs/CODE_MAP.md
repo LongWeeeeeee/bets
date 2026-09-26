@@ -1731,8 +1731,9 @@ recent-role-hero3. Строго `end < timestamp-delay`, нижняя грани
 
 `LANING_MODEL_DIR` переопределяет `data/laning_models/20260924_team_nw10_full_c1/refit_final`
 (E-334, в бою с 25.09.2026; откат — `LANING_MODEL_DIR=…/20260909_team_nw10_v1/selected`),
-`LANING_HISTORY_DIR` — `data/laning_history/20260925_stratz_v1` (E-339, с 25.09.2026: пабы по 21.09 из спасённого
-обхода; откат — `LANING_HISTORY_DIR=…/20260909_stratz_v1`). Приписка панели «данные до» берётся из `max_end_ts`
+`LANING_HISTORY_DIR` — `data/laning_history/20260926_stratz_v1` (E-339, с 26.09.2026: пабы по 25.09 из полного
+пятидневного обхода, 7 711 287 карт; откат — `LANING_HISTORY_DIR=…/20260925_stratz_v1` или `…/20260909_stratz_v1`).
+Обход идёт сам (cron на serv1 раз в 5 дней), а пересборка хранилища и переключение делаются вручную. Приписка панели «данные до» берётся из `max_end_ts`
 загруженного хранилища истории (`_history_note`), без хранилища — из manifest модели;
 `LANING_MODEL_ENABLED=0` выключает строку. Lazy load сохраняет модель и mmap;
 cache256 учитывает весь драфт, аккаунты и timestamp. `ML Laning` после Top/Mid/Bot
