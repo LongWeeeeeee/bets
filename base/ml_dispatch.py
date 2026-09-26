@@ -41,13 +41,13 @@ Rules implemented (owner decisions, 12.09.2026 — see
   reported as ``veto``, not ``conflict``) even though, before veto was
   applied, both sides had raw model support. Only when BOTH sides still
   have support after their own veto check is it a genuine ``conflict``.
-- Kills markets (only when ``U`` exists): Early NW and/or Early Win at
+- Base underdog kills path (only when ``U`` exists): Early NW and/or Early Win at
   >= threshold for ``U`` (optionally AND All at >= threshold for ``U``
   when ``ML_DISPATCH_KILLS_REQUIRE_ALL=1``) produce up to two decisions,
   ``kills_window`` (only if ``ctx.kills_windows_open`` is non-empty; uses
   its first — nearest open — label) and ``kills_total``, at most one of
   each per map.
-- Timing: only the win market consults ``ctx.lane`` — if ML Laning backs
+- Win timing: if ML Laning backs
   the *target* side at >= threshold, ``timing="now"`` (bet at "00");
   otherwise ``timing="now"`` once ``ctx.game_time >= ML_DISPATCH_TIMING_SECONDS``
   (default 600s). E-290 additionally releases this ordinary wait from 240s
@@ -191,6 +191,14 @@ model of the event actually being bet), not the early-model confidence --
 deliberate. Toggle ``ML_DISPATCH_KILLS_EARLY`` (default on; "0"/"false"/
 "off" disables it, systemd drop-in, no deploy); kills30 threshold via
 ``ML_DISPATCH_KILLS_EARLY_MIN_KILLS30`` (default 0.60, inclusive).
+
+lane_kills (owner rule 26.09.2026): ML Laning ★ for ``S`` and at least one
+Early NW/Early Win ★ for ``S``, with neither early model ★ for the other
+side, produce one ``kills_window`` on the first open configured window
+(default ``5_15``), independently of ELO, Late/All and kills30. Set
+``ML_DISPATCH_LANE_KILLS=0`` to roll back; select labels with
+``ML_DISPATCH_LANE_KILLS_WINDOWS``. No offline outcome measurement exists;
+lead replay found 99/300 maps eligible by 120 seconds.
 """
 from __future__ import annotations
 
@@ -227,6 +235,9 @@ RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
 RULE_KILLS_EARLY_WIN_KILLS30 = "kills_early_win_kills30"
 RULE_KILLS_EARLY_NW_KILLS30 = "kills_early_nw_kills30"
+RULE_KILLS_LANE_EARLY_WINDOW = "kills_lane_early_window"
+REASON_LANE_KILLS_WINDOW_CLOSED = "lane_kills_window_closed"
+REASON_KILLS_WINDOW_SENT_OTHER_SIDE = "kills_window_sent_other_side"
 
 LATE_CONFLICT_MODES = ("wait", "veto")
 
@@ -326,6 +337,8 @@ class Config:
     early_solo_block: bool = True
     kills_early_enabled: bool = True
     kills_early_min_kills30: float = 0.60
+    lane_kills_enabled: bool = True
+    lane_kills_windows: Tuple[str, ...] = ("5_15",)
     lane_elo_release_enabled: bool = True
     lane_elo_release_lane_conf: float = 0.55
     lane_elo_release_lane_adv: float = 8.0
@@ -387,6 +400,14 @@ class Config:
                 env.get("ML_DISPATCH_KILLS_EARLY", "1")
             ).strip().lower() not in ("0", "false", "off"),
             kills_early_min_kills30=_float("ML_DISPATCH_KILLS_EARLY_MIN_KILLS30", 0.60),
+            lane_kills_enabled=str(
+                env.get("ML_DISPATCH_LANE_KILLS", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            lane_kills_windows=tuple(
+                label.strip() for label in str(
+                    env.get("ML_DISPATCH_LANE_KILLS_WINDOWS", "5_15")
+                ).split(",") if label.strip()
+            ),
             lane_elo_release_enabled=str(
                 env.get("ML_DISPATCH_LANE_ELO_RELEASE", "1")
             ).strip().lower() not in ("0", "false", "off"),
@@ -1103,6 +1124,69 @@ def _evaluate_kills_early(
     return decisions, skipped
 
 
+def _evaluate_kills_lane_early(
+    ctx: Ctx, cfg: Config,
+    decisions: List[Decision], skipped: List[Skipped],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """Owner's lane★ + unopposed early★ rule for an open kills window."""
+    if not cfg.lane_kills_enabled or ctx.lane is None or ctx.lane.confidence < cfg.min_conf:
+        return decisions, skipped
+
+    side = ctx.lane.side
+    early_for = [
+        name for name in KILLS_EARLY_MODELS
+        if ctx.model(name) is not None and ctx.model(name).side == side
+        and ctx.model(name).confidence >= cfg.min_conf
+    ]
+    early_against = [
+        name for name in KILLS_EARLY_MODELS
+        if ctx.model(name) is not None and ctx.model(name).side != side
+        and ctx.model(name).confidence >= cfg.min_conf
+    ]
+    if not early_for or early_against:
+        return decisions, skipped
+    if any(decision.market == "kills_window" for decision in decisions):
+        return decisions, skipped
+
+    key = _dedup_key(ctx, "kills_window", side)
+    if ctx.already_sent is not None:
+        if key in ctx.already_sent:
+            return decisions, skipped + [Skipped(
+                "kills_window", side, REASON_DEDUP, f"key={key} already sent",
+            )]
+        other_key = _dedup_key(ctx, "kills_window", _other_side(side))
+        if other_key in ctx.already_sent:
+            return decisions, skipped + [Skipped(
+                "kills_window", side, REASON_KILLS_WINDOW_SENT_OTHER_SIDE,
+                f"key={other_key} already sent for other side",
+            )]
+
+    label = next((name for name in ctx.kills_windows_open
+                  if name in cfg.lane_kills_windows), None)
+    if label is None:
+        return decisions, skipped + [Skipped(
+            "kills_window", side, REASON_LANE_KILLS_WINDOW_CLOSED,
+            f"configured={cfg.lane_kills_windows}, open={ctx.kills_windows_open}",
+        )]
+
+    models_for = ["lane"] + early_for
+    expected_wr = max(ctx.model(name).confidence for name in models_for)
+    reasons = [f"{name}>= {cfg.min_conf} for {side} (lane_kills)" for name in models_for]
+    reasons.append(f"no early model >= {cfg.min_conf} backs {_other_side(side)}")
+    reasons.append(f"window={label}")
+    skipped = [
+        item for item in skipped
+        if not (item.market == "kills_window" and (item.side is None or item.side == side))
+    ]
+    decisions = decisions + [Decision(
+        market="kills_window", target_side=side, target_team=ctx.team_name(side),
+        rule=RULE_KILLS_LANE_EARLY_WINDOW, models_for=models_for,
+        models_against=[], timing="now", expected_wr=expected_wr,
+        min_odds=_min_odds(expected_wr, cfg), reasons=reasons,
+    )]
+    return decisions, skipped
+
+
 def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     """Idempotent on every tick: same ``ctx``/``cfg`` -> same result.
 
@@ -1118,6 +1202,9 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
         ctx, cfg, underdog_side, kills_decisions, kills_skipped
     )
     kills_decisions, kills_skipped = _evaluate_kills_early(
+        ctx, cfg, kills_decisions, kills_skipped
+    )
+    kills_decisions, kills_skipped = _evaluate_kills_lane_early(
         ctx, cfg, kills_decisions, kills_skipped
     )
     return EvalResult(

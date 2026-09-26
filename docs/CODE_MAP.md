@@ -1808,6 +1808,8 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_EARLY_SOLO_BLOCK` | `1` | E-291, решение владельца 15.09.2026: одиночная ★ Early NW/Early Win (без `all`/`late` в `models_for`) не даёт win-Decision, а даёт `Skipped(reason="early_solo_blocked")` — офлайн-WR 50-57%, хуже ELO; пары «ранняя + all/late» не затронуты; `=0`/`false`/`off` — откат к до-E-291 поведению |
 | `ML_DISPATCH_KILLS_EARLY` | `1` | E-301, решение владельца 19.09.2026: второй независимый путь `kills_total` (`_evaluate_kills_early`, после гейта E-281): Early Win ★ за `A` (Early NW против не мешает) либо Early NW ★ за `A` при молчащем Early Win, и E-281 P(A ≥30) ≥ `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` → `kills_total` на `A` независимо от ELO/андердога и Late/All; rule `kills_early_win_kills30` / `kills_early_nw_kills30`, `expected_wr` = P(A ≥30). `=0`/`false`/`off` — поведение до 19.09 |
 | `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` | `0.60` | порог E-281 P(сторона ≥30) для пути `kills_early` (включительно); без числа — fail-closed `kills30_missing` |
+| `ML_DISPATCH_LANE_KILLS` | `1` | правило владельца 26.09.2026: ML Laning ★ за `S` и хотя бы одна из Early NW/Early Win ★ за `S`, при отсутствии Early ★ за другую сторону → один `kills_window` для `S`, rule `kills_lane_early_window`, независимо от ELO, Late/All, prematch и kills30. `=0`/`false`/`off` — откат |
+| `ML_DISPATCH_LANE_KILLS_WINDOWS` | `5_15` | метки окон через запятую; выбирается первая разрешённая метка в порядке `Ctx.kills_windows_open`; при закрытом окне ставка не создаётся |
 
 **Правила (решения владельца 12.09.2026, win-маркет дополнен 15.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из

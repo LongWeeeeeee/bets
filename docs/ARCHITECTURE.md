@@ -371,7 +371,7 @@ ELO ниже на `>=ML_DISPATCH_UNDERDOG_MIN_DIFF` (50); win-ставка ид�
 поддержке хотя бы одной из `ML_DISPATCH_WIN_MODELS` (default `late,all,early_win,early_nw,prematch`)
 и при отсутствии вето Late/All за другую сторону (вето разрешается ПОСЛЕ
 поддержки, по каждой стороне отдельно — конфликт только если обе стороны
-пережили свою вето-проверку); kills-маркеты только при наличии U, через
+пережили свою вето-проверку); базовый kills-путь только при наличии U, через
 Early NW/Early Win (+опционально All); тайминг win-маркета — "00" при
 подтверждении ML Laning, иначе ждать `ML_DISPATCH_TIMING_SECONDS` (600с);
 E-290 (решение владельца 14.09.2026): обычное ожидание win-сигнала снимается
@@ -389,6 +389,15 @@ E-290 (решение владельца 14.09.2026): обычное ожида�
 `ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV` (8); причина в `Decision.reasons` —
 `lane_elo_release: … via=lane|lane_adv_dict`; ветки ожидания1860с (late
 conflict) не затрагиваются.
+Правило `lane_kills` (владелец, 26.09.2026): ML Laning ★ за `S` и хотя бы
+одна из Early NW/Early Win ★ за `S`, при отсутствии Early ★ за другую
+сторону, дают один `kills_window` (`rule="kills_lane_early_window"`) для
+первого открытого окна из `ML_DISPATCH_LANE_KILLS_WINDOWS` (по умолчанию
+`5_15`). Независимо от ELO, Late/All, prematch, kills30 и NW; если окно
+закрыто, отправки нет. `ML_DISPATCH_LANE_KILLS=1` по умолчанию, `=0`/
+`false`/`off` откатывает правило. Офлайн-результата для сочетания нет;
+реплей ведущего: 99/300 карт до 120-й секунды, в 19 уже было такое же
+окно на ту же сторону по правилу андердога.
 E-291 (владелец, 15.09.2026): одиночная ★ Early NW/Early Win без `all`/`late`
 в поддержке win-маркета больше не даёт Decision (`Skipped(reason=
 "early_solo_blocked")`, офлайн-WR 50-57% хуже ELO); откат — `ML_DISPATCH_EARLY_SOLO_BLOCK=0`.
