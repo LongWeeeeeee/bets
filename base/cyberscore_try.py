@@ -5274,11 +5274,9 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam 7: southeast asia open qualifier 2",
 }
 
-# Player denylist ОТКЛЮЧЁН по запросу: ни один игрок не банится, гейт
-# skip_player_denylist никогда не срабатывает (см. _find_skipped_player_account_ids,
-# который короткозамкнут на пустой результат). Множество оставлено пустым,
-# чтобы downstream-плюмбинг (inert) не требовал правок во всех dispatch-сайтах.
-SKIPPED_PLAYER_ACCOUNT_IDS: set = set()
+# egxrdemxn: pro account and active persona alt. User request 26.09.2026:
+# forbid bets ON the player's team, while bets on the opponent stay allowed.
+SKIPPED_PLAYER_ACCOUNT_IDS: set = {390015464, 1250582363}
 
 # Импорт Ultimate Inference предсказателя
 if str(SRC_DIR) not in sys.path:
@@ -5346,9 +5344,26 @@ def _find_skipped_player_account_ids(
     radiant_account_ids: Optional[List[int]],
     dire_account_ids: Optional[List[int]],
 ) -> Dict[str, List[int]]:
-    # Player denylist отключён: всегда нет хитов → гейт skip_player_denylist
-    # никогда не блокирует матчи/команды.
-    return {"radiant": [], "dire": []}
+    def hits(account_ids: Optional[List[int]]) -> List[int]:
+        return sorted({
+            account_id for raw_id in (account_ids or [])
+            for account_id in [_normalize_player_account_id(raw_id)]
+            if account_id in SKIPPED_PLAYER_ACCOUNT_IDS
+        })
+
+    return {"radiant": hits(radiant_account_ids), "dire": hits(dire_account_ids)}
+
+
+def _normalize_player_account_id(raw_id: Any) -> int:
+    """Accept Dota account_id or exact Steam64; zero/malformed IDs never match."""
+    try:
+        value = int(str(raw_id).strip())
+    except (TypeError, ValueError):
+        return 0
+    steam64_base = 76561197960265728
+    if steam64_base <= value < steam64_base + 2 ** 32:
+        value -= steam64_base
+    return value if 0 < value < 2 ** 32 else 0
 
 
 def _target_side_skipped_player_hits(
@@ -5360,7 +5375,7 @@ def _target_side_skipped_player_hits(
     hits = skipped_player_hits.get(target_side)
     if not isinstance(hits, list):
         return []
-    return sorted({int(pid) for pid in hits if _coerce_int(pid) > 0})
+    return sorted({pid for raw in hits for pid in [_normalize_player_account_id(raw)] if pid > 0})
 
 
 def _player_denylist_block_payload(
@@ -16448,6 +16463,29 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
             continue
+        queued_lineups = payload.get("player_denylist_lineups")
+        if isinstance(queued_lineups, dict):
+            radiant_ids = queued_lineups.get("radiant")
+            dire_ids = queued_lineups.get("dire")
+            if isinstance(radiant_ids, list) and isinstance(dire_ids, list):
+                base_key = (_signal_fingerprint_registry_key(match_key), None)
+                remembered = _PLAYER_DENYLIST_BY_MAP.get(base_key) or {}
+                queued_hits = _find_skipped_player_account_ids(radiant_ids, dire_ids)
+                remembered_hits = _find_skipped_player_account_ids(
+                    remembered.get("radiant"), remembered.get("dire")
+                )
+                # Restore only a denied lineup, once per series unless a newer
+                # cached observation has lost one of the queued denylist IDs.
+                if any(queued_hits.values()) and (
+                    not remembered or any(
+                        set(queued_hits[side]) - set(remembered_hits[side])
+                        for side in ("radiant", "dire")
+                    )
+                ):
+                    _remember_player_denylist_lineup(
+                        match_key, None, radiant_ids, dire_ids,
+                        queued_lineups.get("radiant_team"), queued_lineups.get("dire_team"),
+                    )
         # League-guard: фильтр лиг применяется в get_heads только при первичном
         # приёме, но delayed-очередь живёт независимо (и переживает рестарт со
         # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
@@ -17244,6 +17282,8 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
             if not isinstance(add_url_details, dict):
                 add_url_details = {}
             add_url_details = dict(add_url_details)
+            if isinstance(payload.get("player_denylist_lineups"), dict):
+                add_url_details["player_denylist_lineups"] = payload["player_denylist_lineups"]
             star_metrics_snapshot = payload.get("star_metrics_snapshot")
             if late_comeback_monitor_active and not monitor_ready:
                 timeout_status_label = NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND
@@ -17434,11 +17474,6 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     add_url_details.setdefault(
                         "skipped_player_hits",
                         dict(player_denylist_block.get("skipped_player_hits") or {}),
-                    )
-                    add_url(
-                        match_key,
-                        reason="skip_player_denylist",
-                        details=add_url_details,
                     )
                     _drop_delayed_match(match_key, reason="delayed_player_denylist")
                     _delayed_verdict_msg = (
@@ -33082,6 +33117,178 @@ def _lookup_match_map_num(url: Any) -> Optional[int]:
     return None
 
 
+# Keep the latest series lineup as well as the map entry: SourceTV and ML
+# dispatch can infer different map numbers from the same live series.
+_PLAYER_DENYLIST_BY_MAP: Dict[Tuple[str, Optional[int]], Dict[str, Any]] = {}
+_PLAYER_DENYLIST_MAP_LIMIT = 512
+_PLAYER_DENYLIST_TEAM_NAMES: Dict[str, Dict[str, Any]] = {}
+_PLAYER_DENYLIST_TEAM_NAME_LIMIT = 512
+_PLAYER_DENYLIST_TEAM_NAME_TTL_SECONDS = 12 * 60 * 60
+_PLAYER_DENYLIST_LOGGED_BLOCKS: set = set()
+_PLAYER_DENYLIST_LOG_LIMIT = 512
+_PLAYER_DENYLIST_LOG_LOCK = threading.Lock()
+
+
+def _player_denylist_map_key(match_key: str, map_num: Any) -> Tuple[str, Optional[int]]:
+    try:
+        number = int(map_num) if map_num is not None else None
+    except (TypeError, ValueError):
+        number = None
+    key = str(match_key or "").strip()
+    # Without a map number, retain the exact score-bearing key.
+    return (_signal_fingerprint_registry_key(key) if number is not None else key, number)
+
+
+def _remember_player_denylist_lineup(
+    match_key: str,
+    map_num: Any,
+    radiant_account_ids: List[int],
+    dire_account_ids: List[int],
+    radiant_team_name: Any,
+    dire_team_name: Any,
+) -> None:
+    key = _player_denylist_map_key(match_key, map_num)
+    base_key = (_signal_fingerprint_registry_key(match_key), None)
+    snapshot = {
+        "radiant": list(radiant_account_ids),
+        "dire": list(dire_account_ids),
+        "radiant_team": str(radiant_team_name or ""),
+        "dire_team": str(dire_team_name or ""),
+    }
+    for stored_key in {key, base_key}:
+        _PLAYER_DENYLIST_BY_MAP[stored_key] = snapshot
+    while len(_PLAYER_DENYLIST_BY_MAP) > _PLAYER_DENYLIST_MAP_LIMIT:
+        _PLAYER_DENYLIST_BY_MAP.pop(next(iter(_PLAYER_DENYLIST_BY_MAP)))
+
+    hits = _find_skipped_player_account_ids(radiant_account_ids, dire_account_ids)
+    now = time.time()
+    for name, side in ((radiant_team_name, "radiant"), (dire_team_name, "dire")):
+        if not hits[side]:
+            continue
+        original = str(name or "").strip()
+        display = normalize_team_name_display(original)
+        for variant in {original, display, _normalize_signal_header_token(original),
+                        _normalize_signal_header_token(display)}:
+            if variant:
+                _PLAYER_DENYLIST_TEAM_NAMES[variant] = {
+                    "ts": now, "blocked_player_account_ids": hits[side],
+                }
+    for token, entry in list(_PLAYER_DENYLIST_TEAM_NAMES.items()):
+        if now - entry["ts"] >= _PLAYER_DENYLIST_TEAM_NAME_TTL_SECONDS:
+            _PLAYER_DENYLIST_TEAM_NAMES.pop(token, None)
+    while len(_PLAYER_DENYLIST_TEAM_NAMES) > _PLAYER_DENYLIST_TEAM_NAME_LIMIT:
+        oldest = min(_PLAYER_DENYLIST_TEAM_NAMES, key=lambda token: _PLAYER_DENYLIST_TEAM_NAMES[token]["ts"])
+        _PLAYER_DENYLIST_TEAM_NAMES.pop(oldest, None)
+
+
+def _player_denylist_header_team(message_text: str) -> Optional[str]:
+    first_line = str(message_text or "").splitlines()[:1]
+    if not first_line or not first_line[0].strip().startswith("СТАВКА НА "):
+        return None
+    team = first_line[0].strip()[len("СТАВКА НА "):]
+    if team.startswith("PIPELINE CHECK "):
+        return None
+    team = re.sub(r"\s+x\d+(?:[.,]\d+)?\s*$", "", team)
+    team = re.sub(r"^Тотал килов\s*", "", team)
+    team = re.sub(r"(?:^|\s+)БОЛЬШЕ\s*$", "", team)
+    team = re.sub(r"^килы от\s*", "", team)
+    team = re.sub(r"^Ранние килы(?:\s+\d+-\d+)?\s*", "", team)
+    return team.strip() or None
+
+
+def _player_denylist_reject_for_delivery(
+    match_key: str,
+    message_text: str,
+    *,
+    selected_side: Any,
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    add_url_details: Optional[dict],
+    map_num: Any,
+    current_map_observation: Any,
+) -> Optional[Dict[str, Any]]:
+    header_team = _player_denylist_header_team(message_text)
+    if header_team is None:
+        return None  # no team target (for example a map total)
+
+    observation = current_map_observation if isinstance(current_map_observation, dict) else {}
+    effective_map_num = map_num if map_num is not None else observation.get("map_num")
+    if effective_map_num is None:
+        effective_map_num = _lookup_match_map_num(match_key)
+    base_key = _signal_fingerprint_registry_key(match_key)
+    snapshot = None
+    for key in (
+        _player_denylist_map_key(match_key, effective_map_num),
+        (base_key, None),
+        (str(match_key or "").strip(), None),
+    ):
+        candidate = _PLAYER_DENYLIST_BY_MAP.get(key)
+        if isinstance(candidate, dict):
+            snapshot = candidate
+            break
+    details = add_url_details if isinstance(add_url_details, dict) else {}
+    # Delayed payloads carry the queued lineup. Keep denylist hits from both
+    # observations when a later parser snapshot has missing account IDs.
+    delayed_snapshot = details.get("player_denylist_lineups")
+    if isinstance(delayed_snapshot, dict):
+        if isinstance(snapshot, dict):
+            snapshot = dict(snapshot)
+            for side in ("radiant", "dire"):
+                cached_ids = snapshot.get(side)
+                queued_ids = delayed_snapshot.get(side)
+                snapshot[side] = (
+                    (cached_ids if isinstance(cached_ids, list) else [])
+                    + (queued_ids if isinstance(queued_ids, list) else [])
+                )
+                snapshot[side + "_team"] = (
+                    delayed_snapshot.get(side + "_team") or snapshot.get(side + "_team")
+                )
+        else:
+            snapshot = delayed_snapshot
+    if snapshot is None and ("radiant_account_ids" in details or "dire_account_ids" in details):
+        snapshot = {
+            "radiant": details.get("radiant_account_ids") or [],
+            "dire": details.get("dire_account_ids") or [],
+            "radiant_team": details.get("radiant_team") or "",
+            "dire_team": details.get("dire_team") or "",
+        }
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    hits = _find_skipped_player_account_ids(snapshot.get("radiant"), snapshot.get("dire"))
+
+    # Resolve the actual outgoing header first; structured side fields are a
+    # fallback for aliases and delayed messages.
+    matches = set()
+    normalized_header_team = _normalize_signal_header_token(header_team)
+    for side in ("radiant", "dire"):
+        team = str(snapshot.get(side + "_team") or "").strip()
+        for variant in (team, normalize_team_name_display(team)):
+            normalized_team = _normalize_signal_header_token(variant)
+            if normalized_team and normalized_header_team == normalized_team:
+                matches.add((len(normalized_team), side))
+    longest = max((length for length, _ in matches), default=0)
+    longest_matches = [side for length, side in matches if length == longest]
+    target_side = longest_matches[0] if len(longest_matches) == 1 else None
+    if target_side is None:
+        ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+        for candidate in (ctx.get("target_side"), selected_side, details.get("target_side")):
+            if isinstance(candidate, str) and candidate.strip().lower() in {"radiant", "dire"}:
+                target_side = candidate.strip().lower()
+                break
+    blocked_ids = hits[target_side] if target_side in {"radiant", "dire"} else sorted(set(hits["radiant"] + hits["dire"]))
+    now = time.time()
+    for variant in {header_team, normalize_team_name_display(header_team), normalized_header_team}:
+        remembered = _PLAYER_DENYLIST_TEAM_NAMES.get(variant)
+        if remembered and now - remembered["ts"] < _PLAYER_DENYLIST_TEAM_NAME_TTL_SECONDS:
+            blocked_ids = sorted(set(blocked_ids + remembered["blocked_player_account_ids"]))
+    if not blocked_ids:
+        return None
+    return {
+        "target_side": target_side,
+        "blocked_player_account_ids": blocked_ids,
+        "skipped_player_hits": hits,
+        "map_num": effective_map_num,
+    }
+
+
 # ── Журнал вердиктов по картам ───────────────────────────────────────────────
 # Отдельный state-файл (по умолчанию рядом с map_id_check.txt): 1 карта =
 # 1 запись со ВСЕМИ метриками драфта (counterpick/synergy/solo, lanes, kills,
@@ -33834,6 +34041,38 @@ def _deliver_and_persist_signal(
             _drop_delayed_match(match_key, reason="star_dispatch_disabled")
         except Exception:
             logger.exception("_drop_delayed_match failed after star_dispatch_disabled for %s", match_key)
+        return False
+    player_denylist_block = _player_denylist_reject_for_delivery(
+        match_key,
+        message_text,
+        selected_side=selected_side,
+        stake_multiplier_context=stake_multiplier_context,
+        add_url_details=add_url_details,
+        map_num=map_num,
+        current_map_observation=current_map_observation,
+    )
+    if player_denylist_block is not None:
+        verdict = (
+            "   🚫 Ставка заблокирована: игрок из denylist (egxrdemxn) "
+            f"в команде ставки — {match_key}"
+        )
+        log_key = (_signal_fingerprint_registry_key(match_key), player_denylist_block.get("target_side"))
+        with _PLAYER_DENYLIST_LOG_LOCK:
+            should_log = log_key not in _PLAYER_DENYLIST_LOGGED_BLOCKS
+            if should_log:
+                _PLAYER_DENYLIST_LOGGED_BLOCKS.add(log_key)
+                if len(_PLAYER_DENYLIST_LOGGED_BLOCKS) > _PLAYER_DENYLIST_LOG_LIMIT:
+                    _PLAYER_DENYLIST_LOGGED_BLOCKS.clear()
+                    _PLAYER_DENYLIST_LOGGED_BLOCKS.add(log_key)
+        if should_log:
+            print(verdict)
+            _record_delivery_gate_block(
+                match_key,
+                message_text,
+                player_denylist_block,
+                reason="skip_player_denylist",
+                verdict=verdict,
+            )
         return False
     # Единая точка запрета x0.5 на ELO-андердога: перекрывает немедленный
     # dispatch, delayed watcher'ы и спекулятивный x0.5. Матч НЕ закрывается
@@ -40765,6 +41004,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             int((dire_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
             for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
         ]
+        _remember_player_denylist_lineup(
+            check_uniq_url,
+            bookmaker_map_num,
+            radiant_account_ids,
+            dire_account_ids,
+            radiant_team_name_original,
+            dire_team_name_original,
+        )
         skipped_player_hits = _find_skipped_player_account_ids(
             radiant_account_ids,
             dire_account_ids,
@@ -43247,34 +43494,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dispatch_message_sign = selected_early_sign
 
             dispatch_message_side = _target_side_from_sign(dispatch_message_sign)
-            player_denylist_block = _player_denylist_block_payload(
-                target_side=dispatch_message_side,
-                skipped_player_hits=skipped_player_hits,
-                radiant_team_name=radiant_team_name_original,
-                dire_team_name=dire_team_name_original,
-                radiant_account_ids=radiant_account_ids,
-                dire_account_ids=dire_account_ids,
-            )
-            if player_denylist_block:
-                skipped_target_player_hits = list(player_denylist_block.get("blocked_player_account_ids") or [])
-                skipped_team_name = str(player_denylist_block.get("target_team") or "")
-                print(
-                    "   🚫 Ставка отклонена: target side содержит игрока из player denylist "
-                    f"(target_side={dispatch_message_side}, team={skipped_team_name}, "
-                    f"hits={skipped_target_player_hits})"
-                )
-                add_url(
-                    check_uniq_url,
-                    reason="skip_player_denylist",
-                    details={
-                        "status": status,
-                        "radiant_team": radiant_team_name_original,
-                        "dire_team": dire_team_name_original,
-                        **player_denylist_block,
-                        "json_retry_errors": json_retry_errors,
-                    },
-                )
-                return return_status
+            # STAR rejection branches below sometimes close the whole match.
+            # A rejection on the banned side must leave the opponent open.
+            def _add_url_for_star_rejection(*args, **kwargs):
+                details = kwargs.get("details")
+                if not isinstance(details, dict) and len(args) > 2:
+                    details = args[2]
+                detail_side = details.get("target_side") if isinstance(details, dict) else None
+                side = detail_side or dispatch_message_side
+                if _target_side_skipped_player_hits(skipped_player_hits, side):
+                    return None
+                return add_url(*args, **kwargs)
             stake_team_name = (
                 (radiant_team_name_original or radiant_team_name)
                 if dispatch_message_side == "radiant"
@@ -43657,7 +43887,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     },
                     extra=_star_combination_gate_reject_details(star_combination_gate),
                 )
-                add_url(
+                _add_url_for_star_rejection(
                     check_uniq_url,
                     reason=STAR_COMBINATION_GATE_REJECT_REASON,
                     details={
@@ -43862,7 +44092,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "all_wr_pct": all_wr_pct,
                     },
                 )
-                add_url(
+                _add_url_for_star_rejection(
                     check_uniq_url,
                     "star_signal_rejected_all_only_watcher_timeout",
                     {
@@ -43921,7 +44151,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         },
                         extra=_late27_dispatch_guard_reject_details(_imm_late27_guard),
                     )
-                    add_url(
+                    _add_url_for_star_rejection(
                         check_uniq_url,
                         reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
                         details={
@@ -44775,7 +45005,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "target_networth_diff": float(target_networth_diff or 0.0),
                     },
                 )
-                add_url(
+                _add_url_for_star_rejection(
                     check_uniq_url,
                     reason="star_signal_rejected_same_sign_lane_adv_stale",
                     details={
@@ -45384,7 +45614,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_networth_diff": float(target_networth_diff or 0.0),
                             },
                         )
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
                             details={
@@ -45554,6 +45784,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 radiant_account_ids=radiant_account_ids,
                                 dire_account_ids=dire_account_ids,
                             ),
+                            "player_denylist_lineups": {
+                                "radiant": radiant_account_ids,
+                                "dire": dire_account_ids,
+                                "radiant_team": radiant_team_name_original,
+                                "dire_team": dire_team_name_original,
+                            },
                         }
                         if kills_dual_pre_pass_sent:
                             delayed_payload["kills_already_sent"] = True
@@ -45697,7 +45933,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_networth_diff": float(target_networth_diff or 0.0),
                             },
                         )
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason="star_signal_rejected_top25_late_elo_block_timeout",
                             details={
@@ -45728,7 +45964,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             },
                         )
                         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason="star_signal_rejected_early_core_monitor_timeout",
                             details={
@@ -45766,7 +46002,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             },
                         )
                         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason="star_signal_rejected_late_core_monitor_timeout",
                             details={
@@ -45926,6 +46162,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "late_comeback_monitor_deadline_game_time": float(late_comeback_deadline),
                                 "networth_target_side": target_side,
                                 "late_comeback_force_after_target": False,
+                                "player_denylist_lineups": {
+                                    "radiant": radiant_account_ids,
+                                    "dire": dire_account_ids,
+                                    "radiant_team": radiant_team_name_original,
+                                    "dire_team": dire_team_name_original,
+                                },
                             }
                             _set_delayed_match(check_uniq_url, delayed_payload)
                             print(
@@ -45960,7 +46202,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_networth_diff": float(target_networth_diff or 0.0),
                             },
                         )
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason="star_signal_rejected_late_comeback_monitor_timeout",
                             details={
@@ -46097,6 +46339,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "late_comeback_monitor_deadline_game_time": float(post_target_comeback_deadline or target_game_time),
                                 "networth_target_side": target_side,
                                 "late_comeback_force_after_target": False,
+                                "player_denylist_lineups": {
+                                    "radiant": radiant_account_ids,
+                                    "dire": dire_account_ids,
+                                    "radiant_team": radiant_team_name_original,
+                                    "dire_team": dire_team_name_original,
+                                },
                             }
                             _set_delayed_match(check_uniq_url, delayed_payload)
                             print(
@@ -46132,7 +46380,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "target_networth_diff": float(target_networth_diff or 0.0),
                                 },
                             )
-                            add_url(
+                            _add_url_for_star_rejection(
                                 check_uniq_url,
                                 reason="star_signal_rejected_late_comeback_monitor_timeout",
                                 details={
@@ -46163,7 +46411,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_networth_diff": float(target_networth_diff or 0.0),
                             },
                         )
-                        add_url(
+                        _add_url_for_star_rejection(
                             check_uniq_url,
                             reason="star_signal_rejected_late_comeback_monitor_timeout",
                             details={
@@ -46447,6 +46695,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         radiant_account_ids=radiant_account_ids,
                         dire_account_ids=dire_account_ids,
                     ),
+                    'player_denylist_lineups': {
+                        'radiant': radiant_account_ids,
+                        'dire': dire_account_ids,
+                        'radiant_team': radiant_team_name_original,
+                        'dire_team': dire_team_name_original,
+                    },
                 }
                 if queue_top25_late_elo_block_monitor:
                     delayed_payload['networth_target_side'] = target_side
