@@ -1810,6 +1810,7 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` | `0.60` | порог E-281 P(сторона ≥30) для пути `kills_early` (включительно); без числа — fail-closed `kills30_missing` |
 | `ML_DISPATCH_LANE_KILLS` | `1` | правило владельца 26.09.2026: ML Laning ★ за `S` и хотя бы одна из Early NW/Early Win ★ за `S`, при отсутствии Early ★ за другую сторону → один `kills_window` для `S`, rule `kills_lane_early_window`, независимо от ELO, Late/All, prematch и kills30. `=0`/`false`/`off` — откат |
 | `ML_DISPATCH_LANE_KILLS_WINDOWS` | `5_15` | метки окон через запятую; выбирается первая разрешённая метка в порядке `Ctx.kills_windows_open`; при закрытом окне ставка не создаётся |
+| `ML_DISPATCH_KILLS_WINDOW_ONE_SIDE` | `1` | решение владельца 26.09.2026: пути андердога и late-conflict 4.3 не создают `kills_window` за другую сторону той же карты, если окно уже есть в реестре (`kills_window_sent_other_side`). `=0`/`false`/`off` возвращает прежнее поведение этих двух путей; проверка lane_kills остаётся всегда включённой |
 
 **Правила (решения владельца 12.09.2026, win-маркет дополнен 15.09.2026):**
 - Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из

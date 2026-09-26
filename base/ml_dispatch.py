@@ -75,6 +75,11 @@ Rules implemented (owner decisions, 12.09.2026 — see
   the set from disk and persisting new keys after an actual delivery is
   the caller's job, via :class:`SentLedger`.
 
+Owner decision 26.09.2026: the underdog and late-conflict kills-window paths
+skip the opposite side's already-sent window on the same map. This prevents
+cross-tick bets on both sides; ``ML_DISPATCH_KILLS_WINDOW_ONE_SIDE=0`` (also
+``false``/``off``) restores their prior behavior.
+
 Design decisions made here that were underspecified by the plan (flagged
 for the stage-2 owner to confirm before wiring into ``cyberscore_try``):
 
@@ -339,6 +344,7 @@ class Config:
     kills_early_min_kills30: float = 0.60
     lane_kills_enabled: bool = True
     lane_kills_windows: Tuple[str, ...] = ("5_15",)
+    kills_window_one_side: bool = True
     lane_elo_release_enabled: bool = True
     lane_elo_release_lane_conf: float = 0.55
     lane_elo_release_lane_adv: float = 8.0
@@ -408,6 +414,9 @@ class Config:
                     env.get("ML_DISPATCH_LANE_KILLS_WINDOWS", "5_15")
                 ).split(",") if label.strip()
             ),
+            kills_window_one_side=str(
+                env.get("ML_DISPATCH_KILLS_WINDOW_ONE_SIDE", "1")
+            ).strip().lower() not in ("0", "false", "off"),
             lane_elo_release_enabled=str(
                 env.get("ML_DISPATCH_LANE_ELO_RELEASE", "1")
             ).strip().lower() not in ("0", "false", "off"),
@@ -850,8 +859,15 @@ def _evaluate_kills_underdog(
 
     if ctx.kills_windows_open:
         key = _dedup_key(ctx, "kills_window", underdog_side)
+        other_key = _dedup_key(ctx, "kills_window", _other_side(underdog_side))
         if ctx.already_sent is not None and key in ctx.already_sent:
             skipped.append(Skipped("kills_window", underdog_side, REASON_DEDUP, f"key={key} already sent"))
+        elif (cfg.kills_window_one_side and ctx.already_sent is not None
+              and other_key in ctx.already_sent):
+            skipped.append(Skipped(
+                "kills_window", underdog_side, REASON_KILLS_WINDOW_SENT_OTHER_SIDE,
+                f"key={other_key} already sent for other side",
+            ))
         else:
             decisions.append(Decision(
                 market="kills_window",
@@ -910,8 +926,15 @@ def _evaluate_kills_late_conflict_a(
 
     if ctx.kills_windows_open and "kills_window" not in already_markets:
         key = _dedup_key(ctx, "kills_window", side_a)
+        other_key = _dedup_key(ctx, "kills_window", _other_side(side_a))
         if ctx.already_sent is not None and key in ctx.already_sent:
             skipped.append(Skipped("kills_window", side_a, REASON_DEDUP, f"key={key} already sent"))
+        elif (cfg.kills_window_one_side and ctx.already_sent is not None
+              and other_key in ctx.already_sent):
+            skipped.append(Skipped(
+                "kills_window", side_a, REASON_KILLS_WINDOW_SENT_OTHER_SIDE,
+                f"key={other_key} already sent for other side",
+            ))
         else:
             decisions.append(Decision(
                 market="kills_window",
