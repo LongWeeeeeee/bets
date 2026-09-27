@@ -14,6 +14,10 @@ try:
     import model_data_asof as _model_data_asof
 except ImportError:                                    # запуск не из base/
     from base import model_data_asof as _model_data_asof
+try:
+    import hero_pool_serving as _hero_pool_serving
+except ImportError:                                    # запуск не из base/
+    from base import hero_pool_serving as _hero_pool_serving
 
 ROOT = Path(__file__).resolve().parents[1]
 # E-334 (25.09.2026): C1 recipe (all train maps, no tree cap) refit on all 6,692,272 public
@@ -126,14 +130,25 @@ def _dispatch_min_conf():
         return 0.60
 
 
+def _all_index(radiant_dict, dire_dict, draft_model):
+    """One All value for the panel and dispatch, after the hero-keyed draft cache."""
+    index = draft_model.win_index_draft(radiant_dict, dire_dict)
+    if index is None or not np.isfinite(index) or not -50 <= index <= 50:
+        return None
+    corrected = _hero_pool_serving.correct_index(index, radiant_dict, dire_dict)
+    if corrected is None or not np.isfinite(corrected) or not -50 <= corrected <= 50:
+        return index
+    LOG.debug("All hero-pool shift: draft_index=%.6f corrected_index=%.6f delta=%.6f",
+              index, corrected, corrected - index)
+    return corrected
+
+
 def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
     """Build fresh per-match strings; each estimate can fail independently.
 
-    All uses the existing WIN_MODEL_DIR reader (draft_model.win_index_draft,
-    a draft-phase ensemble index, E-260 "All >=20") and its hero-keyed cache.
-    Its standalone draft probability is never recovered from an ensemble
-    index, and is NOT the 35-feature prematch model (that one lives in
-    cyberscore_try/win_model_veto and is keyed by SOURCE_PREMATCH).
+    All uses the existing WIN_MODEL_DIR reader and its hero-keyed cache, then
+    the optional player/hero correction. It is not the 35-feature prematch
+    model keyed by SOURCE_PREMATCH in cyberscore_try/win_model_veto.
 
     Each line gets a " ★" suffix when the confidence shown in that
     same line is >= ML_DISPATCH_MIN_CONF (default 0.60), read at format
@@ -142,8 +157,8 @@ def panel_lines(radiant_dict, dire_dict, timestamp, *, draft_model):
     result = {"ml_laning_line": "", "all_model_line": ""}
     min_conf = _dispatch_min_conf()
     try:
-        index = draft_model.win_index_draft(radiant_dict, dire_dict)
-        if index is not None and np.isfinite(index) and -50 <= index <= 50:
+        index = _all_index(radiant_dict, dire_dict, draft_model)
+        if index is not None:
             side = "Radiant" if index >= 0 else "Dire"
             confidence = (50 + abs(index)) / 100.0
             star = " ★" if confidence >= min_conf else ""
@@ -197,8 +212,8 @@ def verdicts(radiant_dict, dire_dict, timestamp, *, draft_model):
     strictly "Radiant"/"Dire" (never "tie"), matching the ml_dispatch
     contract, even though "lane" reports a tie-aware ML Laning model:
 
-    - "all": same value as ``all_model_line`` above (draft_model.win_index_draft,
-      NOT the prematch index) — side by sign of the index, confidence =
+    - "all": same value as ``all_model_line`` above (draft index plus optional
+      player/hero correction, NOT the prematch index) — side by sign, confidence =
       (50 + |index|) / 100.
     - "lane": side is whichever of Radiant/Dire has the higher of the two
       non-tie probabilities (ignoring whether the tie class is actually the
@@ -209,8 +224,8 @@ def verdicts(radiant_dict, dire_dict, timestamp, *, draft_model):
     """
     result = {"all": None, "lane": None}
     try:
-        index = draft_model.win_index_draft(radiant_dict, dire_dict)
-        if index is not None and np.isfinite(index) and -50 <= index <= 50:
+        index = _all_index(radiant_dict, dire_dict, draft_model)
+        if index is not None:
             side = "Radiant" if index >= 0 else "Dire"
             result["all"] = {"side": side, "confidence": (50 + abs(index)) / 100.0}
     except Exception:

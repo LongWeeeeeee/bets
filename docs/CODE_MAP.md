@@ -1703,10 +1703,14 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 `base/laning_serving.py:panel_lines(radiant_dict, dire_dict, timestamp, draft_model=...)`
 возвращает независимые строки `ml_laning_line` и `all_model_line` для конкретной
 карты. All читает standalone draft index из существующего `WIN_MODEL_DIR`
-(`win_index_draft`), преобразует обратно в вероятность и показывается сразу под
-Early Win; это не prematch ensemble. Новые строки передаются явно с контекстом
-карты, без восстановления по округлённому ensemble-индексу. Отказ каждой строки
-изолирован; decision gates не меняются.
+(`win_index_draft`), затем `base/hero_pool_serving.py` добавляет позиционную
+поправку по `acc_hero` из `PREMATCH_ARTIFACT` (по умолчанию
+`data/prematch_model_artifact_v3.npz`); `ALL_HERO_POOL_ENABLED=0|false|off`
+снимает её при следующем вызове. Этот же итоговый индекс идёт в `verdicts()`/
+`Ctx.all`; при отсутствии артефакта остаётся исходный draft index. All
+показывается сразу под Early Win; это не prematch ensemble. Новые строки
+передаются явно с контекстом карты, без восстановления по округлённому
+ensemble-индексу. Отказ каждой строки изолирован; пороги dispatch не меняются.
 
 `base/tools/merge_prematch_weights.py --snapshot FILE --weights FILE --output NEW_FILE --report NEW_JSON --expected-snapshot-sha256 HASH` переносит ровно восемь массивов весов; остальные ZIP members и metadata сохраняются. Для live используются `WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR`; согласованный parent заменяет `data/prematch_model_artifact_v3.npz` после backup. Локальные weights/branch_weights ночной сборки обновляются тем же набором. Calibration и пороги этим способом не пересчитываются; рестарт — только systemd.
 
@@ -1940,8 +1944,8 @@ decisions, skipped, delivered, mode, draft_input`; дедуп новой стр�
 `base/laning_serving.py:verdicts(radiant_dict, dire_dict, timestamp,
 draft_model=...)` — экспортирует те же два вердикта, что печатает
 `panel_lines` (для `Ctx.all`/`Ctx.lane`): `{"all": {"side","confidence"}|None,
-"lane": {"side","confidence","p_tie"}|None}`. `all` = `draft_model.win_index_draft`
-(тот же индекс, что печатает "🌐 All ML-модель", НЕ 35-признаковая предматчевая
+"lane": {"side","confidence","p_tie"}|None}`. `all` = общий итоговый индекс
+`laning_serving._all_index` (тот же, что печатает "🌐 All ML-модель", НЕ 35-признаковая предматчевая
 модель); `lane` = ML Laning team-модель, сторона — та из Radiant/Dire, у
 которой выше собственная не-tie вероятность (в отличие от печатаемой строки,
 которая может показать "Равенство", если оно argmax).
