@@ -24453,6 +24453,7 @@ _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
 # серия занимает столько карточек, сколько карт в ней разобрано.
 _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 4
 _ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT = 100
+_ADMIN_TAIL_PAGE_IDLE_RESET_SECONDS = 600
 _ADMIN_TAIL_VERDICT_HISTORY_LIMIT = 5
 
 
@@ -25032,11 +25033,28 @@ def _admin_tail_format_journal_match(
     if map_num not in (None, ""):
         info_parts.append(f"карта {map_num}")
     status = str(entry.get("status") or "").strip()
-    if status:
+    superseded_by_map = candidate.get("superseded_by_map")
+    if superseded_by_map is not None:
+        info_parts.append(f"статус завершена — в серии уже {superseded_by_map}-я карта")
+    elif status == "live":
+        updated_ts = 0.0
+        try:
+            updated_ts = float(entry.get("updated_ts"))
+            age_seconds = _admin_tail_wall_now() - updated_ts
+        except (TypeError, ValueError):
+            age_seconds = 0
+        if updated_ts > 0 and age_seconds > _ADMIN_TAIL_PAGE_IDLE_RESET_SECONDS:
+            minutes = int(age_seconds // 60)
+            age_text = f"{minutes // 60} ч" if minutes >= 120 else f"{minutes} мин"
+            info_parts.append(f"статус live (без обновлений {age_text})")
+        else:
+            info_parts.append("статус live")
+    elif status:
         info_parts.append(f"статус {status}")
     score = str(entry.get("score") or "").strip()
     if score:
-        info_parts.append(f"счёт {score}")
+        suffix = " (последний разбор)" if superseded_by_map is not None else ""
+        info_parts.append(f"счёт {score}{suffix}")
     updated_at = str(entry.get("updated_at") or "").strip()
     if updated_at:
         info_parts.append(f"обновлено {updated_at}")
@@ -25199,14 +25217,54 @@ def _collect_admin_tail_match_pool() -> List[Dict[str, Any]]:
                 "payload": watcher_by_match_id.get(base_id),
             }
         )
+
+    # Поздняя карта той же пары команд подтверждает, что прежняя уже не live.
+    # Имена не зависят от стороны: radiant/dire могут поменяться между картами.
+    series_cards = []
+    for candidate in candidates:
+        entry = candidate["entry"]
+        teams = entry.get("teams") if isinstance(entry.get("teams"), dict) else {}
+        names = [str(teams.get(side) or "").strip().casefold() for side in ("radiant", "dire")]
+        map_num = entry.get("map_num")
+        if (
+            any(not name or name == "?" for name in names)
+            or not isinstance(map_num, int)
+            or isinstance(map_num, bool)
+        ):
+            continue
+        try:
+            updated_ts = float(entry.get("updated_ts"))
+        except (TypeError, ValueError):
+            continue
+        series_cards.append((candidate, frozenset(names), map_num, updated_ts))
+
+    for candidate, teams, map_num, updated_ts in series_cards:
+        later_maps = [
+            other_map
+            for other, other_teams, other_map, other_ts in series_cards
+            if other["match_id"] != candidate["match_id"]
+            and other_teams == teams
+            and other_map > map_num
+            and other_ts > updated_ts
+        ]
+        if later_maps:
+            candidate["superseded_by_map"] = max(later_maps)
     return candidates
 
 
 # Курсор листания tail_log. Живёт в памяти процесса: повторное нажатие команды
 # показывает СЛЕДУЮЩУЮ четвёрку старше, а не пересылает ту же. Рестарт прода
-# сбрасывает курсор на первую страницу — это осознанно: после рестарта смотреть
-# хочется живое, а не то место, где остановились до него.
+# и пауза больше 10 минут сбрасывают курсор на первую страницу.
 _admin_tail_page = 0
+_admin_tail_last_press_monotonic: Optional[float] = None
+
+
+def _admin_tail_monotonic() -> float:
+    return time.monotonic()
+
+
+def _admin_tail_wall_now() -> float:
+    return time.time()
 
 
 def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
@@ -25217,11 +25275,19 @@ def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None
 
     Первое нажатие отдаёт четыре самые свежие карты, каждое следующее — четыре
     карты старше (5–8, 9–12, …), после конца пула курсор возвращается к началу.
+    Рестарт и пауза больше 10 минут начинают снова с первой страницы.
     Размер страницы ``_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT``, глубина пула —
     ``_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT`` свежих записей журнала.
     """
-    global _admin_tail_page
+    global _admin_tail_page, _admin_tail_last_press_monotonic
     del line_count  # параметр сохранён для совместимости сигнатуры вызова
+    press_time = _admin_tail_monotonic()
+    if (
+        _admin_tail_last_press_monotonic is None
+        or press_time - _admin_tail_last_press_monotonic > _ADMIN_TAIL_PAGE_IDLE_RESET_SECONDS
+    ):
+        _admin_tail_page = 0
+    _admin_tail_last_press_monotonic = press_time
     pool = _collect_admin_tail_match_pool()
     if not pool:
         _admin_tail_page = 0

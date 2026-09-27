@@ -1,0 +1,3103 @@
+{
+ "_capture": {
+  "captured_at": "2026-09-27 18:24:07 MSK",
+  "source": "serv1:/root/.local/state/ingame/map_verdicts.json (prod verdict journal)",
+  "command": "scp serv1:/root/.local/state/ingame/map_verdicts.json <snapshot>; keep entries with updated_ts <= entry dltv.org/matches/9018969340.1 (18:18:14, the state during the reported tail_log presses), 100 freshest (= _ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT), fields match_key/match_id/map_num/status/score/teams/first_seen_*/updated_*/verdicts[ts,at,kind,reason,verdict]",
+  "why": "Reported 27.09: tail_log showed 'карта 1 | статус live | счёт 9 : 27 | обновлено 2026-09-27 16:34:45' (Natus Vincere vs Team Yandex map 1, match 9018736585) while the series was on map 2/3 (9018837779, 9018969340)."
+ },
+ "entries": {
+  "dltv.org/matches/9018969340.1": {
+   "match_key": "dltv.org/matches/9018969340.1",
+   "match_id": "9018969340",
+   "map_num": 3,
+   "status": "live",
+   "score": "1 : 0",
+   "teams": {
+    "radiant": "Team Yandex",
+    "dire": "Natus Vincere"
+   },
+   "first_seen_ts": 1790522272.2387908,
+   "first_seen_at": "2026-09-27 18:17:52",
+   "updated_ts": 1790522294.1239965,
+   "updated_at": "2026-09-27 18:18:14",
+   "verdicts": [
+    {
+     "ts": 1790522272.2387908,
+     "at": "2026-09-27 18:17:52",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: yandex vs natusvincere"
+    },
+    {
+     "ts": 1790522294.1239965,
+     "at": "2026-09-27 18:18:14",
+     "kind": "reject",
+     "reason": "star_signal_rejected_no_star_signal",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (нет star-сигнала) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018969340.0": {
+   "match_key": "dltv.org/matches/9018969340.0",
+   "match_id": "9018969340",
+   "map_num": 3,
+   "status": "live",
+   "score": "0 : 0",
+   "teams": {
+    "radiant": "Team Yandex",
+    "dire": "Natus Vincere"
+   },
+   "first_seen_ts": 1790522108.746788,
+   "first_seen_at": "2026-09-27 18:15:08",
+   "updated_ts": 1790522234.2638493,
+   "updated_at": "2026-09-27 18:17:14",
+   "verdicts": [
+    {
+     "ts": 1790522108.746788,
+     "at": "2026-09-27 18:15:08",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: yandex vs natusvincere"
+    },
+    {
+     "ts": 1790522234.2638493,
+     "at": "2026-09-27 18:17:14",
+     "kind": "reject",
+     "reason": "star_signal_rejected_no_star_signal",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (нет star-сигнала) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.67": {
+   "match_key": "dltv.org/matches/9018837779.67",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "31 : 36",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790520420.1380436,
+   "first_seen_at": "2026-09-27 17:47:00",
+   "updated_ts": 1790520438.2407653,
+   "updated_at": "2026-09-27 17:47:18",
+   "verdicts": [
+    {
+     "ts": 1790520420.1380436,
+     "at": "2026-09-27 17:47:00",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790520438.2407653,
+     "at": "2026-09-27 17:47:18",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_only_wr_below_65",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Late требует WR>=65) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.62": {
+   "match_key": "dltv.org/matches/9018837779.62",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "30 : 32",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790520358.4835284,
+   "first_seen_at": "2026-09-27 17:45:58",
+   "updated_ts": 1790520378.282005,
+   "updated_at": "2026-09-27 17:46:18",
+   "verdicts": [
+    {
+     "ts": 1790520358.4835284,
+     "at": "2026-09-27 17:45:58",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790520378.282005,
+     "at": "2026-09-27 17:46:18",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.61": {
+   "match_key": "dltv.org/matches/9018837779.61",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "30 : 31",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790520295.3156824,
+   "first_seen_at": "2026-09-27 17:44:55",
+   "updated_ts": 1790520320.612268,
+   "updated_at": "2026-09-27 17:45:20",
+   "verdicts": [
+    {
+     "ts": 1790520295.3156824,
+     "at": "2026-09-27 17:44:55",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790520320.612268,
+     "at": "2026-09-27 17:45:20",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.57": {
+   "match_key": "dltv.org/matches/9018837779.57",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "29 : 28",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790520234.3277586,
+   "first_seen_at": "2026-09-27 17:43:54",
+   "updated_ts": 1790520251.887067,
+   "updated_at": "2026-09-27 17:44:11",
+   "verdicts": [
+    {
+     "ts": 1790520234.3277586,
+     "at": "2026-09-27 17:43:54",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790520251.887067,
+     "at": "2026-09-27 17:44:11",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.56": {
+   "match_key": "dltv.org/matches/9018837779.56",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "29 : 27",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790520050.872184,
+   "first_seen_at": "2026-09-27 17:40:50",
+   "updated_ts": 1790520073.1205668,
+   "updated_at": "2026-09-27 17:41:13",
+   "verdicts": [
+    {
+     "ts": 1790520050.872184,
+     "at": "2026-09-27 17:40:50",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790520073.1205668,
+     "at": "2026-09-27 17:41:13",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.54": {
+   "match_key": "dltv.org/matches/9018837779.54",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "29 : 25",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519960.1017685,
+   "first_seen_at": "2026-09-27 17:39:20",
+   "updated_ts": 1790519977.207497,
+   "updated_at": "2026-09-27 17:39:37",
+   "verdicts": [
+    {
+     "ts": 1790519960.1017685,
+     "at": "2026-09-27 17:39:20",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519977.207497,
+     "at": "2026-09-27 17:39:37",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.52": {
+   "match_key": "dltv.org/matches/9018837779.52",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "28 : 24",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519930.6238308,
+   "first_seen_at": "2026-09-27 17:38:50",
+   "updated_ts": 1790519948.2432306,
+   "updated_at": "2026-09-27 17:39:08",
+   "verdicts": [
+    {
+     "ts": 1790519930.6238308,
+     "at": "2026-09-27 17:38:50",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519948.2432306,
+     "at": "2026-09-27 17:39:08",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.49": {
+   "match_key": "dltv.org/matches/9018837779.49",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "26 : 23",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519718.2275271,
+   "first_seen_at": "2026-09-27 17:35:18",
+   "updated_ts": 1790519735.160944,
+   "updated_at": "2026-09-27 17:35:35",
+   "verdicts": [
+    {
+     "ts": 1790519718.2275271,
+     "at": "2026-09-27 17:35:18",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519735.160944,
+     "at": "2026-09-27 17:35:35",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.46": {
+   "match_key": "dltv.org/matches/9018837779.46",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "24 : 22",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519658.375685,
+   "first_seen_at": "2026-09-27 17:34:18",
+   "updated_ts": 1790519675.8689845,
+   "updated_at": "2026-09-27 17:34:35",
+   "verdicts": [
+    {
+     "ts": 1790519658.375685,
+     "at": "2026-09-27 17:34:18",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519675.8689845,
+     "at": "2026-09-27 17:34:35",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.44": {
+   "match_key": "dltv.org/matches/9018837779.44",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "22 : 22",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519600.5071442,
+   "first_seen_at": "2026-09-27 17:33:20",
+   "updated_ts": 1790519618.2034895,
+   "updated_at": "2026-09-27 17:33:38",
+   "verdicts": [
+    {
+     "ts": 1790519600.5071442,
+     "at": "2026-09-27 17:33:20",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519618.2034895,
+     "at": "2026-09-27 17:33:38",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.42": {
+   "match_key": "dltv.org/matches/9018837779.42",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "22 : 20",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519540.1970098,
+   "first_seen_at": "2026-09-27 17:32:20",
+   "updated_ts": 1790519557.4354246,
+   "updated_at": "2026-09-27 17:32:37",
+   "verdicts": [
+    {
+     "ts": 1790519540.1970098,
+     "at": "2026-09-27 17:32:20",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519557.4354246,
+     "at": "2026-09-27 17:32:37",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.41": {
+   "match_key": "dltv.org/matches/9018837779.41",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "22 : 19",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519386.9988222,
+   "first_seen_at": "2026-09-27 17:29:46",
+   "updated_ts": 1790519408.030295,
+   "updated_at": "2026-09-27 17:30:08",
+   "verdicts": [
+    {
+     "ts": 1790519386.9988222,
+     "at": "2026-09-27 17:29:46",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519408.030295,
+     "at": "2026-09-27 17:30:08",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.38": {
+   "match_key": "dltv.org/matches/9018837779.38",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "21 : 17",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519176.454982,
+   "first_seen_at": "2026-09-27 17:26:16",
+   "updated_ts": 1790519196.4406912,
+   "updated_at": "2026-09-27 17:26:36",
+   "verdicts": [
+    {
+     "ts": 1790519176.454982,
+     "at": "2026-09-27 17:26:16",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519196.4406912,
+     "at": "2026-09-27 17:26:36",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.36": {
+   "match_key": "dltv.org/matches/9018837779.36",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "21 : 15",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519114.1105618,
+   "first_seen_at": "2026-09-27 17:25:14",
+   "updated_ts": 1790519133.1799226,
+   "updated_at": "2026-09-27 17:25:33",
+   "verdicts": [
+    {
+     "ts": 1790519114.1105618,
+     "at": "2026-09-27 17:25:14",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519133.1799226,
+     "at": "2026-09-27 17:25:33",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.35": {
+   "match_key": "dltv.org/matches/9018837779.35",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "21 : 14",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519084.7370543,
+   "first_seen_at": "2026-09-27 17:24:44",
+   "updated_ts": 1790519102.12365,
+   "updated_at": "2026-09-27 17:25:02",
+   "verdicts": [
+    {
+     "ts": 1790519084.7370543,
+     "at": "2026-09-27 17:24:44",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519102.12365,
+     "at": "2026-09-27 17:25:02",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.30": {
+   "match_key": "dltv.org/matches/9018837779.30",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "21 : 9",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790519021.792438,
+   "first_seen_at": "2026-09-27 17:23:41",
+   "updated_ts": 1790519042.4901822,
+   "updated_at": "2026-09-27 17:24:02",
+   "verdicts": [
+    {
+     "ts": 1790519021.792438,
+     "at": "2026-09-27 17:23:41",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790519042.4901822,
+     "at": "2026-09-27 17:24:02",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.29": {
+   "match_key": "dltv.org/matches/9018837779.29",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "20 : 9",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518959.719857,
+   "first_seen_at": "2026-09-27 17:22:39",
+   "updated_ts": 1790518975.5640848,
+   "updated_at": "2026-09-27 17:22:55",
+   "verdicts": [
+    {
+     "ts": 1790518959.719857,
+     "at": "2026-09-27 17:22:39",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518975.5640848,
+     "at": "2026-09-27 17:22:55",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.26": {
+   "match_key": "dltv.org/matches/9018837779.26",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "17 : 9",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518891.8805618,
+   "first_seen_at": "2026-09-27 17:21:31",
+   "updated_ts": 1790518952.7202306,
+   "updated_at": "2026-09-27 17:22:32",
+   "verdicts": [
+    {
+     "ts": 1790518891.8805618,
+     "at": "2026-09-27 17:21:31",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518952.7202306,
+     "at": "2026-09-27 17:22:32",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.25": {
+   "match_key": "dltv.org/matches/9018837779.25",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "16 : 9",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518784.7285328,
+   "first_seen_at": "2026-09-27 17:19:44",
+   "updated_ts": 1790518810.4645996,
+   "updated_at": "2026-09-27 17:20:10",
+   "verdicts": [
+    {
+     "ts": 1790518784.7285328,
+     "at": "2026-09-27 17:19:44",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518810.4645996,
+     "at": "2026-09-27 17:20:10",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.21": {
+   "match_key": "dltv.org/matches/9018837779.21",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "13 : 8",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518761.6982226,
+   "first_seen_at": "2026-09-27 17:19:21",
+   "updated_ts": 1790518779.1682928,
+   "updated_at": "2026-09-27 17:19:39",
+   "verdicts": [
+    {
+     "ts": 1790518761.6982226,
+     "at": "2026-09-27 17:19:21",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518779.1682928,
+     "at": "2026-09-27 17:19:39",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.76": {
+   "match_key": "dltv.org/matches/9018826512.76",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "42 : 34",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518745.4531448,
+   "first_seen_at": "2026-09-27 17:19:05",
+   "updated_ts": 1790518761.3332837,
+   "updated_at": "2026-09-27 17:19:21",
+   "verdicts": [
+    {
+     "ts": 1790518745.4531448,
+     "at": "2026-09-27 17:19:05",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518761.3332837,
+     "at": "2026-09-27 17:19:21",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.73": {
+   "match_key": "dltv.org/matches/9018826512.73",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "39 : 34",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518715.4167838,
+   "first_seen_at": "2026-09-27 17:18:35",
+   "updated_ts": 1790518734.9167328,
+   "updated_at": "2026-09-27 17:18:54",
+   "verdicts": [
+    {
+     "ts": 1790518715.4167838,
+     "at": "2026-09-27 17:18:35",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518734.9167328,
+     "at": "2026-09-27 17:18:54",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.20": {
+   "match_key": "dltv.org/matches/9018837779.20",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "13 : 7",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518682.2975826,
+   "first_seen_at": "2026-09-27 17:18:02",
+   "updated_ts": 1790518706.3971477,
+   "updated_at": "2026-09-27 17:18:26",
+   "verdicts": [
+    {
+     "ts": 1790518682.2975826,
+     "at": "2026-09-27 17:18:02",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518706.3971477,
+     "at": "2026-09-27 17:18:26",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.69": {
+   "match_key": "dltv.org/matches/9018826512.69",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "36 : 33",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518647.3840086,
+   "first_seen_at": "2026-09-27 17:17:27",
+   "updated_ts": 1790518664.5287092,
+   "updated_at": "2026-09-27 17:17:44",
+   "verdicts": [
+    {
+     "ts": 1790518647.3840086,
+     "at": "2026-09-27 17:17:27",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518664.5287092,
+     "at": "2026-09-27 17:17:44",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.19": {
+   "match_key": "dltv.org/matches/9018837779.19",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "12 : 7",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518622.2795277,
+   "first_seen_at": "2026-09-27 17:17:02",
+   "updated_ts": 1790518641.8299625,
+   "updated_at": "2026-09-27 17:17:21",
+   "verdicts": [
+    {
+     "ts": 1790518622.2795277,
+     "at": "2026-09-27 17:17:02",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518641.8299625,
+     "at": "2026-09-27 17:17:21",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.66": {
+   "match_key": "dltv.org/matches/9018826512.66",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "34 : 32",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518604.3782854,
+   "first_seen_at": "2026-09-27 17:16:44",
+   "updated_ts": 1790518621.8918855,
+   "updated_at": "2026-09-27 17:17:01",
+   "verdicts": [
+    {
+     "ts": 1790518604.3782854,
+     "at": "2026-09-27 17:16:44",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518621.8918855,
+     "at": "2026-09-27 17:17:01",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.18": {
+   "match_key": "dltv.org/matches/9018837779.18",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "11 : 7",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518550.6561122,
+   "first_seen_at": "2026-09-27 17:15:50",
+   "updated_ts": 1790518566.7420003,
+   "updated_at": "2026-09-27 17:16:06",
+   "verdicts": [
+    {
+     "ts": 1790518550.6561122,
+     "at": "2026-09-27 17:15:50",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518566.7420003,
+     "at": "2026-09-27 17:16:06",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.62": {
+   "match_key": "dltv.org/matches/9018826512.62",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "31 : 31",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518528.5546067,
+   "first_seen_at": "2026-09-27 17:15:28",
+   "updated_ts": 1790518550.4578516,
+   "updated_at": "2026-09-27 17:15:50",
+   "verdicts": [
+    {
+     "ts": 1790518528.5546067,
+     "at": "2026-09-27 17:15:28",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518550.4578516,
+     "at": "2026-09-27 17:15:50",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.17": {
+   "match_key": "dltv.org/matches/9018837779.17",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "11 : 6",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518468.3790193,
+   "first_seen_at": "2026-09-27 17:14:28",
+   "updated_ts": 1790518485.0640867,
+   "updated_at": "2026-09-27 17:14:45",
+   "verdicts": [
+    {
+     "ts": 1790518468.3790193,
+     "at": "2026-09-27 17:14:28",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518485.0640867,
+     "at": "2026-09-27 17:14:45",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.61": {
+   "match_key": "dltv.org/matches/9018826512.61",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "30 : 31",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518436.6084852,
+   "first_seen_at": "2026-09-27 17:13:56",
+   "updated_ts": 1790518457.934238,
+   "updated_at": "2026-09-27 17:14:17",
+   "verdicts": [
+    {
+     "ts": 1790518436.6084852,
+     "at": "2026-09-27 17:13:56",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518457.934238,
+     "at": "2026-09-27 17:14:17",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.58": {
+   "match_key": "dltv.org/matches/9018826512.58",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "29 : 29",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518408.935714,
+   "first_seen_at": "2026-09-27 17:13:28",
+   "updated_ts": 1790518429.6436377,
+   "updated_at": "2026-09-27 17:13:49",
+   "verdicts": [
+    {
+     "ts": 1790518408.935714,
+     "at": "2026-09-27 17:13:28",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518429.6436377,
+     "at": "2026-09-27 17:13:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.14": {
+   "match_key": "dltv.org/matches/9018837779.14",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "9 : 5",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518361.9585242,
+   "first_seen_at": "2026-09-27 17:12:41",
+   "updated_ts": 1790518380.6042333,
+   "updated_at": "2026-09-27 17:13:00",
+   "verdicts": [
+    {
+     "ts": 1790518361.9585242,
+     "at": "2026-09-27 17:12:41",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518380.6042333,
+     "at": "2026-09-27 17:13:00",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.13": {
+   "match_key": "dltv.org/matches/9018837779.13",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "8 : 5",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518295.0658772,
+   "first_seen_at": "2026-09-27 17:11:35",
+   "updated_ts": 1790518321.1051621,
+   "updated_at": "2026-09-27 17:12:01",
+   "verdicts": [
+    {
+     "ts": 1790518295.0658772,
+     "at": "2026-09-27 17:11:35",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518321.1051621,
+     "at": "2026-09-27 17:12:01",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.53": {
+   "match_key": "dltv.org/matches/9018826512.53",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "26 : 27",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518276.1638446,
+   "first_seen_at": "2026-09-27 17:11:16",
+   "updated_ts": 1790518294.8239455,
+   "updated_at": "2026-09-27 17:11:34",
+   "verdicts": [
+    {
+     "ts": 1790518276.1638446,
+     "at": "2026-09-27 17:11:16",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518294.8239455,
+     "at": "2026-09-27 17:11:34",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.10": {
+   "match_key": "dltv.org/matches/9018837779.10",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "6 : 4",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518247.4010086,
+   "first_seen_at": "2026-09-27 17:10:47",
+   "updated_ts": 1790518271.7111123,
+   "updated_at": "2026-09-27 17:11:11",
+   "verdicts": [
+    {
+     "ts": 1790518247.4010086,
+     "at": "2026-09-27 17:10:47",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518271.7111123,
+     "at": "2026-09-27 17:11:11",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.52": {
+   "match_key": "dltv.org/matches/9018826512.52",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "25 : 27",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518224.811695,
+   "first_seen_at": "2026-09-27 17:10:24",
+   "updated_ts": 1790518247.0402,
+   "updated_at": "2026-09-27 17:10:47",
+   "verdicts": [
+    {
+     "ts": 1790518224.811695,
+     "at": "2026-09-27 17:10:24",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518247.0402,
+     "at": "2026-09-27 17:10:47",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.48": {
+   "match_key": "dltv.org/matches/9018826512.48",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "23 : 25",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518162.8243406,
+   "first_seen_at": "2026-09-27 17:09:22",
+   "updated_ts": 1790518217.5112753,
+   "updated_at": "2026-09-27 17:10:17",
+   "verdicts": [
+    {
+     "ts": 1790518162.8243406,
+     "at": "2026-09-27 17:09:22",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518217.5112753,
+     "at": "2026-09-27 17:10:17",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.70": {
+   "match_key": "dltv.org/matches/9018798439.70",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "29 : 41",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790518162.3616624,
+   "first_seen_at": "2026-09-27 17:09:22",
+   "updated_ts": 1790518162.3616624,
+   "updated_at": "2026-09-27 17:09:22",
+   "verdicts": [
+    {
+     "ts": 1790518162.3616624,
+     "at": "2026-09-27 17:09:22",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.4": {
+   "match_key": "dltv.org/matches/9018837779.4",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "3 : 1",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518112.0668173,
+   "first_seen_at": "2026-09-27 17:08:32",
+   "updated_ts": 1790518135.2193048,
+   "updated_at": "2026-09-27 17:08:55",
+   "verdicts": [
+    {
+     "ts": 1790518112.0668173,
+     "at": "2026-09-27 17:08:32",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518135.2193048,
+     "at": "2026-09-27 17:08:55",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.42": {
+   "match_key": "dltv.org/matches/9018826512.42",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "18 : 24",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790518081.835017,
+   "first_seen_at": "2026-09-27 17:08:01",
+   "updated_ts": 1790518102.1637852,
+   "updated_at": "2026-09-27 17:08:22",
+   "verdicts": [
+    {
+     "ts": 1790518081.835017,
+     "at": "2026-09-27 17:08:01",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518102.1637852,
+     "at": "2026-09-27 17:08:22",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.3": {
+   "match_key": "dltv.org/matches/9018837779.3",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "3 : 0",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790518051.8428164,
+   "first_seen_at": "2026-09-27 17:07:31",
+   "updated_ts": 1790518069.5348027,
+   "updated_at": "2026-09-27 17:07:49",
+   "verdicts": [
+    {
+     "ts": 1790518051.8428164,
+     "at": "2026-09-27 17:07:31",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790518069.5348027,
+     "at": "2026-09-27 17:07:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.40": {
+   "match_key": "dltv.org/matches/9018826512.40",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "18 : 22",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517988.0879245,
+   "first_seen_at": "2026-09-27 17:06:28",
+   "updated_ts": 1790518005.7341907,
+   "updated_at": "2026-09-27 17:06:45",
+   "verdicts": [
+    {
+     "ts": 1790517988.0879245,
+     "at": "2026-09-27 17:06:28",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790518005.7341907,
+     "at": "2026-09-27 17:06:45",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.36": {
+   "match_key": "dltv.org/matches/9018826512.36",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "16 : 20",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517954.6257782,
+   "first_seen_at": "2026-09-27 17:05:54",
+   "updated_ts": 1790517982.2616398,
+   "updated_at": "2026-09-27 17:06:22",
+   "verdicts": [
+    {
+     "ts": 1790517954.6257782,
+     "at": "2026-09-27 17:05:54",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517982.2616398,
+     "at": "2026-09-27 17:06:22",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.2": {
+   "match_key": "dltv.org/matches/9018837779.2",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "2 : 0",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790517933.7501256,
+   "first_seen_at": "2026-09-27 17:05:33",
+   "updated_ts": 1790517949.2262678,
+   "updated_at": "2026-09-27 17:05:49",
+   "verdicts": [
+    {
+     "ts": 1790517933.7501256,
+     "at": "2026-09-27 17:05:33",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790517949.2262678,
+     "at": "2026-09-27 17:05:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.65": {
+   "match_key": "dltv.org/matches/9018798439.65",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "29 : 36",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517909.9935353,
+   "first_seen_at": "2026-09-27 17:05:09",
+   "updated_ts": 1790517933.5469203,
+   "updated_at": "2026-09-27 17:05:33",
+   "verdicts": [
+    {
+     "ts": 1790517909.9935353,
+     "at": "2026-09-27 17:05:09",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517933.5469203,
+     "at": "2026-09-27 17:05:33",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.57": {
+   "match_key": "dltv.org/matches/9018798439.57",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "25 : 32",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517848.2665205,
+   "first_seen_at": "2026-09-27 17:04:08",
+   "updated_ts": 1790517870.822981,
+   "updated_at": "2026-09-27 17:04:30",
+   "verdicts": [
+    {
+     "ts": 1790517848.2665205,
+     "at": "2026-09-27 17:04:08",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517870.822981,
+     "at": "2026-09-27 17:04:30",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.35": {
+   "match_key": "dltv.org/matches/9018826512.35",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "16 : 19",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517821.4577,
+   "first_seen_at": "2026-09-27 17:03:41",
+   "updated_ts": 1790517841.9762173,
+   "updated_at": "2026-09-27 17:04:01",
+   "verdicts": [
+    {
+     "ts": 1790517821.4577,
+     "at": "2026-09-27 17:03:41",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517841.9762173,
+     "at": "2026-09-27 17:04:01",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.56": {
+   "match_key": "dltv.org/matches/9018798439.56",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "25 : 31",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517796.4969518,
+   "first_seen_at": "2026-09-27 17:03:16",
+   "updated_ts": 1790517821.1303673,
+   "updated_at": "2026-09-27 17:03:41",
+   "verdicts": [
+    {
+     "ts": 1790517796.4969518,
+     "at": "2026-09-27 17:03:16",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517821.1303673,
+     "at": "2026-09-27 17:03:41",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.1": {
+   "match_key": "dltv.org/matches/9018837779.1",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "1 : 0",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790517765.5999477,
+   "first_seen_at": "2026-09-27 17:02:45",
+   "updated_ts": 1790517790.9349174,
+   "updated_at": "2026-09-27 17:03:10",
+   "verdicts": [
+    {
+     "ts": 1790517765.5999477,
+     "at": "2026-09-27 17:02:45",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790517790.9349174,
+     "at": "2026-09-27 17:03:10",
+     "kind": "reject",
+     "reason": "star_signal_rejected_block_combination",
+     "verdict": "⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: sign=1, need wr>=65.0/hits>=2, early_end(wr=n/a,hits=0,opp=0), late(wr=57,hits=1,opp=0), all(wr=50,hits=1,opp=0))"
+    }
+   ]
+  },
+  "dltv.org/matches/9018837779.0": {
+   "match_key": "dltv.org/matches/9018837779.0",
+   "match_id": "9018837779",
+   "map_num": 2,
+   "status": "live",
+   "score": "0 : 0",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790517697.1996052,
+   "first_seen_at": "2026-09-27 17:01:37",
+   "updated_ts": 1790517726.4321754,
+   "updated_at": "2026-09-27 17:02:06",
+   "verdicts": [
+    {
+     "ts": 1790517697.1996052,
+     "at": "2026-09-27 17:01:37",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790517726.4321754,
+     "at": "2026-09-27 17:02:06",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_only_wr_below_65",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Late требует WR>=65) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.34": {
+   "match_key": "dltv.org/matches/9018826512.34",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "15 : 19",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517667.3365488,
+   "first_seen_at": "2026-09-27 17:01:07",
+   "updated_ts": 1790517692.4907415,
+   "updated_at": "2026-09-27 17:01:32",
+   "verdicts": [
+    {
+     "ts": 1790517667.3365488,
+     "at": "2026-09-27 17:01:07",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517692.4907415,
+     "at": "2026-09-27 17:01:32",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.53": {
+   "match_key": "dltv.org/matches/9018798439.53",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "24 : 29",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517636.3353782,
+   "first_seen_at": "2026-09-27 17:00:36",
+   "updated_ts": 1790517666.835268,
+   "updated_at": "2026-09-27 17:01:06",
+   "verdicts": [
+    {
+     "ts": 1790517636.3353782,
+     "at": "2026-09-27 17:00:36",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517666.835268,
+     "at": "2026-09-27 17:01:06",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.31": {
+   "match_key": "dltv.org/matches/9018826512.31",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "14 : 17",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517573.267884,
+   "first_seen_at": "2026-09-27 16:59:33",
+   "updated_ts": 1790517592.8812144,
+   "updated_at": "2026-09-27 16:59:52",
+   "verdicts": [
+    {
+     "ts": 1790517573.267884,
+     "at": "2026-09-27 16:59:33",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517592.8812144,
+     "at": "2026-09-27 16:59:52",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.49": {
+   "match_key": "dltv.org/matches/9018798439.49",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "24 : 25",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517544.5321114,
+   "first_seen_at": "2026-09-27 16:59:04",
+   "updated_ts": 1790517573.1024084,
+   "updated_at": "2026-09-27 16:59:33",
+   "verdicts": [
+    {
+     "ts": 1790517544.5321114,
+     "at": "2026-09-27 16:59:04",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517573.1024084,
+     "at": "2026-09-27 16:59:33",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.47": {
+   "match_key": "dltv.org/matches/9018798439.47",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "23 : 24",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517481.4266963,
+   "first_seen_at": "2026-09-27 16:58:01",
+   "updated_ts": 1790517505.6053295,
+   "updated_at": "2026-09-27 16:58:25",
+   "verdicts": [
+    {
+     "ts": 1790517481.4266963,
+     "at": "2026-09-27 16:58:01",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517505.6053295,
+     "at": "2026-09-27 16:58:25",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.27": {
+   "match_key": "dltv.org/matches/9018826512.27",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "12 : 15",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517407.933868,
+   "first_seen_at": "2026-09-27 16:56:47",
+   "updated_ts": 1790517442.3337297,
+   "updated_at": "2026-09-27 16:57:22",
+   "verdicts": [
+    {
+     "ts": 1790517407.933868,
+     "at": "2026-09-27 16:56:47",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517442.3337297,
+     "at": "2026-09-27 16:57:22",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.22": {
+   "match_key": "dltv.org/matches/9018826512.22",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "10 : 12",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517374.6018336,
+   "first_seen_at": "2026-09-27 16:56:14",
+   "updated_ts": 1790517395.705906,
+   "updated_at": "2026-09-27 16:56:35",
+   "verdicts": [
+    {
+     "ts": 1790517374.6018336,
+     "at": "2026-09-27 16:56:14",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517395.705906,
+     "at": "2026-09-27 16:56:35",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.42": {
+   "match_key": "dltv.org/matches/9018798439.42",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "21 : 21",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517341.921271,
+   "first_seen_at": "2026-09-27 16:55:41",
+   "updated_ts": 1790517370.1023939,
+   "updated_at": "2026-09-27 16:56:10",
+   "verdicts": [
+    {
+     "ts": 1790517341.921271,
+     "at": "2026-09-27 16:55:41",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517370.1023939,
+     "at": "2026-09-27 16:56:10",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.21": {
+   "match_key": "dltv.org/matches/9018826512.21",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "10 : 11",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517309.875741,
+   "first_seen_at": "2026-09-27 16:55:09",
+   "updated_ts": 1790517326.4338448,
+   "updated_at": "2026-09-27 16:55:26",
+   "verdicts": [
+    {
+     "ts": 1790517309.875741,
+     "at": "2026-09-27 16:55:09",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517326.4338448,
+     "at": "2026-09-27 16:55:26",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.34": {
+   "match_key": "dltv.org/matches/9018798439.34",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "18 : 16",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517275.8022327,
+   "first_seen_at": "2026-09-27 16:54:35",
+   "updated_ts": 1790517289.4959445,
+   "updated_at": "2026-09-27 16:54:49",
+   "verdicts": [
+    {
+     "ts": 1790517275.8022327,
+     "at": "2026-09-27 16:54:35",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517289.4959445,
+     "at": "2026-09-27 16:54:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.18": {
+   "match_key": "dltv.org/matches/9018826512.18",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "9 : 9",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517239.3777647,
+   "first_seen_at": "2026-09-27 16:53:59",
+   "updated_ts": 1790517270.2995002,
+   "updated_at": "2026-09-27 16:54:30",
+   "verdicts": [
+    {
+     "ts": 1790517239.3777647,
+     "at": "2026-09-27 16:53:59",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517270.2995002,
+     "at": "2026-09-27 16:54:30",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.13": {
+   "match_key": "dltv.org/matches/9018826512.13",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "6 : 7",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517175.6659465,
+   "first_seen_at": "2026-09-27 16:52:55",
+   "updated_ts": 1790517199.669698,
+   "updated_at": "2026-09-27 16:53:19",
+   "verdicts": [
+    {
+     "ts": 1790517175.6659465,
+     "at": "2026-09-27 16:52:55",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517199.669698,
+     "at": "2026-09-27 16:53:19",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.12": {
+   "match_key": "dltv.org/matches/9018826512.12",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "6 : 6",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517151.5932984,
+   "first_seen_at": "2026-09-27 16:52:31",
+   "updated_ts": 1790517170.0313768,
+   "updated_at": "2026-09-27 16:52:50",
+   "verdicts": [
+    {
+     "ts": 1790517151.5932984,
+     "at": "2026-09-27 16:52:31",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517170.0313768,
+     "at": "2026-09-27 16:52:50",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.33": {
+   "match_key": "dltv.org/matches/9018798439.33",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "18 : 15",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517125.995379,
+   "first_seen_at": "2026-09-27 16:52:05",
+   "updated_ts": 1790517151.2578316,
+   "updated_at": "2026-09-27 16:52:31",
+   "verdicts": [
+    {
+     "ts": 1790517125.995379,
+     "at": "2026-09-27 16:52:05",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517151.2578316,
+     "at": "2026-09-27 16:52:31",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.11": {
+   "match_key": "dltv.org/matches/9018826512.11",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "6 : 5",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517100.7658613,
+   "first_seen_at": "2026-09-27 16:51:40",
+   "updated_ts": 1790517121.191134,
+   "updated_at": "2026-09-27 16:52:01",
+   "verdicts": [
+    {
+     "ts": 1790517100.7658613,
+     "at": "2026-09-27 16:51:40",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517121.191134,
+     "at": "2026-09-27 16:52:01",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.32": {
+   "match_key": "dltv.org/matches/9018798439.32",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "17 : 15",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790517070.2705903,
+   "first_seen_at": "2026-09-27 16:51:10",
+   "updated_ts": 1790517100.611557,
+   "updated_at": "2026-09-27 16:51:40",
+   "verdicts": [
+    {
+     "ts": 1790517070.2705903,
+     "at": "2026-09-27 16:51:10",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790517100.611557,
+     "at": "2026-09-27 16:51:40",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.8": {
+   "match_key": "dltv.org/matches/9018826512.8",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 4",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790517008.0758238,
+   "first_seen_at": "2026-09-27 16:50:08",
+   "updated_ts": 1790517029.0613616,
+   "updated_at": "2026-09-27 16:50:29",
+   "verdicts": [
+    {
+     "ts": 1790517008.0758238,
+     "at": "2026-09-27 16:50:08",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790517029.0613616,
+     "at": "2026-09-27 16:50:29",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.7": {
+   "match_key": "dltv.org/matches/9018826512.7",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 3",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516974.794661,
+   "first_seen_at": "2026-09-27 16:49:34",
+   "updated_ts": 1790516999.2146695,
+   "updated_at": "2026-09-27 16:49:59",
+   "verdicts": [
+    {
+     "ts": 1790516974.794661,
+     "at": "2026-09-27 16:49:34",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516999.2146695,
+     "at": "2026-09-27 16:49:59",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.31": {
+   "match_key": "dltv.org/matches/9018798439.31",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "16 : 15",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516945.7072225,
+   "first_seen_at": "2026-09-27 16:49:05",
+   "updated_ts": 1790516974.506394,
+   "updated_at": "2026-09-27 16:49:34",
+   "verdicts": [
+    {
+     "ts": 1790516945.7072225,
+     "at": "2026-09-27 16:49:05",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516974.506394,
+     "at": "2026-09-27 16:49:34",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.6": {
+   "match_key": "dltv.org/matches/9018826512.6",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 2",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516879.1925678,
+   "first_seen_at": "2026-09-27 16:47:59",
+   "updated_ts": 1790516903.3315256,
+   "updated_at": "2026-09-27 16:48:23",
+   "verdicts": [
+    {
+     "ts": 1790516879.1925678,
+     "at": "2026-09-27 16:47:59",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516903.3315256,
+     "at": "2026-09-27 16:48:23",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.5": {
+   "match_key": "dltv.org/matches/9018826512.5",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 1",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516817.6784103,
+   "first_seen_at": "2026-09-27 16:46:57",
+   "updated_ts": 1790516839.1926484,
+   "updated_at": "2026-09-27 16:47:19",
+   "verdicts": [
+    {
+     "ts": 1790516817.6784103,
+     "at": "2026-09-27 16:46:57",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516839.1926484,
+     "at": "2026-09-27 16:47:19",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.25": {
+   "match_key": "dltv.org/matches/9018798439.25",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "12 : 13",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516751.2362077,
+   "first_seen_at": "2026-09-27 16:45:51",
+   "updated_ts": 1790516778.6811204,
+   "updated_at": "2026-09-27 16:46:18",
+   "verdicts": [
+    {
+     "ts": 1790516751.2362077,
+     "at": "2026-09-27 16:45:51",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516778.6811204,
+     "at": "2026-09-27 16:46:18",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.4": {
+   "match_key": "dltv.org/matches/9018826512.4",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 0",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516720.9850626,
+   "first_seen_at": "2026-09-27 16:45:20",
+   "updated_ts": 1790516741.38241,
+   "updated_at": "2026-09-27 16:45:41",
+   "verdicts": [
+    {
+     "ts": 1790516720.9850626,
+     "at": "2026-09-27 16:45:20",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516741.38241,
+     "at": "2026-09-27 16:45:41",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.23": {
+   "match_key": "dltv.org/matches/9018798439.23",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "11 : 12",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516688.0990033,
+   "first_seen_at": "2026-09-27 16:44:48",
+   "updated_ts": 1790516712.799219,
+   "updated_at": "2026-09-27 16:45:12",
+   "verdicts": [
+    {
+     "ts": 1790516688.0990033,
+     "at": "2026-09-27 16:44:48",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516712.799219,
+     "at": "2026-09-27 16:45:12",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.1": {
+   "match_key": "dltv.org/matches/9018826512.1",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "1 : 0",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516663.2822227,
+   "first_seen_at": "2026-09-27 16:44:23",
+   "updated_ts": 1790516683.1025386,
+   "updated_at": "2026-09-27 16:44:43",
+   "verdicts": [
+    {
+     "ts": 1790516663.2822227,
+     "at": "2026-09-27 16:44:23",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516683.1025386,
+     "at": "2026-09-27 16:44:43",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.20": {
+   "match_key": "dltv.org/matches/9018798439.20",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "10 : 10",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516646.0086894,
+   "first_seen_at": "2026-09-27 16:44:06",
+   "updated_ts": 1790516663.124318,
+   "updated_at": "2026-09-27 16:44:23",
+   "verdicts": [
+    {
+     "ts": 1790516646.0086894,
+     "at": "2026-09-27 16:44:06",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516663.124318,
+     "at": "2026-09-27 16:44:23",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.19": {
+   "match_key": "dltv.org/matches/9018798439.19",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "9 : 10",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516549.1540864,
+   "first_seen_at": "2026-09-27 16:42:29",
+   "updated_ts": 1790516576.841943,
+   "updated_at": "2026-09-27 16:42:56",
+   "verdicts": [
+    {
+     "ts": 1790516549.1540864,
+     "at": "2026-09-27 16:42:29",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516576.841943,
+     "at": "2026-09-27 16:42:56",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.17": {
+   "match_key": "dltv.org/matches/9018798439.17",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "8 : 9",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516515.759729,
+   "first_seen_at": "2026-09-27 16:41:55",
+   "updated_ts": 1790516536.9056187,
+   "updated_at": "2026-09-27 16:42:16",
+   "verdicts": [
+    {
+     "ts": 1790516515.759729,
+     "at": "2026-09-27 16:41:55",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516536.9056187,
+     "at": "2026-09-27 16:42:16",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.12": {
+   "match_key": "dltv.org/matches/9018798439.12",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "6 : 6",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516412.5189295,
+   "first_seen_at": "2026-09-27 16:40:12",
+   "updated_ts": 1790516509.7901466,
+   "updated_at": "2026-09-27 16:41:49",
+   "verdicts": [
+    {
+     "ts": 1790516412.5189295,
+     "at": "2026-09-27 16:40:12",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516509.7901466,
+     "at": "2026-09-27 16:41:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018826512.0": {
+   "match_key": "dltv.org/matches/9018826512.0",
+   "match_id": "9018826512",
+   "map_num": 1,
+   "status": "live",
+   "score": "0 : 0",
+   "teams": {
+    "radiant": "Team Cake",
+    "dire": "Team avice"
+   },
+   "first_seen_ts": 1790516364.0662227,
+   "first_seen_at": "2026-09-27 16:39:24",
+   "updated_ts": 1790516387.1253839,
+   "updated_at": "2026-09-27 16:39:47",
+   "verdicts": [
+    {
+     "ts": 1790516364.0662227,
+     "at": "2026-09-27 16:39:24",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: cake vs avice"
+    },
+    {
+     "ts": 1790516387.1253839,
+     "at": "2026-09-27 16:39:47",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.10": {
+   "match_key": "dltv.org/matches/9018798439.10",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "5 : 5",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516341.7099335,
+   "first_seen_at": "2026-09-27 16:39:01",
+   "updated_ts": 1790516363.8837926,
+   "updated_at": "2026-09-27 16:39:23",
+   "verdicts": [
+    {
+     "ts": 1790516341.7099335,
+     "at": "2026-09-27 16:39:01",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516363.8837926,
+     "at": "2026-09-27 16:39:23",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.9": {
+   "match_key": "dltv.org/matches/9018798439.9",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "5 : 4",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516123.5302818,
+   "first_seen_at": "2026-09-27 16:35:23",
+   "updated_ts": 1790516143.5133736,
+   "updated_at": "2026-09-27 16:35:43",
+   "verdicts": [
+    {
+     "ts": 1790516123.5302818,
+     "at": "2026-09-27 16:35:23",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516143.5133736,
+     "at": "2026-09-27 16:35:43",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.8": {
+   "match_key": "dltv.org/matches/9018798439.8",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "4 : 4",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516085.4848845,
+   "first_seen_at": "2026-09-27 16:34:45",
+   "updated_ts": 1790516116.6162004,
+   "updated_at": "2026-09-27 16:35:16",
+   "verdicts": [
+    {
+     "ts": 1790516085.4848845,
+     "at": "2026-09-27 16:34:45",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516116.6162004,
+     "at": "2026-09-27 16:35:16",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.36": {
+   "match_key": "dltv.org/matches/9018736585.36",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "9 : 27",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790516064.8374383,
+   "first_seen_at": "2026-09-27 16:34:24",
+   "updated_ts": 1790516085.1708026,
+   "updated_at": "2026-09-27 16:34:45",
+   "verdicts": [
+    {
+     "ts": 1790516064.8374383,
+     "at": "2026-09-27 16:34:24",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790516085.1708026,
+     "at": "2026-09-27 16:34:45",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.6": {
+   "match_key": "dltv.org/matches/9018798439.6",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "4 : 2",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790516008.1732888,
+   "first_seen_at": "2026-09-27 16:33:28",
+   "updated_ts": 1790516043.7000735,
+   "updated_at": "2026-09-27 16:34:03",
+   "verdicts": [
+    {
+     "ts": 1790516008.1732888,
+     "at": "2026-09-27 16:33:28",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790516043.7000735,
+     "at": "2026-09-27 16:34:03",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.30": {
+   "match_key": "dltv.org/matches/9018736585.30",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "9 : 21",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515975.5294104,
+   "first_seen_at": "2026-09-27 16:32:55",
+   "updated_ts": 1790516007.4772086,
+   "updated_at": "2026-09-27 16:33:27",
+   "verdicts": [
+    {
+     "ts": 1790515975.5294104,
+     "at": "2026-09-27 16:32:55",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790516007.4772086,
+     "at": "2026-09-27 16:33:27",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.5": {
+   "match_key": "dltv.org/matches/9018798439.5",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "4 : 1",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515907.329075,
+   "first_seen_at": "2026-09-27 16:31:47",
+   "updated_ts": 1790515929.6257644,
+   "updated_at": "2026-09-27 16:32:09",
+   "verdicts": [
+    {
+     "ts": 1790515907.329075,
+     "at": "2026-09-27 16:31:47",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515929.6257644,
+     "at": "2026-09-27 16:32:09",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.4": {
+   "match_key": "dltv.org/matches/9018798439.4",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "3 : 1",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515839.7436676,
+   "first_seen_at": "2026-09-27 16:30:39",
+   "updated_ts": 1790515868.1686234,
+   "updated_at": "2026-09-27 16:31:08",
+   "verdicts": [
+    {
+     "ts": 1790515839.7436676,
+     "at": "2026-09-27 16:30:39",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515868.1686234,
+     "at": "2026-09-27 16:31:08",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.29": {
+   "match_key": "dltv.org/matches/9018736585.29",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "9 : 20",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515809.9247367,
+   "first_seen_at": "2026-09-27 16:30:09",
+   "updated_ts": 1790515826.960117,
+   "updated_at": "2026-09-27 16:30:26",
+   "verdicts": [
+    {
+     "ts": 1790515809.9247367,
+     "at": "2026-09-27 16:30:09",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515826.960117,
+     "at": "2026-09-27 16:30:26",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.3": {
+   "match_key": "dltv.org/matches/9018798439.3",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "2 : 1",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515776.609163,
+   "first_seen_at": "2026-09-27 16:29:36",
+   "updated_ts": 1790515797.7187624,
+   "updated_at": "2026-09-27 16:29:57",
+   "verdicts": [
+    {
+     "ts": 1790515776.609163,
+     "at": "2026-09-27 16:29:36",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515797.7187624,
+     "at": "2026-09-27 16:29:57",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.2": {
+   "match_key": "dltv.org/matches/9018798439.2",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "1 : 1",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515729.7727637,
+   "first_seen_at": "2026-09-27 16:28:49",
+   "updated_ts": 1790515769.8324018,
+   "updated_at": "2026-09-27 16:29:29",
+   "verdicts": [
+    {
+     "ts": 1790515729.7727637,
+     "at": "2026-09-27 16:28:49",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515769.8324018,
+     "at": "2026-09-27 16:29:29",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.27": {
+   "match_key": "dltv.org/matches/9018736585.27",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "7 : 20",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515709.2626998,
+   "first_seen_at": "2026-09-27 16:28:29",
+   "updated_ts": 1790515729.612686,
+   "updated_at": "2026-09-27 16:28:49",
+   "verdicts": [
+    {
+     "ts": 1790515709.2626998,
+     "at": "2026-09-27 16:28:29",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515729.612686,
+     "at": "2026-09-27 16:28:49",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.1": {
+   "match_key": "dltv.org/matches/9018798439.1",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "1 : 0",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515671.7980037,
+   "first_seen_at": "2026-09-27 16:27:51",
+   "updated_ts": 1790515703.8503163,
+   "updated_at": "2026-09-27 16:28:23",
+   "verdicts": [
+    {
+     "ts": 1790515671.7980037,
+     "at": "2026-09-27 16:27:51",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515703.8503163,
+     "at": "2026-09-27 16:28:23",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.23": {
+   "match_key": "dltv.org/matches/9018736585.23",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "5 : 18",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515638.6382852,
+   "first_seen_at": "2026-09-27 16:27:18",
+   "updated_ts": 1790515667.1812954,
+   "updated_at": "2026-09-27 16:27:47",
+   "verdicts": [
+    {
+     "ts": 1790515638.6382852,
+     "at": "2026-09-27 16:27:18",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515667.1812954,
+     "at": "2026-09-27 16:27:47",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.19": {
+   "match_key": "dltv.org/matches/9018736585.19",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "4 : 15",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515561.423778,
+   "first_seen_at": "2026-09-27 16:26:01",
+   "updated_ts": 1790515595.276479,
+   "updated_at": "2026-09-27 16:26:35",
+   "verdicts": [
+    {
+     "ts": 1790515561.423778,
+     "at": "2026-09-27 16:26:01",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515595.276479,
+     "at": "2026-09-27 16:26:35",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.18": {
+   "match_key": "dltv.org/matches/9018736585.18",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "3 : 15",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515479.8147614,
+   "first_seen_at": "2026-09-27 16:24:39",
+   "updated_ts": 1790515523.024918,
+   "updated_at": "2026-09-27 16:25:23",
+   "verdicts": [
+    {
+     "ts": 1790515479.8147614,
+     "at": "2026-09-27 16:24:39",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515523.024918,
+     "at": "2026-09-27 16:25:23",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018798439.0": {
+   "match_key": "dltv.org/matches/9018798439.0",
+   "match_id": "9018798439",
+   "map_num": 2,
+   "status": "live",
+   "score": "0 : 0",
+   "teams": {
+    "radiant": "Team Stray",
+    "dire": "TEAM YBN"
+   },
+   "first_seen_ts": 1790515426.3027632,
+   "first_seen_at": "2026-09-27 16:23:46",
+   "updated_ts": 1790515473.4354506,
+   "updated_at": "2026-09-27 16:24:33",
+   "verdicts": [
+    {
+     "ts": 1790515426.3027632,
+     "at": "2026-09-27 16:23:46",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: stray vs ybn"
+    },
+    {
+     "ts": 1790515473.4354506,
+     "at": "2026-09-27 16:24:33",
+     "kind": "reject",
+     "reason": "star_signal_rejected_early_only_below_threshold",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (only Early без All/Late: требуется Early NW WR>=65 + Early Winner WR>=70 с >= 2 star hits) - матч пропущен"
+    }
+   ]
+  },
+  "dltv.org/matches/9018736585.15": {
+   "match_key": "dltv.org/matches/9018736585.15",
+   "match_id": "9018736585",
+   "map_num": 1,
+   "status": "live",
+   "score": "2 : 13",
+   "teams": {
+    "radiant": "Natus Vincere",
+    "dire": "Team Yandex"
+   },
+   "first_seen_ts": 1790515391.278865,
+   "first_seen_at": "2026-09-27 16:23:11",
+   "updated_ts": 1790515415.0928833,
+   "updated_at": "2026-09-27 16:23:35",
+   "verdicts": [
+    {
+     "ts": 1790515391.278865,
+     "at": "2026-09-27 16:23:11",
+     "kind": "info",
+     "reason": "match_parsed",
+     "verdict": "📝 Матч распарсен: natusvincere vs yandex"
+    },
+    {
+     "ts": 1790515415.0928833,
+     "at": "2026-09-27 16:23:35",
+     "kind": "reject",
+     "reason": "star_signal_rejected_late_wr_below_65_with_opposite_block",
+     "verdict": "⚠️ ВЕРДИКТ: ОТКАЗ (Late WR62 < 65 с противоположным блоком) - матч пропущен"
+    }
+   ]
+  }
+ }
+}
