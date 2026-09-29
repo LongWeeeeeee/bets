@@ -33,6 +33,7 @@ import resource
 import subprocess
 import re
 import secrets
+import unicodedata
 from urllib.parse import urlparse
 import shlex
 import shutil
@@ -902,6 +903,14 @@ def _winline_canonical_team_id(raw_id: Any, team_name: Any) -> str:
 def _winline_sourcetv_series_key(match: Any) -> str:
     """Stable SourceTV series identity across per-map Valve match IDs."""
     payload = match if isinstance(match, dict) else {}
+    _learn_team_denylist_side_aliases(
+        payload.get("radiant_team_name"), payload.get("radiant_team_id"),
+        payload.get("dire_team_name"), payload.get("dire_team_id"),
+    )
+    _learn_team_denylist_side_aliases(
+        payload.get("dire_team_name"), payload.get("dire_team_id"),
+        payload.get("radiant_team_name"), payload.get("radiant_team_id"),
+    )
     explicit = str(payload.get("series_id") or "").strip()
     if explicit and explicit not in {"0", "none", "null"}:
         return f"sourcetv:series:{explicit}"
@@ -5277,6 +5286,12 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
 # egxrdemxn: pro account and active persona alt. User request 26.09.2026:
 # forbid bets ON the player's team, while bets on the opponent stay allowed.
 SKIPPED_PLAYER_ACCOUNT_IDS: set = {390015464, 1250582363}
+
+# User request 29.09.2026: never send bets ON Yangon Galacticos; the
+# opponent remains eligible, including in the same match.
+SKIPPED_BET_TEAM_IDS: set = {8944230, 9546449}
+SKIPPED_BET_TEAM_NAMES: set = {"yangongalactico"}
+SKIPPED_BET_TEAM_EXACT_ALIASES: set = {"yangon"}
 
 # Импорт Ultimate Inference предсказателя
 if str(SRC_DIR) not in sys.path:
@@ -16448,6 +16463,32 @@ def _try_release_delayed_from_live_recheck(
     return True
 
 
+def _drop_team_denylisted_delayed(
+    match_key: str, message_text: str, payload: Dict[str, Any],
+) -> bool:
+    block = _team_denylist_reject_for_delivery(
+        match_key,
+        message_text,
+        selected_side=payload.get("networth_target_side") or payload.get("kills_target_side"),
+        stake_multiplier_context=payload.get("stake_multiplier_context"),
+        add_url_details=payload.get("add_url_details"),
+        current_map_observation=payload.get("current_map_observation"),
+        map_num=payload.get("map_num"),
+    )
+    if block is None:
+        return False
+    verdict = (
+        "   🚫 Ставка заблокирована: команда из denylist "
+        f"({block['target_team']}) — {match_key}"
+    )
+    _record_delivery_gate_block(
+        match_key, message_text, block,
+        reason="skip_team_denylist", verdict=verdict,
+    )
+    _drop_delayed_match(match_key, reason="skip_team_denylist")
+    return True
+
+
 def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> None:
     with monitored_matches_lock:
         if only_match_key is None:
@@ -16462,6 +16503,8 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
     for match_key, payload in queued_items:
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
+            continue
+        if _drop_team_denylisted_delayed(match_key, str(payload.get("message") or ""), payload):
             continue
         queued_lineups = payload.get("player_denylist_lineups")
         if isinstance(queued_lineups, dict):
@@ -17653,6 +17696,8 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 game_time_seconds=current_game_time,
                 radiant_lead=current_radiant_lead,
             )
+            if _drop_team_denylisted_delayed(match_key, delivery_message_text, payload):
+                continue
             delayed_observation = None
             stored_obs = payload.get("current_map_observation") if isinstance(payload.get("current_map_observation"), dict) else {}
             if isinstance(delayed_state, dict):
@@ -33193,6 +33238,73 @@ _PLAYER_DENYLIST_TEAM_NAME_TTL_SECONDS = 12 * 60 * 60
 _PLAYER_DENYLIST_LOGGED_BLOCKS: set = set()
 _PLAYER_DENYLIST_LOG_LIMIT = 512
 _PLAYER_DENYLIST_LOG_LOCK = threading.Lock()
+_TEAM_DENYLIST_LOGGED_BLOCKS: set = set()
+_TEAM_DENYLIST_LOG_LIMIT = 512
+_TEAM_DENYLIST_LOG_LOCK = threading.Lock()
+_TEAM_DENYLIST_LEARNED_NAMES: set = set()
+_TEAM_DENYLIST_LEARNED_LIMIT = 256
+_TEAM_DENYLIST_ID_ALIASES: Optional[set] = None
+_TEAM_DENYLIST_ID_ALIASES_TS: Optional[float] = None
+_TEAM_DENYLIST_ID_ALIASES_TTL_SECONDS = 3600
+_TEAM_DENYLIST_ALIAS_LOCK = threading.Lock()
+
+
+def _team_denylist_name_token(name: Any) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(name or ""))
+    return _normalize_signal_header_token(
+        "".join(char for char in decomposed if not unicodedata.combining(char))
+    )
+
+
+def _team_denylist_id_aliases() -> set:
+    global _TEAM_DENYLIST_ID_ALIASES, _TEAM_DENYLIST_ID_ALIASES_TS
+    now = time.time()
+    if (_TEAM_DENYLIST_ID_ALIASES is None or _TEAM_DENYLIST_ID_ALIASES_TS is None
+            or now - _TEAM_DENYLIST_ID_ALIASES_TS >= _TEAM_DENYLIST_ID_ALIASES_TTL_SECONDS):
+        with _TEAM_DENYLIST_ALIAS_LOCK:
+            if (_TEAM_DENYLIST_ID_ALIASES is None or _TEAM_DENYLIST_ID_ALIASES_TS is None
+                    or now - _TEAM_DENYLIST_ID_ALIASES_TS >= _TEAM_DENYLIST_ID_ALIASES_TTL_SECONDS):
+                _ensure_dynamic_tier2_overlay()
+                from id_to_names import tier_one_teams, tier_two_teams
+
+                aliases = set()
+                for source in (tier_one_teams, tier_two_teams):
+                    for name, ids in source.items():
+                        if SKIPPED_BET_TEAM_IDS.intersection(_extract_candidate_team_ids(ids)):
+                            token = _team_denylist_name_token(name)
+                            if token:
+                                aliases.add(token)
+                _TEAM_DENYLIST_ID_ALIASES = aliases
+                _TEAM_DENYLIST_ID_ALIASES_TS = now
+    return _TEAM_DENYLIST_ID_ALIASES
+
+
+def _learn_team_denylist_side_aliases(
+    name: Any, team_ids: Any, other_name: Any, other_team_ids: Any = None,
+) -> None:
+    candidate_ids = _extract_candidate_team_ids(team_ids)
+    banned_ids = SKIPPED_BET_TEAM_IDS.intersection(candidate_ids)
+    if not banned_ids or any(team_id not in SKIPPED_BET_TEAM_IDS for team_id in candidate_ids):
+        return
+    if (SKIPPED_BET_TEAM_IDS.intersection(_extract_candidate_team_ids(other_team_ids))
+            or _is_denylisted_bet_team_name(other_name)):
+        return
+    other_tokens = {
+        _team_denylist_name_token(other_name),
+        _team_denylist_name_token(normalize_team_name_display(str(other_name or ""))),
+    }
+    original = str(name or "").strip()
+    for variant in (original, normalize_team_name_display(original)):
+        token = _team_denylist_name_token(variant)
+        if not token or token in other_tokens:
+            continue
+        with _TEAM_DENYLIST_ALIAS_LOCK:
+            if token in _TEAM_DENYLIST_LEARNED_NAMES:
+                continue
+            if len(_TEAM_DENYLIST_LEARNED_NAMES) >= _TEAM_DENYLIST_LEARNED_LIMIT:
+                _TEAM_DENYLIST_LEARNED_NAMES.pop()
+            _TEAM_DENYLIST_LEARNED_NAMES.add(token)
+            logger.info("team denylist: learned alias %s for team_id %s", token, min(banned_ids))
 
 
 def _player_denylist_map_key(match_key: str, map_num: Any) -> Tuple[str, Optional[int]]:
@@ -33212,6 +33324,8 @@ def _remember_player_denylist_lineup(
     dire_account_ids: List[int],
     radiant_team_name: Any,
     dire_team_name: Any,
+    radiant_team_ids: Any = None,
+    dire_team_ids: Any = None,
 ) -> None:
     key = _player_denylist_map_key(match_key, map_num)
     base_key = (_signal_fingerprint_registry_key(match_key), None)
@@ -33220,7 +33334,15 @@ def _remember_player_denylist_lineup(
         "dire": list(dire_account_ids),
         "radiant_team": str(radiant_team_name or ""),
         "dire_team": str(dire_team_name or ""),
+        "radiant_team_ids": _extract_candidate_team_ids(radiant_team_ids),
+        "dire_team_ids": _extract_candidate_team_ids(dire_team_ids),
     }
+    _learn_team_denylist_side_aliases(
+        radiant_team_name, radiant_team_ids, dire_team_name, dire_team_ids,
+    )
+    _learn_team_denylist_side_aliases(
+        dire_team_name, dire_team_ids, radiant_team_name, radiant_team_ids,
+    )
     for stored_key in {key, base_key}:
         _PLAYER_DENYLIST_BY_MAP[stored_key] = snapshot
     while len(_PLAYER_DENYLIST_BY_MAP) > _PLAYER_DENYLIST_MAP_LIMIT:
@@ -33248,7 +33370,7 @@ def _remember_player_denylist_lineup(
 
 
 def _player_denylist_header_team(message_text: str) -> Optional[str]:
-    first_line = str(message_text or "").splitlines()[:1]
+    first_line = str(message_text or "").strip().splitlines()[:1]
     if not first_line or not first_line[0].strip().startswith("СТАВКА НА "):
         return None
     team = first_line[0].strip()[len("СТАВКА НА "):]
@@ -33260,6 +33382,42 @@ def _player_denylist_header_team(message_text: str) -> Optional[str]:
     team = re.sub(r"^килы от\s*", "", team)
     team = re.sub(r"^Ранние килы(?:\s+\d+-\d+)?\s*", "", team)
     return team.strip() or None
+
+
+def _is_denylisted_bet_team_name(name: Any) -> bool:
+    token = _team_denylist_name_token(name)
+    if not token:
+        return False
+    with _TEAM_DENYLIST_ALIAS_LOCK:
+        if token in _TEAM_DENYLIST_LEARNED_NAMES:
+            return True
+    return (
+        token in SKIPPED_BET_TEAM_EXACT_ALIASES
+        or token in _team_denylist_id_aliases()
+        or any(banned in token for banned in SKIPPED_BET_TEAM_NAMES)
+    )
+
+
+def _team_denylist_reject_for_delivery(
+    match_key: str,
+    message_text: str,
+    *,
+    selected_side: Any,
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    add_url_details: Optional[dict],
+    current_map_observation: Any,
+    map_num: Any = None,
+) -> Optional[Dict[str, Any]]:
+    header_team = _player_denylist_header_team(message_text)
+    if header_team is None:
+        return None  # map totals and pipeline checks have no team target
+    if not _is_denylisted_bet_team_name(header_team):
+        return None
+    side = str(selected_side or "").strip().lower()
+    return {
+        "target_team": header_team,
+        "target_side": side if side in {"radiant", "dire"} else None,
+    }
 
 
 def _player_denylist_reject_for_delivery(
@@ -34138,6 +34296,37 @@ def _deliver_and_persist_signal(
                 player_denylist_block,
                 reason="skip_player_denylist",
                 verdict=verdict,
+            )
+        return False
+    team_denylist_block = _team_denylist_reject_for_delivery(
+        match_key,
+        message_text,
+        selected_side=selected_side,
+        stake_multiplier_context=stake_multiplier_context,
+        add_url_details=add_url_details,
+        current_map_observation=current_map_observation,
+        map_num=map_num,
+    )
+    if team_denylist_block is not None:
+        verdict = (
+            "   🚫 Ставка заблокирована: команда из denylist "
+            f"({team_denylist_block['target_team']}) — {match_key}"
+        )
+        log_key = (_signal_fingerprint_registry_key(match_key),
+                   team_denylist_block.get("target_side") or
+                   _normalize_signal_header_token(team_denylist_block["target_team"]))
+        with _TEAM_DENYLIST_LOG_LOCK:
+            should_log = log_key not in _TEAM_DENYLIST_LOGGED_BLOCKS
+            if should_log:
+                _TEAM_DENYLIST_LOGGED_BLOCKS.add(log_key)
+                if len(_TEAM_DENYLIST_LOGGED_BLOCKS) > _TEAM_DENYLIST_LOG_LIMIT:
+                    _TEAM_DENYLIST_LOGGED_BLOCKS.clear()
+                    _TEAM_DENYLIST_LOGGED_BLOCKS.add(log_key)
+        if should_log:
+            print(verdict)
+            _record_delivery_gate_block(
+                match_key, message_text, team_denylist_block,
+                reason="skip_team_denylist", verdict=verdict,
             )
         return False
     # Единая точка запрета x0.5 на ELO-андердога: перекрывает немедленный
@@ -41077,6 +41266,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dire_account_ids,
             radiant_team_name_original,
             dire_team_name_original,
+            radiant_team_ids if is_sourcetv_card else None,
+            dire_team_ids if is_sourcetv_card else None,
         )
         skipped_player_hits = _find_skipped_player_account_ids(
             radiant_account_ids,
