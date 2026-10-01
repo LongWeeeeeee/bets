@@ -18674,6 +18674,9 @@ def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
             return "RU"
         if host.startswith("154.195."):
             return "DE"
+        # Measured 01.10.2026 via ip-api through each proxy: US / EGIHosting.
+        if host.startswith("142.252."):
+            return "US"
         # Current US residential inventory
         if host.startswith("172.121.") or ".us." in host or host.endswith(".us"):
             return "US"
@@ -18726,29 +18729,34 @@ def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
 
 
 def _bookmaker_winline_proxy_candidates() -> List[Dict[str, Any]]:
-    """Winline: explicit DE(+optional US) only; RU/unknown/empty excluded.
+    """Winline: up to 5 DE then 5 US authenticated HTTP(S) proxies, URL-deduped.
 
-    Policy accepts currently available DE/US inventory:
-    - up to 5 DE candidates
-    - up to 1 US candidate when present
-    - 5 DE + 0 US is valid (no fabricated US entry)
-    Independent allowlist at filter: only DE/US pass; never promote RU/unknown.
-    Credentials never logged via safe label helper.
+    RU/unknown, SOCKS and malformed URLs are excluded; no direct fallback.
     """
     pool = _bookmaker_live_proxy_pool()
     de: List[Dict[str, Any]] = []
     us: List[Dict[str, Any]] = []
+    seen = set()
     for p in pool:
         if not isinstance(p, dict):
             continue
         country = str(p.get("country") or "").strip().upper()
+        if country not in {"DE", "US"}:
+            continue
+        url = str(p.get("url") or "").strip()
+        try:
+            if urlparse(url).scheme.lower() not in {"http", "https"}:
+                continue
+        except ValueError:
+            continue
+        if url in seen or not _camoufox_proxy_kwargs_from_url(url):
+            continue
+        seen.add(url)
         if country == "DE":
             de.append(p)
         elif country == "US":
             us.append(p)
-        # RU / unknown / empty / malformed: skip without error
-    # Prefer DE, then optional US. Empty pool is allowed (caller decides direct/fallback).
-    return de[:5] + us[:1]
+    return de[:5] + us[:5]
 
 
 def _bookmaker_proxy_safe_label(proxy_item: Any) -> str:
@@ -18781,16 +18789,21 @@ _bookmaker_shared_proxy_index: int = 0
 _bookmaker_shared_proxy_lock = threading.Lock()
 
 
+class WinlineProxyUnavailable(RuntimeError):
+    """No eligible Winline egress route exists; never substitute direct."""
+
+
+class WinlineDirectRouteRefused(RuntimeError):
+    """A Winline job cannot run on a browser without a Winline proxy."""
+
+
 def _bookmaker_shared_winline_routes() -> List[Dict[str, Any]]:
-    """Direct first; configured DE/US proxies remain automatic fallbacks."""
-    return [
-        {"url": "", "country": "DIRECT"},
-        *list(_bookmaker_winline_proxy_candidates() or []),
-    ]
+    """Only configured, eligible DE/US proxies; never a direct route."""
+    return list(_bookmaker_winline_proxy_candidates() or [])
 
 
 def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
-    """Pick current direct/proxy Winline route; never log credentials."""
+    """Pick current Winline proxy or fail closed; never log credentials."""
     global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
     with _bookmaker_shared_proxy_lock:
         if not _bookmaker_shared_proxy_candidates:
@@ -18798,7 +18811,7 @@ def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
             _bookmaker_shared_proxy_index = 0
         candidates = list(_bookmaker_shared_proxy_candidates)
         if not candidates:
-            return {}
+            raise WinlineProxyUnavailable("Winline: no usable proxy route")
         idx_local = _bookmaker_shared_proxy_index % len(candidates)
         item = candidates[idx_local]
     url = ""
@@ -18806,13 +18819,17 @@ def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
         url = str(item.get("url") or item.get("proxy") or "").strip()
     else:
         url = str(item or "").strip()
-    if not url:
-        print("   🌐 Shared Camoufox Winline route: direct")
-        return {}
+    try:
+        eligible_scheme = urlparse(url).scheme.lower() in {"http", "https"}
+    except ValueError:
+        eligible_scheme = False
+    if not eligible_scheme:
+        raise WinlineProxyUnavailable("Winline: unusable proxy route")
     kwargs = _camoufox_proxy_kwargs_from_url(url)
-    if kwargs:
-        with contextlib.suppress(Exception):
-            print(f"   🌐 Shared Camoufox Winline proxy: {_bookmaker_proxy_safe_label(item)}")
+    if not kwargs:
+        raise WinlineProxyUnavailable("Winline: unusable proxy route")
+    with contextlib.suppress(Exception):
+        print(f"   🌐 Shared Camoufox Winline proxy: {_bookmaker_proxy_safe_label(item)}")
     return kwargs
 
 
@@ -18865,28 +18882,21 @@ def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
             nxt = _bookmaker_shared_proxy_candidates[_bookmaker_shared_proxy_index % len(_bookmaker_shared_proxy_candidates)]
             label = _bookmaker_proxy_safe_label(nxt)
         else:
-            label = "none"
+            label = ""
     reason_s = str(reason or "rotate").strip() or "rotate"
+    if not label:
+        # No Winline proxy to rotate to: Winline jobs are refused anyway, and a
+        # reset would only relaunch the browser under ProTracker on every
+        # refused Winline poll.
+        return
     print(f"   🔄 Shared Camoufox proxy rotate ({reason_s}) -> {label}")
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()
 
 
 def _bookmaker_restore_shared_camoufox_direct_route(*, reason: str = "") -> bool:
-    """Make a valid fallback-page probe one-shot and restore the primary route."""
-    global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
-    with _bookmaker_shared_proxy_lock:
-        if not _bookmaker_shared_proxy_candidates:
-            _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
-            _bookmaker_shared_proxy_index = 0
-        if not _bookmaker_shared_proxy_candidates or _bookmaker_shared_proxy_index == 0:
-            return False
-        _bookmaker_shared_proxy_index = 0
-    reason_s = str(reason or "valid_page").strip() or "valid_page"
-    print(f"   ↩️ Shared Camoufox route restore ({reason_s}) -> direct")
-    with contextlib.suppress(Exception):
-        _shared_camoufox_session.request_reset()
-    return True
+    """Compatibility no-op: valid pages keep their working proxy without reset."""
+    return False
 
 
 def _bookmaker_refresh_snapshot_via_shared_camoufox(match_key: str) -> Optional[dict]:
@@ -34613,8 +34623,8 @@ def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
                 "password": parsed.password,
             }
         }
-    except Exception as exc:
-        print(f"⚠️ Camoufox proxy config failed for {proxy_value[:50]}...: {exc}")
+    except Exception:
+        print("⚠️ Camoufox proxy config failed: invalid URL or missing credentials")
         return {}
 
 
@@ -34704,7 +34714,7 @@ def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, 
         options["humanize"] = humanize
     if window is not None:
         options["window"] = window
-    options["block_webrtc"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC", True)
+    options["block_webrtc"] = bool(proxy_kwargs) or _camoufox_env_bool("CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC", True)
     # Disable cache to avoid fingerprinting via cache timing and ensure fresh responses
     options["enable_cache"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_ENABLE_CACHE", False)
     if proxy_kwargs and _camoufox_env_bool("CYBERSCORE_CAMOUFOX_GEOIP", True):
@@ -35265,6 +35275,8 @@ class _SharedCamoufoxSession:
         future = None
         launched_at = 0.0
         jobs_since_launch = 0
+        browser_has_winline_proxy = False
+        last_winline_refusal_log = None
         # Перезапуск браузера = новый случайный fingerprint (UA/ОС/screen/WebGL):
         # ротируем чаще, чтобы не светить один отпечаток часами.
         reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 60))
@@ -35290,7 +35302,8 @@ class _SharedCamoufoxSession:
             self._named_page_used = {}
 
         def _close_browser(reason: str) -> None:
-            nonlocal browser_cm, browser, launched_at, jobs_since_launch
+            nonlocal browser_cm, browser, launched_at, jobs_since_launch, browser_has_winline_proxy
+            browser_has_winline_proxy = False
             if generation != self._generation:
                 browser_cm = None
                 browser = None
@@ -35335,17 +35348,16 @@ class _SharedCamoufoxSession:
                 self._kill_owned_driver(driver_pid)
 
         def _ensure_browser() -> Any:
-            nonlocal browser_cm, browser, launched_at
+            nonlocal browser_cm, browser, launched_at, browser_has_winline_proxy
             if browser is not None:
                 return browser
-            # Winline route selection owns the empty-dict meaning: it is an
-            # explicit direct route, not a request for the CyberScore proxy.
-            proxy_kwargs = {}
             winline_route_selected = False
-            with contextlib.suppress(Exception):
+            try:
                 proxy_kwargs = _bookmaker_select_shared_camoufox_proxy_kwargs()
-                winline_route_selected = True
-            if not proxy_kwargs and not winline_route_selected:
+                winline_route_selected = bool(proxy_kwargs.get("proxy"))
+            except WinlineProxyUnavailable:
+                # Non-Winline jobs may still use the CyberScore route (direct
+                # in sourcetv mode). The callback guard below refuses Winline.
                 proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
             browser_options = _shared_camoufox_browser_options(proxy_kwargs)
@@ -35372,6 +35384,7 @@ class _SharedCamoufoxSession:
                 print(f"⚠️ Shared Camoufox launch failed ({type(exc).__name__}), retry fallback: {exc}")
                 browser_cm = camoufox.Camoufox(**fallback_options)
                 browser = browser_cm.__enter__()
+            browser_has_winline_proxy = winline_route_selected
             launched_at = time.time()
             self._driver_pid = self._driver_pid_for_browser(browser)
             print(f"   🌐 Shared Camoufox browser created ({proxy_label})")
@@ -35412,6 +35425,8 @@ class _SharedCamoufoxSession:
                         break
                     _job_t_browser = time.monotonic()
                     _mark_active(label)
+                    if str(label).lower().startswith(("winline", "bookmaker")) and not browser_has_winline_proxy:
+                        raise WinlineDirectRouteRefused("Winline: proxy required; server IP egress forbidden")
                     result = callback(active_browser)
                     if generation != self._generation:
                         break
@@ -35428,6 +35443,16 @@ class _SharedCamoufoxSession:
                     jobs_since_launch += 1
                     future.set_result(result)
                     _note_proxy_success(CURRENT_PROXY)
+                except (WinlineDirectRouteRefused, WinlineProxyUnavailable) as exc:
+                    if generation != self._generation:
+                        break
+                    future.set_exception(exc)
+                    now = time.monotonic()
+                    if last_winline_refusal_log is None or now - last_winline_refusal_log >= 60.0:
+                        last_winline_refusal_log = now
+                        print(f"   ⛔ Winline: нет прокси — прямой выход с IP сервера запрещён, задача '{label}' пропущена")
+                    # A policy refusal is not a network error: keep the browser
+                    # for ProTracker; no proxy rotation or reset flap.
                 except Exception as exc:
                     if generation != self._generation:
                         break
@@ -35822,6 +35847,9 @@ def _run_shared_camoufox_job(
             reset_on_error=reset_on_error,
             priority=effective_priority,
         )
+    except (WinlineDirectRouteRefused, WinlineProxyUnavailable):
+        # Refusal must also bypass this outer retry/reset path.
+        raise
     except Exception:
         if not retry:
             raise

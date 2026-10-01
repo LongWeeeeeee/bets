@@ -117,7 +117,14 @@ def _install_counting_camoufox(monkeypatch, factory: Optional[_CountingCamoufoxF
     monkeypatch.setattr(cs, "CAMOUFOX_AVAILABLE", True, raising=False)
     monkeypatch.setattr(cs, "camoufox", factory, raising=False)
     monkeypatch.setattr(cs, "_cyberscore_camoufox_proxy_kwargs", lambda: {}, raising=False)
-    monkeypatch.setattr(cs, "_bookmaker_select_shared_camoufox_proxy_kwargs", lambda: {}, raising=False)
+    # Winline jobs run only on a browser launched with a Winline proxy
+    # (no direct server-IP route since 01.10.2026): fake an authenticated one.
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_select_shared_camoufox_proxy_kwargs",
+        lambda: {"proxy": {"server": "http://127.0.0.1:9", "username": "u", "password": "p"}},
+        raising=False,
+    )
     monkeypatch.setattr(cs, "_note_proxy_success", lambda *_a, **_k: None, raising=False)
     monkeypatch.setattr(cs, "_bookmaker_rotate_shared_camoufox_proxy", lambda **_k: None, raising=False)
     return factory

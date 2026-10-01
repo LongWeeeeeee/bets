@@ -375,8 +375,8 @@ def _parse_proxy(proxy_url: str) -> Dict[str, str]:
 
 
 def _camoufox_proxy_kwargs(proxy_url: Optional[str]) -> Dict[str, Any]:
-    if not proxy_url:
-        return {}
+    if not str(proxy_url or "").strip():
+        raise RuntimeError("Winline: proxy required; direct server IP egress forbidden")
     parsed = _parse_proxy(proxy_url)
     return {
         "proxy": {

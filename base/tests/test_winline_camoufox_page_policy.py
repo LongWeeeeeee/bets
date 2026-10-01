@@ -86,12 +86,17 @@ def test_camoufox_async_runner_moves_sync_browser_to_worker_thread(monkeypatch) 
         parse_kwargs.append(dict(_kwargs))
         return "parsed"
 
+    launch_kwargs: List[Dict[str, Any]] = []
+
+    def _fake_camoufox(**kwargs):
+        launch_kwargs.append(dict(kwargs))
+        return _CamoufoxContext()
+
     monkeypatch.setattr(odds_parser, "CAMOUFOX_AVAILABLE", True)
-    monkeypatch.setattr(
-        odds_parser,
-        "camoufox",
-        SimpleNamespace(Camoufox=lambda **_kwargs: _CamoufoxContext()),
-    )
+    monkeypatch.setattr(odds_parser, "camoufox", SimpleNamespace(Camoufox=_fake_camoufox))
+    # Winline never goes direct from the server IP (01.10.2026): the CLI runner
+    # needs a proxy; do not depend on the local keys.py providing one.
+    monkeypatch.setattr(odds_parser, "BOOKMAKER_PROXY_URL", "http://u:p@127.0.0.1:9")
     monkeypatch.setattr(odds_parser, "parse_site_in_camoufox_page_async", _fake_parse)
 
     result = asyncio.run(
@@ -108,6 +113,7 @@ def test_camoufox_async_runner_moves_sync_browser_to_worker_thread(monkeypatch) 
     assert result == ["parsed"]
     assert events == ["enter", "new_page", "exit"]
     assert parse_kwargs[0]["acquisition_mode"] == "initial_goto"
+    assert launch_kwargs and launch_kwargs[0]["proxy"]["server"] == "http://127.0.0.1:9"
 
 
 def test_compact_sourcetv_team_name_matches_spaced_winline_name() -> None:

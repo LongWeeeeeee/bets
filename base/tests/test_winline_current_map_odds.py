@@ -957,8 +957,8 @@ def test_prepare_message_uses_odds_state_machine_production_path(monkeypatch) ->
     assert "terminal_skip" in reason4
 
 
-def test_shared_camoufox_uses_direct_then_de_us_fallback_policy(monkeypatch) -> None:
-    """Shared Winline starts direct and retains configured DE/US fallbacks."""
+def test_shared_camoufox_uses_proxy_only_de_us_policy(monkeypatch) -> None:
+    """Shared Winline starts on a proxy and keeps proxies after rotation."""
     launches: List[dict] = []
 
     class _FakeBrowser:
@@ -997,20 +997,20 @@ def test_shared_camoufox_uses_direct_then_de_us_fallback_policy(monkeypatch) -> 
     assert all(c.get("country") == "DE" for c in cands)
     assert not any(c.get("country") == "RU" for c in cands)
 
-    direct_session = cs._SharedCamoufoxSession()
-    assert direct_session.submit("direct-job", lambda _b: "ok", timeout=5) == "ok"
+    first_session = cs._SharedCamoufoxSession()
+    assert first_session.submit("winline-first", lambda _b: "ok", timeout=5) == "ok"
     assert launches, "browser must launch"
-    assert launches[0].get("proxy") is None
-    direct_session.close()
+    assert launches[0]["proxy"]["server"] == "http://de0.example:8000"
+    first_session.close()
 
-    # A recovery rotation advances from direct to the first configured proxy.
+    # A recovery rotation advances to the next configured proxy.
     cs._bookmaker_shared_proxy_index = 1
     proxy_session = cs._SharedCamoufoxSession()
-    assert proxy_session.submit("proxy-job", lambda _b: "ok", timeout=5) == "ok"
+    assert proxy_session.submit("winline-rotated", lambda _b: "ok", timeout=5) == "ok"
     proxy = launches[-1].get("proxy")
     assert isinstance(proxy, dict)
     server = str(proxy.get("server") or "")
-    assert "de0.example" in server or "de" in server
+    assert server == "http://de1.example:8000"
     assert "should-not-use" not in server
     # Safe label never leaks credentials
     label = cs._bookmaker_proxy_safe_label(de_items[0])
@@ -1019,15 +1019,15 @@ def test_shared_camoufox_uses_direct_then_de_us_fallback_policy(monkeypatch) -> 
     proxy_session.close()
 
 
-def test_valid_fallback_page_restores_shared_winline_route_to_direct(monkeypatch) -> None:
-    """A geo-incomplete fallback must not become the permanent shared route."""
+def test_valid_fallback_page_keeps_shared_winline_proxy_without_reset(monkeypatch) -> None:
+    """A working fallback stays selected without browser reset flapping."""
     resets: List[bool] = []
     monkeypatch.setattr(
         cs,
         "_bookmaker_shared_proxy_candidates",
         [
-            {"url": "", "country": "DIRECT"},
-            {"url": "http://proxy.example:8000", "country": "US"},
+            {"url": "http://user:pass@first.example:8000", "country": "DE"},
+            {"url": "http://user:pass@proxy.example:8000", "country": "US"},
         ],
         raising=False,
     )
@@ -1043,9 +1043,9 @@ def test_valid_fallback_page_restores_shared_winline_route_to_direct(monkeypatch
         reason="winline_valid_page"
     )
 
-    assert restored is True
-    assert cs._bookmaker_shared_proxy_index == 0
-    assert resets == [True]
+    assert restored is False
+    assert cs._bookmaker_shared_proxy_index == 1
+    assert resets == []
 
 
 def test_expanded_selected_event_panel_allows_multiple_markets_without_neighbor_leakage():

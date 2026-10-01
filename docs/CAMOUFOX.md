@@ -2,6 +2,22 @@
 
 # Camoufox Browser Configuration
 
+## Winline route: proxy only
+
+Shared Camoufox выбирает только валидные HTTP/HTTPS-прокси с авторизацией:
+до пяти DE, затем до пяти US, без повторов URL. `142.252.*` классифицированы
+как US/EGIHosting по замерам через ip-api от 01.10.2026; RU, неизвестные
+хосты, SOCKS и некорректные URL исключаются. Direct-маршрута для Winline нет.
+Ротация перебирает только прокси; валидная страница сохраняет текущий маршрут.
+GeoIP/headers launch fallback сохраняет proxy; с proxy WebRTC всегда блокирован.
+
+Dota2protracker и другие задачи общего браузера используют тот же прокси.
+Если Winline-пул пуст, они могут работать через CyberScore-маршрут, но задачи
+`winline*`/`bookmaker*` отклоняются до callback без ротации или reset;
+ротация при пустом пуле тоже не сбрасывает браузер (переключаться не на что).
+Маркер отказа (не чаще раза в 60 секунд на worker): `⛔ Winline: нет прокси —
+прямой выход с IP сервера запрещён`. CLI Camoufox также отказывает при пустом proxy.
+
 > Verified: options строятся в `_build_camoufox_options` (cyberscore): `humanize` ← `CYBERSCORE_CAMOUFOX_HUMANIZE` (default `true`), `block_webrtc` ← `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` (True), `enable_cache` ← `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` (False), `geoip` включается при наличии proxy и `CYBERSCORE_CAMOUFOX_GEOIP` (True). Bookmaker odds + ProTracker payload fetch идут через process-wide shared Camoufox (`_SharedCamoufoxSession` / `_run_shared_camoufox_job`); отдельный bookmaker Camoufox subprocess **не** используется в odds-mode.
 
 Live runtime использует Camoufox (anti-detect Firefox) для CyberScore listing/HTML, bookmaker odds (Winline named page) и ProTracker matchups:
