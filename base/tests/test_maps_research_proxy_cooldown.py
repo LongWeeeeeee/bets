@@ -1,12 +1,15 @@
 """Регрессия: мёртвый STRATZ-прокси не получает каждый пятый запрос."""
 import asyncio
+import sys
 import threading
 from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from curl_cffi.requests.exceptions import ConnectionError, InvalidURL, ProxyError, Timeout
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import maps_research as mr
 
 
