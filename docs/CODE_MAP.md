@@ -230,6 +230,16 @@ K24 вставляет `replay_late` внутрь сохранённой ист�
 ### Импорты из `functions`
 `send_message`, `drain_telegram_admin_commands`, `synergy_and_counterpick`, `calculate_lanes`, `calculate_lane_kills_advantage`, `format_output_dict`, `STAR_THRESHOLDS_BY_WR`, `STAR_DISABLED_METRICS`, `TelegramSendError`.
 Из `keys`: `api_to_proxy`, `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL`, `DLTV_PROXY_POOL`.
+
+Winline через общий Camoufox ходит только через прокси пула (с b4bf8206). Смерть прокси
+(с 01.10.2026): проба `_winline_proxy_is_alive` к нейтральным generate_204, фоновая проверка
+пула из ротации; на каждую мёртвую — одно сообщение в kef-бот (`send_winline_odds_message`);
+все мертвы — `_winline_parsing_halted`, задачи `winline*`/`bookmaker*` отклоняются
+`WinlineParsingHalted`, возобновление только рестартом. Контроль сети сервера прямым запросом
+не даёт ложной остановки. Env: `WINLINE_PROXY_PROBE_URLS`, `WINLINE_PROXY_PROBE_TIMEOUT_S` (8),
+`WINLINE_PROXY_PROBE_RECHECK_DELAY_S` (3), `WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S` (60),
+`WINLINE_PROXY_HEALTHCHECK_ENABLED` (1), `WINLINE_PROXY_PROBE_DIRECT_CONTROL` (1). Подробно —
+`docs/CAMOUFOX.md`, раздел «Смерть прокси».
 Dota2ProTracker подгружается динамически (`importlib`) → `enrich_with_pro_tracker`.
 
 ### Режимы (через env, читаются `_env_flag`)
