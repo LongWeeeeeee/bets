@@ -266,6 +266,10 @@ def _build_tier_team_ids():
     return ids
 
 
+PROXY_COOLDOWN_INITIAL = 900
+PROXY_COOLDOWN_MAX = 3600
+
+
 class RateLimitTracker:
     """Отслеживает использование API для одной пары прокси-API.
     Трекеры с одинаковым api_token делят общий rate-limit state."""
@@ -288,6 +292,10 @@ class RateLimitTracker:
         self._shared = shared_state
         self.requests_log = shared_state['requests_log']
         self.lock = shared_state['lock']
+        # Недоступность прокси не блокирует тот же токен через другую пару.
+        self.proxy_blocked_until = 0.0
+        self.proxy_failures = 0
+        self.proxy_generation = 0
 
     @property
     def short_name(self):
@@ -306,10 +314,44 @@ class RateLimitTracker:
     def is_rate_limited(self):
         return time.time() < self._shared['blocked_until']
 
+    @property
+    def available_at(self):
+        return max(self.blocked_until, self.proxy_blocked_until)
+
+    async def mark_proxy_failed(self, error, generation):
+        async with self.lock:
+            now = time.time()
+            # Все запросы одного поколения могли уйти до первой ошибки.
+            # Запоздавшая ошибка не продлевает паузу и не повышает её ступень.
+            if generation != self.proxy_generation or now < self.proxy_blocked_until:
+                return
+            self.proxy_generation += 1
+            self.proxy_failures += 1
+            delay = min(PROXY_COOLDOWN_INITIAL * (2 ** min(self.proxy_failures - 1, 2)),
+                        PROXY_COOLDOWN_MAX)
+            self.proxy_blocked_until = now + delay
+            reason = ' '.join(str(error).split())[:160]
+            until = time.strftime('%H:%M:%S', time.localtime(self.proxy_blocked_until))
+            print(f"🧊 Прокси {self.short_name} недоступен ({reason}): "
+                  f"пара на паузе {delay} c до {until} "
+                  f"(сбоев подряд: {self.proxy_failures})")
+
+    async def mark_proxy_recovered(self):
+        async with self.lock:
+            if not self.proxy_failures:
+                return
+            self.proxy_generation += 1
+            self.proxy_failures = 0
+            self.proxy_blocked_until = 0.0
+            print(f"✅ Прокси {self.short_name} восстановлен: пара возвращена в круг")
+
     async def can_make_request(self):
         """Проверяет, можно ли сделать запрос с учетом всех лимитов"""
         async with self.lock:
             now = time.time()
+
+            if now < self.proxy_blocked_until:
+                return False
 
             # Блокировка от API держится ровно столько, сколько сказал сам API,
             # а не фиксированные 3 минуты: суточное окно так не переждать.
@@ -460,8 +502,12 @@ class ProxyAPIPool:
 
             # Если пары блокированы самим API — спим до конца блокировки, а не
             # крутим полусекундный цикл: запрос в заблокированную пару только
-            # добавляет 429. Локальный самотормоз ждём как раньше.
-            if any(t.is_rate_limited for t in self.trackers):
+            # добавляет 429. Локальный самотормоз ждём как раньше. Пауза прокси
+            # уводит в сон только когда закрыты ВСЕ пары: иначе мёртвый прокси
+            # превращал бы каждое ожидание живых пар в секундный сон со строкой лога.
+            now = time.time()
+            if (any(t.is_rate_limited for t in self.trackers)
+                    or all(now < t.available_at for t in self.trackers)):
                 await self._sleep_until_first_free()
             else:
                 if attempt % 20 == 0:
@@ -472,14 +518,23 @@ class ProxyAPIPool:
         # Раньше здесь безусловно бралась первая пара — то есть запрос уходил в
         # заведомо заблокированную пару. Теперь дожидаемся ближайшей свободной.
         await self._sleep_until_first_free()
-        return min(self.trackers, key=lambda t: t.blocked_until)
+        while True:
+            async with self.selection_lock:
+                tracker = min(self.trackers, key=lambda t: t.available_at)
+                if time.time() >= tracker.available_at:
+                    return tracker
+            # cap ограничивает один сон, а не срок блокировки.
+            await self._sleep_until_first_free()
 
     async def _sleep_until_first_free(self, cap=300):
         """Спит до освобождения ближайшей пары, но не дольше cap секунд."""
         now = time.time()
-        unblock = min((t.blocked_until for t in self.trackers), default=now)
+        unblock = min((t.available_at for t in self.trackers), default=now)
         wait = max(1.0, min(unblock - now, float(cap)))
-        scopes = ", ".join(sorted({t.block_scope for t in self.trackers if t.block_scope}))
+        scopes = {t.block_scope for t in self.trackers if t.block_scope}
+        if any(now < t.proxy_blocked_until for t in self.trackers):
+            scopes.add('прокси недоступен')
+        scopes = ", ".join(sorted(scopes))
         until = time.strftime('%H:%M:%S', time.localtime(unblock))
         print(f"😴 Все пары заблокированы ({scopes or 'rate limit'}); ближайшая свободна "
               f"в {until}, спим {int(wait)} c...")
@@ -491,7 +546,9 @@ class ProxyAPIPool:
         headers = dict(request_kwargs.get('headers') or {})
         request_kwargs['headers'] = headers
         request_kwargs.pop('ssl', None)
-        timeout = request_kwargs.pop('timeout', 120)
+        # curl_cffi 0.13.0 складывает connect + read в общий TIMEOUT_MS.
+        # Соединение — не более 15 c, весь запрос — прежние 120 c.
+        timeout = request_kwargs.pop('timeout', (15, 105))
         proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
         response = cf_requests.post(
             url,
@@ -514,6 +571,7 @@ class ProxyAPIPool:
         while retry_count < max_retries:
             async with self.semaphore:
                 tracker = await self.get_available_tracker()
+                proxy_generation = tracker.proxy_generation
                 
                 # Обновляем headers с нужным токеном
                 if 'headers' in kwargs:
@@ -527,6 +585,7 @@ class ProxyAPIPool:
                         tracker.proxy_url,
                         **kwargs,
                     )
+                    await tracker.mark_proxy_recovered()
 
                     # Проверяем на rate limit от API
                     if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
@@ -553,6 +612,13 @@ class ProxyAPIPool:
                     return data
 
                 except Exception as e:
+                    # curl_cffi создаёт response даже при неудачном connect;
+                    # status_code=0 означает, что HTTP-ответа STRATZ не было.
+                    if (isinstance(e, (cf_requests.exceptions.ConnectionError,
+                                       cf_requests.exceptions.ProxyError,
+                                       cf_requests.exceptions.Timeout))
+                            and not getattr(getattr(e, 'response', None), 'status_code', 0)):
+                        await tracker.mark_proxy_failed(e, proxy_generation)
                     proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
                     print(f"❌ Ошибка запроса через прокси {proxy_short}: {e}")
                     
