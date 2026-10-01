@@ -18797,13 +18797,346 @@ class WinlineDirectRouteRefused(RuntimeError):
     """A Winline job cannot run on a browser without a Winline proxy."""
 
 
+class WinlineParsingHalted(RuntimeError):
+    """Every Winline pool proxy is dead: Winline parsing is halted until restart."""
+
+
 def _bookmaker_shared_winline_routes() -> List[Dict[str, Any]]:
     """Only configured, eligible DE/US proxies; never a direct route."""
     return list(_bookmaker_winline_proxy_candidates() or [])
 
 
+# --- Winline proxy death: liveness probe, kef-bot alerts, permanent halt -----
+#
+# Owner request 01.10.2026: "если прокси умерло — в kef бот уведомление и парсинг
+# прекращался". Each pool proxy that stops answering is announced once in the
+# Winline odds bot and excluded; when EVERY pool proxy is dead, all Winline
+# parsing (winline*/bookmaker* shared-Camoufox jobs) halts until the service is
+# restarted -- there is no automatic resume and dead proxies are never re-probed.
+# Camoufox errors cannot tell "proxy dead" from "Winline down", so the check is
+# an explicit probe through each proxy to neutral 204 endpoints that never
+# touches Winline. It runs in its own daemon thread: the shared Camoufox worker,
+# the poller and the prefetch must never block on it.
+
+
+def _winline_proxy_env_float(name: str, default: float) -> float:
+    try:
+        return float(str(os.getenv(name, "") or "").strip() or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+WINLINE_PROXY_PROBE_URLS_DEFAULT = (
+    "https://www.google.com/generate_204",
+    "http://cp.cloudflare.com/generate_204",
+)
+WINLINE_PROXY_PROBE_TIMEOUT_S = _winline_proxy_env_float("WINLINE_PROXY_PROBE_TIMEOUT_S", 8.0)
+WINLINE_PROXY_PROBE_RECHECK_DELAY_S = _winline_proxy_env_float("WINLINE_PROXY_PROBE_RECHECK_DELAY_S", 3.0)
+WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S = _winline_proxy_env_float(
+    "WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S", 60.0
+)
+_WINLINE_HALT_REFUSAL_TEXT = "Winline parsing halted: all proxies dead; restart the service to resume"
+
+# Process-wide state, guarded by _bookmaker_shared_proxy_lock (defined below).
+_winline_dead_proxy_urls: Dict[str, str] = {}  # url -> credential-free reason
+_winline_parsing_halted: bool = False
+_winline_parsing_halted_at: Optional[float] = None
+_winline_parsing_halted_reason: str = ""
+_winline_proxy_health_inflight: bool = False
+_winline_proxy_health_last_started: Optional[float] = None
+_winline_proxy_health_thread: Optional[threading.Thread] = None
+_winline_halt_refusal_logged_at: Optional[float] = None
+
+
+def _winline_label_requires_proxy(label: Any) -> bool:
+    return str(label or "").lower().startswith(("winline", "bookmaker"))
+
+
+def _winline_proxy_item_url(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("url") or item.get("proxy") or "").strip()
+    return str(item or "").strip()
+
+
+def _winline_next_live_index_locked(candidates: List[Any], start: int, *, include_start: bool) -> Optional[int]:
+    """First candidate index at/after ``start`` that is not proven dead (caller holds the lock)."""
+    n = len(candidates)
+    if n <= 0:
+        return None
+    first = 0 if include_start else 1
+    for off in range(first, n + first):
+        idx = (int(start) + off) % n
+        if _winline_proxy_item_url(candidates[idx]) not in _winline_dead_proxy_urls:
+            return idx
+    return None
+
+
+def _winline_log_halt_refusal(label: Any) -> None:
+    """At most one log line per 60 s for refused Winline jobs while halted."""
+    global _winline_halt_refusal_logged_at
+    now = time.monotonic()
+    last = _winline_halt_refusal_logged_at
+    if last is None or now - last >= 60.0:
+        _winline_halt_refusal_logged_at = now
+        print(
+            f"   ⛔ Winline: парсинг остановлен (все прокси мертвы) — задача '{label}' "
+            f"пропущена до перезапуска службы"
+        )
+
+
+def _winline_proxy_probe_targets() -> List[str]:
+    raw = str(os.getenv("WINLINE_PROXY_PROBE_URLS", "") or "")
+    items = [part.strip() for part in raw.split(",") if part.strip()]
+    return items or list(WINLINE_PROXY_PROBE_URLS_DEFAULT)
+
+
+def _winline_proxy_is_alive(url: str) -> Tuple[bool, str]:
+    """True if the proxy answers ANY HTTP response from a neutral 204 endpoint.
+
+    Dead only when every target fails twice (second round after a short pause,
+    so a blip is not flagged). The reason is the exception class name only: it
+    never carries the proxy URL or credentials. Never touches Winline.
+    """
+    targets = _winline_proxy_probe_targets()
+    proxies = {"http": url, "https": url}
+    reason = "no_probe_targets"
+    for attempt in range(2):
+        for target in targets:
+            try:
+                response = requests.get(
+                    target,
+                    proxies=proxies,
+                    timeout=max(0.5, float(WINLINE_PROXY_PROBE_TIMEOUT_S)),
+                    allow_redirects=False,
+                )
+                with contextlib.suppress(Exception):
+                    response.close()
+            except Exception as exc:  # noqa: BLE001 - class name only, no message
+                reason = type(exc).__name__
+                continue
+            status = 0
+            with contextlib.suppress(Exception):
+                status = int(getattr(response, "status_code", 0) or 0)
+            # 407 = the proxy rejects our credentials; 5xx on a 204 endpoint is the
+            # proxy failing upstream. Either way Winline cannot go through it.
+            if status == 407 or status >= 500:
+                reason = f"HTTP{status}"
+                continue
+            return True, "ok"
+        if attempt == 0:
+            delay = max(0.0, float(WINLINE_PROXY_PROBE_RECHECK_DELAY_S))
+            if delay > 0:
+                time.sleep(delay)
+    return False, reason
+
+
+def _winline_proxy_alert(message: str) -> bool:
+    """Send to the Winline odds ("kef") bot; never raises. Not gated by
+    WINLINE_ODDS_TELEGRAM_ENABLED: a dead route is an operational alert, not odds."""
+    print(f"   {message}")
+    try:
+        delivered = send_winline_odds_message(message, admin_only=True, mirror_to_vk=False, silent=True)
+    except Exception as exc:  # noqa: BLE001
+        with contextlib.suppress(Exception):
+            logger.warning("winline proxy alert delivery failed: %s", type(exc).__name__)
+        return False
+    return delivered is not False
+
+
+def _winline_server_network_ok() -> bool:
+    """Direct control request (no proxy) to the same neutral 204 targets.
+
+    Never Winline, so it does not break the proxy-only Winline route. Any HTTP
+    reply from any target = the server is online. False means the server itself
+    has no network: proxy failures in that state prove nothing about the proxies.
+    WINLINE_PROXY_PROBE_DIRECT_CONTROL=0 disables the control (always True).
+    """
+    if str(os.getenv("WINLINE_PROXY_PROBE_DIRECT_CONTROL", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        return True
+    for target in _winline_proxy_probe_targets():
+        try:
+            response = requests.get(
+                target,
+                proxies={"http": None, "https": None},  # None drops env proxies: really direct
+                timeout=max(0.5, float(WINLINE_PROXY_PROBE_TIMEOUT_S)),
+                allow_redirects=False,
+            )
+            with contextlib.suppress(Exception):
+                response.close()
+            return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
+def _winline_proxy_round_skipped_offline(reason: str) -> None:
+    print(
+        "   ⚠️ Winline: проверка прокси пропущена — у сервера нет сети "
+        f"(контрольный запрос без прокси не прошёл; {reason or 'rotate'})"
+    )
+
+
+def _winline_probe_proxies(pending: List[Tuple[Any, str]]) -> List[Tuple[Any, str, bool, str]]:
+    """Probe proxies in parallel on daemon threads (never delays process exit).
+
+    A probe that has not finished within its budget, or that crashed, counts as
+    alive: only a completed probe can prove a proxy dead.
+    """
+    results: Dict[int, Tuple[bool, str]] = {}
+    results_lock = threading.Lock()
+
+    def _run(index: int, url: str) -> None:
+        try:
+            outcome = _winline_proxy_is_alive(url)
+        except Exception as exc:  # noqa: BLE001 - a probe bug must not kill a proxy
+            outcome = (True, type(exc).__name__)
+        with results_lock:
+            results[index] = outcome
+
+    threads = []
+    for index, (_item, url) in enumerate(pending):
+        thread = threading.Thread(target=_run, args=(index, url), name="winline-proxy-probe", daemon=True)
+        thread.start()
+        threads.append(thread)
+    budget = 2.0 * max(1, len(_winline_proxy_probe_targets())) * max(0.5, float(WINLINE_PROXY_PROBE_TIMEOUT_S))
+    deadline = time.monotonic() + budget + max(0.0, float(WINLINE_PROXY_PROBE_RECHECK_DELAY_S)) + 5.0
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    verdicts: List[Tuple[Any, str, bool, str]] = []
+    with results_lock:
+        for index, (item, url) in enumerate(pending):
+            alive, why = results.get(index, (True, "probe_timeout"))
+            verdicts.append((item, url, bool(alive), str(why)))
+    return verdicts
+
+
+def _winline_proxy_health_check_round(reason: str) -> None:
+    global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
+    global _winline_parsing_halted, _winline_parsing_halted_at, _winline_parsing_halted_reason
+    with _bookmaker_shared_proxy_lock:
+        if not _bookmaker_shared_proxy_candidates:
+            _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
+            _bookmaker_shared_proxy_index = 0
+        candidates = list(_bookmaker_shared_proxy_candidates)
+        pending = [
+            (item, _winline_proxy_item_url(item))
+            for item in candidates
+            if _winline_proxy_item_url(item) and _winline_proxy_item_url(item) not in _winline_dead_proxy_urls
+        ]
+    if not pending:
+        return
+    # A proxy is only "dead" if the server itself is online: a serv1 network
+    # outage would otherwise kill every proxy at once and halt Winline for good.
+    if not _winline_server_network_ok():
+        _winline_proxy_round_skipped_offline(reason)
+        return
+    verdicts = _winline_probe_proxies(pending)
+    failed = [(item, url) for item, url, alive, _why in verdicts if not alive]
+    if failed:
+        # Confirm each failure with a second probe, bracketed by direct controls,
+        # so a blip that started after the first control cannot mark proxies dead.
+        if not _winline_server_network_ok():
+            _winline_proxy_round_skipped_offline(reason)
+            return
+        recheck = {url: (alive, why) for _item, url, alive, why in _winline_probe_proxies(failed)}
+        if not _winline_server_network_ok():
+            _winline_proxy_round_skipped_offline(reason)
+            return
+        merged: List[Tuple[Any, str, bool, str]] = []
+        for item, url, alive, why in verdicts:
+            if not alive and url in recheck:
+                alive, why = recheck[url]
+            merged.append((item, url, bool(alive), str(why)))
+        verdicts = merged
+
+    newly_dead: List[Tuple[str, str]] = []  # (safe label, reason)
+    halt_now = False
+    need_reset = False
+    next_label = ""
+    with _bookmaker_shared_proxy_lock:
+        for item, url, alive, why in verdicts:
+            if not alive and url not in _winline_dead_proxy_urls:
+                _winline_dead_proxy_urls[url] = why
+                newly_dead.append((_bookmaker_proxy_safe_label(item), why))
+        if not newly_dead:
+            return
+        live_idx = _winline_next_live_index_locked(candidates, _bookmaker_shared_proxy_index, include_start=True)
+        if live_idx is None:
+            if not _winline_parsing_halted:
+                _winline_parsing_halted = True
+                _winline_parsing_halted_at = time.time()
+                _winline_parsing_halted_reason = f"all_proxies_dead:{reason}"
+                halt_now = True
+                need_reset = True  # drop the browser's dead proxy
+        else:
+            if live_idx != _bookmaker_shared_proxy_index % max(1, len(candidates)):
+                # The browser may already sit on a proxy that just died.
+                _bookmaker_shared_proxy_index = live_idx
+                need_reset = True
+            next_label = _bookmaker_proxy_safe_label(candidates[live_idx])
+        total = len(candidates)
+    for label, why in newly_dead:
+        tail = f"работаю через {next_label}" if next_label else "живых прокси не осталось"
+        _winline_proxy_alert(f"\U0001F534 Winline: прокси {label} не отвечает ({why}) — исключён, {tail}")
+    if halt_now:
+        _winline_proxy_alert(
+            f"⛔ Winline: все прокси мертвы ({total} из {total}) — парсинг Winline остановлен. "
+            f"Возобновление только перезапуском службы."
+        )
+    if need_reset:
+        with contextlib.suppress(Exception):
+            _shared_camoufox_session.request_reset()
+
+
+def _winline_proxy_health_check_run(reason: str) -> None:
+    global _winline_proxy_health_inflight
+    try:
+        _winline_proxy_health_check_round(reason)
+    except Exception as exc:  # noqa: BLE001
+        with contextlib.suppress(Exception):
+            logger.warning("winline proxy health check failed: %s", type(exc).__name__)
+    finally:
+        with _bookmaker_shared_proxy_lock:
+            _winline_proxy_health_inflight = False
+
+
+def _winline_proxy_health_check_async(reason: str = "") -> bool:
+    """Start one background pool health check; True if a thread was started.
+
+    Single-flight, rate-limited (WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S, 60 s),
+    disabled by WINLINE_PROXY_HEALTHCHECK_ENABLED=0, a no-op once halted.
+    Called from the proxy rotation; the caller never waits for the probe.
+    """
+    global _winline_proxy_health_inflight, _winline_proxy_health_last_started, _winline_proxy_health_thread
+    if str(os.getenv("WINLINE_PROXY_HEALTHCHECK_ENABLED", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        return False
+    with _bookmaker_shared_proxy_lock:
+        if _winline_parsing_halted or _winline_proxy_health_inflight:
+            return False
+        now = time.monotonic()
+        last = _winline_proxy_health_last_started
+        if last is not None and now - last < max(0.0, float(WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S)):
+            return False
+        _winline_proxy_health_inflight = True
+        _winline_proxy_health_last_started = now
+    try:
+        thread = threading.Thread(
+            target=_winline_proxy_health_check_run,
+            args=(str(reason or ""),),
+            name="winline-proxy-health",
+            daemon=True,
+        )
+        _winline_proxy_health_thread = thread
+        thread.start()
+    except Exception:  # noqa: BLE001
+        with _bookmaker_shared_proxy_lock:
+            _winline_proxy_health_inflight = False
+        return False
+    return True
+
+
 def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
-    """Pick current Winline proxy or fail closed; never log credentials."""
+    """Pick current live Winline proxy or fail closed; never log credentials."""
     global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
     with _bookmaker_shared_proxy_lock:
         if not _bookmaker_shared_proxy_candidates:
@@ -18812,8 +19145,14 @@ def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
         candidates = list(_bookmaker_shared_proxy_candidates)
         if not candidates:
             raise WinlineProxyUnavailable("Winline: no usable proxy route")
-        idx_local = _bookmaker_shared_proxy_index % len(candidates)
-        item = candidates[idx_local]
+        if _winline_parsing_halted:
+            raise WinlineProxyUnavailable("Winline: all proxies dead (parsing halted)")
+        # Proxies proven dead by the health check are never selected again.
+        live_idx = _winline_next_live_index_locked(candidates, _bookmaker_shared_proxy_index, include_start=True)
+        if live_idx is None:
+            raise WinlineProxyUnavailable("Winline: all proxies dead")
+        _bookmaker_shared_proxy_index = live_idx
+        item = candidates[live_idx]
     url = ""
     if isinstance(item, dict):
         url = str(item.get("url") or item.get("proxy") or "").strip()
@@ -18869,26 +19208,38 @@ def _camoufox_error_is_code_defect(exc: BaseException) -> bool:
 
 
 def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
-    """Advance DE/US candidate and force sequential close/cleanup before relaunch."""
+    """Advance DE/US candidate and force sequential close/cleanup before relaunch.
+
+    Dead proxies (see ``_winline_proxy_health_check_async``) are skipped. While
+    Winline parsing is halted this is a no-op. A rotation never blocks: the
+    liveness probe runs in its own daemon thread.
+    """
     global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
+    if _winline_parsing_halted:
+        return
     with _bookmaker_shared_proxy_lock:
         if not _bookmaker_shared_proxy_candidates:
             _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
             _bookmaker_shared_proxy_index = 0
+        label = ""
         if _bookmaker_shared_proxy_candidates:
-            _bookmaker_shared_proxy_index = (_bookmaker_shared_proxy_index + 1) % max(
-                1, len(_bookmaker_shared_proxy_candidates)
+            nxt_idx = _winline_next_live_index_locked(
+                _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index, include_start=False
             )
-            nxt = _bookmaker_shared_proxy_candidates[_bookmaker_shared_proxy_index % len(_bookmaker_shared_proxy_candidates)]
-            label = _bookmaker_proxy_safe_label(nxt)
-        else:
-            label = ""
+            if nxt_idx is not None:
+                _bookmaker_shared_proxy_index = nxt_idx
+                label = _bookmaker_proxy_safe_label(_bookmaker_shared_proxy_candidates[nxt_idx])
     reason_s = str(reason or "rotate").strip() or "rotate"
     if not label:
         # No Winline proxy to rotate to: Winline jobs are refused anyway, and a
         # reset would only relaunch the browser under ProTracker on every
         # refused Winline poll.
         return
+    # Rotation is the common sink of every network-type Winline failure; it
+    # cannot tell "proxy dead" from "Winline down", so ask the proxies directly
+    # (off-thread, single-flight, rate-limited).
+    with contextlib.suppress(Exception):
+        _winline_proxy_health_check_async(reason_s)
     print(f"   🔄 Shared Camoufox proxy rotate ({reason_s}) -> {label}")
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()
@@ -35416,6 +35767,9 @@ class _SharedCamoufoxSession:
                         break
                     if not _mark_active(label):
                         break
+                    if _winline_parsing_halted and _winline_label_requires_proxy(label):
+                        # Defence in depth: refuse before any launch/reset work.
+                        raise WinlineParsingHalted(_WINLINE_HALT_REFUSAL_TEXT)
                     if self._pop_reset_requested():
                         _close_browser("requested reset")
                     if not _mark_active(f"launch:{label}"):
@@ -35443,6 +35797,12 @@ class _SharedCamoufoxSession:
                     jobs_since_launch += 1
                     future.set_result(result)
                     _note_proxy_success(CURRENT_PROXY)
+                except WinlineParsingHalted as exc:
+                    if generation != self._generation:
+                        break
+                    future.set_exception(exc)
+                    _winline_log_halt_refusal(label)
+                    # Permanent policy refusal: no rotation, no reset flap.
                 except (WinlineDirectRouteRefused, WinlineProxyUnavailable) as exc:
                     if generation != self._generation:
                         break
@@ -35839,6 +36199,10 @@ def _run_shared_camoufox_job(
     effective_priority = (
         _camoufox_job_priority_for_label(label) if priority is None else int(priority)
     )
+    if _winline_parsing_halted and _winline_label_requires_proxy(label):
+        # Permanent halt: refuse before the worker, no browser/rotation/reset/retry.
+        _winline_log_halt_refusal(label)
+        raise WinlineParsingHalted(_WINLINE_HALT_REFUSAL_TEXT)
     try:
         return _shared_camoufox_session.submit(
             label,
@@ -35847,7 +36211,7 @@ def _run_shared_camoufox_job(
             reset_on_error=reset_on_error,
             priority=effective_priority,
         )
-    except (WinlineDirectRouteRefused, WinlineProxyUnavailable):
+    except (WinlineDirectRouteRefused, WinlineProxyUnavailable, WinlineParsingHalted):
         # Refusal must also bypass this outer retry/reset path.
         raise
     except Exception:

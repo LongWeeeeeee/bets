@@ -17,6 +17,7 @@ if "keys" not in sys.modules:
     keys.BOOKMAKER_PROXY_URL = ""
     keys.BOOKMAKER_PROXY_POOL = []
     keys.DLTV_PROXY_POOL = []
+    keys.Token = "0:STUB_MAIN_BOT"  # functions.send_message reads keys.Token directly
     sys.modules["keys"] = keys
 
 import cyberscore_try as cs
@@ -56,6 +57,9 @@ def route(monkeypatch):
     monkeypatch.setattr(cs, "_cyberscore_camoufox_proxy_kwargs", lambda: {})
     monkeypatch.setattr(cs, "_note_proxy_success", lambda *_a: None)
     monkeypatch.setattr(cs, "CAMOUFOX_AVAILABLE", True)
+    # Rotation spawns a background proxy liveness probe; keep it off the network
+    # here (it is covered, with a mocked transport, in test_winline_proxy_death_halt.py).
+    monkeypatch.setattr(cs, "_winline_proxy_health_check_async", lambda *_a, **_k: False)
     monkeypatch.setenv("CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC", "0")
     monkeypatch.setenv("CYBERSCORE_CAMOUFOX_GEOIP", "1")
     monkeypatch.setenv("CAMOUFOX_RESET_AFTER_JOBS", "1000")

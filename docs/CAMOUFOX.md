@@ -18,6 +18,57 @@ Dota2protracker и другие задачи общего браузера ис�
 Маркер отказа (не чаще раза в 60 секунд на worker): `⛔ Winline: нет прокси —
 прямой выход с IP сервера запрещён`. CLI Camoufox также отказывает при пустом proxy.
 
+### Смерть прокси: уведомление в kef-бот и остановка парсинга
+
+Ошибки Camoufox не отличают «прокси мёртв» от «Winline лёг», поэтому живость
+проверяется отдельной пробой, не трогающей Winline (`cyberscore_try.py`,
+блок «Winline proxy death»).
+
+- **Проба** `_winline_proxy_is_alive(url)`: `requests.get` через прокси к
+  нейтральным 204-адресам (`https://www.google.com/generate_204`, затем
+  `http://cp.cloudflare.com/generate_204`). Жив, если хоть один адрес ответил
+  HTTP-кодом, кроме 407 (прокси отверг логин) и 5xx (прокси не достаёт до цели) —
+  эти считаются отказом (причина `HTTP407`/`HTTP502`…). Мёртв, только если упали
+  все адреса и повторный раунд через ~3 с тоже (чтобы не принять мигание за
+  смерть). Причина — только имя класса исключения или код, без URL и логина.
+- **Контроль сети сервера** `_winline_server_network_ok()`: прямой запрос (без
+  прокси, `proxies={"http": None, "https": None}`) к тем же нейтральным адресам —
+  не к Winline. Делается до пробы пула; если кто-то из прокси упал — ещё раз, затем
+  повторная проба упавших, затем снова контроль. Не прошёл любой контроль → раунд
+  пропускается целиком (никто не помечается мёртвым, сообщений нет, лог
+  `⚠️ Winline: проверка прокси пропущена — у сервера нет сети …`). Иначе пропажа
+  сети у serv1 «убила» бы все прокси и остановила Winline до рестарта. Пробы идут в
+  daemon-потоках (не задерживают выход процесса); незавершённая в срок проба = жив.
+- **Запуск** `_winline_proxy_health_check_async`: из `_bookmaker_rotate_shared_camoufox_proxy`
+  (все три источника ротации: ошибка воркера, серия ошибок поллера
+  `winline_acquisition_error`, `refresh_error` префетча). Отдельный daemon-поток:
+  воркер Camoufox, поллер и префетч не ждут сеть. Single-flight и не чаще раза в
+  60 с. Мёртвые прокси остаются мёртвыми до рестарта (повторно не пробуются),
+  ротация и выбор при запуске браузера их пропускают.
+- **Одна смерть**: одно сообщение в kef-бот (`send_winline_odds_message`, админ-чат,
+  без VK, silent; без гейта `WINLINE_ODDS_TELEGRAM_ENABLED` — это операционный
+  алерт, не кэфы):
+  `🔴 Winline: прокси <схема://хост:порт (страна)> не отвечает (<ИмяИсключения>) — исключён, работаю через <следующий>`
+  (если живых не осталось — хвост `живых прокси не осталось`). Если текущий
+  индекс указывал на умершего, он переводится на живого и браузер сбрасывается.
+- **Все мертвы**: выставляется `_winline_parsing_halted`, одно сообщение
+  `⛔ Winline: все прокси мертвы (N из N) — парсинг Winline остановлен. Возобновление только перезапуском службы.`
+  и reset браузера (ProTracker дальше идёт по штатному fallback-маршруту).
+  Пока флаг стоит: `_run_shared_camoufox_job` и воркер `_SharedCamoufoxSession`
+  отклоняют каждую задачу `winline*`/`bookmaker*` исключением
+  `WinlineParsingHalted` до запуска браузера (без ротации, reset и retry; лог не
+  чаще раза в 60 с: `⛔ Winline: парсинг остановлен …`); ротация — no-op;
+  `dota2protracker:*`, `protracker:*`, `cyberscore*`, `dltv-html*` работают.
+  **Авто-возобновления нет: возобновление только рестартом службы.**
+- Пустой Winline-пул на старте — прежний путь отказа (`WinlineProxyUnavailable`,
+  маркер `⛔ Winline: нет прокси …`): сообщений и halt нет.
+- Env: `WINLINE_PROXY_PROBE_URLS` (CSV адресов пробы), `WINLINE_PROXY_PROBE_TIMEOUT_S`
+  (8), `WINLINE_PROXY_PROBE_RECHECK_DELAY_S` (3), `WINLINE_PROXY_HEALTHCHECK_MIN_INTERVAL_S`
+  (60), `WINLINE_PROXY_HEALTHCHECK_ENABLED` (`0` выключает пробу целиком),
+  `WINLINE_PROXY_PROBE_DIRECT_CONTROL` (`0` выключает контроль сети сервера).
+- Тесты: `base/tests/test_winline_proxy_death_halt.py` (мок только `requests.get`
+  и `send_winline_odds_message`).
+
 > Verified: options строятся в `_build_camoufox_options` (cyberscore): `humanize` ← `CYBERSCORE_CAMOUFOX_HUMANIZE` (default `true`), `block_webrtc` ← `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` (True), `enable_cache` ← `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` (False), `geoip` включается при наличии proxy и `CYBERSCORE_CAMOUFOX_GEOIP` (True). Bookmaker odds + ProTracker payload fetch идут через process-wide shared Camoufox (`_SharedCamoufoxSession` / `_run_shared_camoufox_job`); отдельный bookmaker Camoufox subprocess **не** используется в odds-mode.
 
 Live runtime использует Camoufox (anti-detect Firefox) для CyberScore listing/HTML, bookmaker odds (Winline named page) и ProTracker matchups:
