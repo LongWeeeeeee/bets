@@ -5283,9 +5283,32 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam 7: southeast asia open qualifier 2",
 }
 
-# egxrdemxn: pro account and active persona alt. User request 26.09.2026:
-# forbid bets ON the player's team, while bets on the opponent stay allowed.
-SKIPPED_PLAYER_ACCOUNT_IDS: set = {390015464, 1250582363}
+# Player denylist: forbid bets ON a team that fields one of these players,
+# while bets on the opponent stay allowed. account_id -> label for the log.
+# egxrdemxn (26.09.2026): pro account and active persona alt.
+# YACHE123 roster (02.10.2026, team_id 9722899): ids from the serv1 ELO ledger
+# (10 maps 25-28.09), names from Stratz proSteamAccount; 457637739 has no
+# Stratz pro name and is Fortunes by elimination against the DLTV roster.
+SKIPPED_PLAYER_NAMES: Dict[int, str] = {
+    390015464: "egxrdemxn",
+    1250582363: "egxrdemxn",
+    457637739: "Fortunes",
+    349495318: "Krish",
+    242835570: "Seimei",
+    285319482: "Tsukimoto",
+    274078636: "Ace12",
+}
+SKIPPED_PLAYER_ACCOUNT_IDS: set = set(SKIPPED_PLAYER_NAMES)
+
+
+def _skipped_player_label(account_ids: Any) -> str:
+    names = []
+    for raw_id in account_ids or []:
+        account_id = _normalize_player_account_id(raw_id)
+        name = SKIPPED_PLAYER_NAMES.get(account_id) or str(account_id)
+        if account_id > 0 and name not in names:
+            names.append(name)
+    return ", ".join(names) or "?"
 
 # User request 29.09.2026: never send bets ON Yangon Galacticos; the
 # opponent remains eligible, including in the same match.
@@ -35246,8 +35269,11 @@ def _deliver_and_persist_signal(
         current_map_observation=current_map_observation,
     )
     if player_denylist_block is not None:
+        blocked_label = _skipped_player_label(
+            player_denylist_block.get("blocked_player_account_ids")
+        )
         verdict = (
-            "   🚫 Ставка заблокирована: игрок из denylist (egxrdemxn) "
+            f"   🚫 Ставка заблокирована: игрок из denylist ({blocked_label}) "
             f"в команде ставки — {match_key}"
         )
         log_key = (_signal_fingerprint_registry_key(match_key), player_denylist_block.get("target_side"))

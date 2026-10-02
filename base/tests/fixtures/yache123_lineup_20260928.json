@@ -1,0 +1,99 @@
+{
+ "_capture": {
+  "date": "2026-10-02",
+  "host": "serv1",
+  "source": "/root/main/runtime/live_elo_progress.json applied_maps",
+  "command": "ssh serv1 \"cd /root/main && python3 -c json.load(open(runtime/live_elo_progress.json))[applied_maps][<key>]\"",
+  "note": "YACHE123 (team_id 9722899) lineups: 25.09 with stand-ins 902207238/318286721, 28.09 full roster. Names from Stratz players{steamAccount{proSteamAccount{name}}} on 2026-10-02: 349495318 Krizh/Krish Gupta, 242835570 seimei, 285319482 Tsukimoto, 274078636 Ace12; 457637739 has no Stratz pro name, Fortunes by elimination (only remaining roster name on DLTV)."
+ },
+ "applied_maps": {
+  "dltv.org/matches/9016509881.0": {
+   "series_key": "9016509881",
+   "series_url": "dltv.org/matches/9016509881",
+   "winner_slot": "second",
+   "radiant_win": false,
+   "applied_at": 1790405982,
+   "result_timestamp": 1790405982,
+   "match_id": 9016509881,
+   "match_record": {
+    "match_id": 9016509881,
+    "timestamp": 1790403837,
+    "radiant_team_id": 9546449,
+    "radiant_team_name": "Yangon Galacticos",
+    "dire_team_id": 9722899,
+    "dire_team_name": "ЯЧЁ123",
+    "radiant_player_ids": [
+     1125296112,
+     360648679,
+     1129118044,
+     318371533,
+     160708663
+    ],
+    "dire_player_ids": [
+     457637739,
+     902207238,
+     242835570,
+     274078636,
+     318286721
+    ],
+    "radiant_player_positions": [],
+    "dire_player_positions": [],
+    "radiant_kills": null,
+    "dire_kills": null,
+    "league_id": 18865,
+    "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+    "source_league_tier": "TIER2",
+    "series_id": 9016509881,
+    "series_type": "3",
+    "source_patch": null,
+    "duration_seconds": 2077,
+    "derived_league_tier": "TIER2"
+   },
+   "duration_seconds": 2077
+  },
+  "dltv.org/matches/9020148294.0": {
+   "series_key": "9020148294",
+   "series_url": "dltv.org/matches/9020148294",
+   "winner_slot": "first",
+   "radiant_win": true,
+   "applied_at": 1790599217,
+   "result_timestamp": 1790599217,
+   "match_id": 9020148294,
+   "match_record": {
+    "match_id": 9020148294,
+    "timestamp": 1790597407,
+    "radiant_team_id": 7917893,
+    "radiant_team_name": "InterActive Philippines",
+    "dire_team_id": 9722899,
+    "dire_team_name": "ЯЧЁ123",
+    "radiant_player_ids": [
+     330534326,
+     861414087,
+     136737280,
+     100598959,
+     103045129
+    ],
+    "dire_player_ids": [
+     457637739,
+     349495318,
+     242835570,
+     285319482,
+     274078636
+    ],
+    "radiant_player_positions": [],
+    "dire_player_positions": [],
+    "radiant_kills": null,
+    "dire_kills": null,
+    "league_id": 18865,
+    "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+    "source_league_tier": "TIER2",
+    "series_id": 9020148294,
+    "series_type": "3",
+    "source_patch": null,
+    "duration_seconds": 1374,
+    "derived_league_tier": "TIER2"
+   },
+   "duration_seconds": 1374
+  }
+ }
+}

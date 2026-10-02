@@ -136,8 +136,12 @@ SHA точных входных журналов. До ≥300 enrolled за ≥3
 > ставка «СТАВКА НА <команда>» (победа, x0.5, ML dispatch win / «Ранние килы» /
 > «Тотал килов <команда> БОЛЬШЕ», prematch 00, delayed-очередь) проверяется до
 > подготовки у букмекера и до отправки. Два независимых гейта:
-> игрок — `SKIPPED_PLAYER_ACCOUNT_IDS` (egxrdemxn, с 26.09.2026, reason
-> `skip_player_denylist`, по составу стороны ставки); команда —
+> игрок — `SKIPPED_PLAYER_ACCOUNT_IDS` = ключи `SKIPPED_PLAYER_NAMES`
+> (account_id → имя для лога; egxrdemxn 390015464/1250582363 с 26.09.2026;
+> состав YACHE123 с 02.10.2026: Fortunes 457637739, Krish 349495318, Seimei
+> 242835570, Tsukimoto 285319482, Ace12 274078636), reason
+> `skip_player_denylist`, по составу стороны ставки, лог «игрок из denylist
+> (<имена>)»; команда —
 > `SKIPPED_BET_TEAM_NAMES` / `SKIPPED_BET_TEAM_IDS` (Yangon Galacticos, team_id
 > 8944230/9546449, с 29.09.2026, reason `skip_team_denylist`): цель ставки — это
 > команда, названная в заголовке «СТАВКА НА …»; стороны radiant/dire и снимки
