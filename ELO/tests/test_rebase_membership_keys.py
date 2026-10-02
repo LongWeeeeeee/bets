@@ -397,7 +397,10 @@ def test_team_present_in_keys_but_absent_from_registry_counts_as_known() -> None
     with pytest.raises(lts.RuntimeRebaseError, match="не доказывает её membership"):
         lts._applied_entry_for_rebase(
             raw, snapshot_reference=5_050,
-            recent_completed_ids=(0, set()),
+            # coverage_since just AFTER the map's start (5000): a map that
+            # started inside the window is replayable once the index shows no
+            # trace of it (E-355), so keep it outside to isolate the veto.
+            recent_completed_ids=(5_001, set()),
             recent_completed_keys=recent_completed_keys,
             known_team_ids=known,
         )
@@ -528,3 +531,179 @@ def test_rebase_rejects_changed_k24_contract_with_outstanding_work(tmp_path, cap
                         "--progress", str(progress_path)]) == 1
     assert "конфиг модели изменился" in capsys.readouterr().err
     assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+
+
+# --------------------------------------------------------------------------- #
+# Aged-out live map (E-355). A live map the pro corpus never ingests is applied
+# on top of every new base.  K24/A keep only 14 days of history to rewind, so
+# once the map is older than that the base cannot take it back in order
+# (`k24_available` flips off -> the rebase refuses to promote) and the 14-day
+# id/pair index cannot say whether the snapshot holds it either.  The rebase was
+# rejected every night from 27.09.2026 ("live-карта 8995525359 пересекает cutoff
+# ..."), freezing prod on the 26.09 ELO snapshot.  Such a row is now expired
+# (dropped, never counted twice) instead of freezing the chain.
+# --------------------------------------------------------------------------- #
+
+# Real ledger row, captured 2026-10-02 from serv1 (read-only):
+#   ssh serv1 'cd /root/main && python3 -c "import json; print(json.dumps(json.load(
+#     open(\"runtime/live_elo_progress.json\"))[\"applied_maps\"][
+#     \"dltv.org/matches/8995525359.0\"]))"'
+# (WINLINE Star Series Season 4, VooDooSh Club vs Stariy_Bog Club, map 2 of a BO3
+# started 2026-09-12; its series id is stored as `match_id`; the corpus holds
+# only map 1 of the series, as 8995387004.)
+_REAL_MAP_KEY = "dltv.org/matches/8995525359.0"
+_REAL_APPLIED_ROW = {
+    "series_key": "8995525359",
+    "series_url": "dltv.org/matches/8995525359",
+    "winner_slot": "second",
+    "radiant_win": False,
+    "applied_at": 1789232964,
+    "result_timestamp": 1789232964,
+    "match_id": 8995525359,
+    "match_record": {
+        "match_id": 8995525359, "timestamp": 1789230162,
+        "radiant_team_id": 10241728, "radiant_team_name": "VooDooSh Club",
+        "dire_team_id": 10241723, "dire_team_name": "Stariy_Bog Club",
+        "radiant_player_ids": [194979527, 38672293, 1675023758, 118325938, 91535476],
+        "dire_player_ids": [1044002267, 162798290, 161839895, 104436495, 407819069],
+        "radiant_player_positions": [], "dire_player_positions": [],
+        "radiant_kills": None, "dire_kills": None,
+        "league_id": 20159, "league_name": "WINLINE Star Series Season 4",
+        "source_league_tier": "TIER2", "series_id": 8995525359, "series_type": "3",
+        "source_patch": None, "duration_seconds": None, "derived_league_tier": "TIER2",
+    },
+}
+# Same capture, a map that STARTED before the 02.10 cutoff (30.09 20:09 MSK,
+# cutoff 22:17) but whose result live ELO processed after it (01.10 03:00 MSK).
+# Team ids are the real ones; player ids are placeholders (not captured here).
+_REAL_LATE_KEY = "dltv.org/matches/9023210947.0"
+_REAL_LATE_ROW = {
+    "series_key": "9023210947", "series_url": "dltv.org/matches/9023210947",
+    "winner_slot": "second", "radiant_win": False,
+    "applied_at": 1790812820, "result_timestamp": 1790812820,
+    "match_id": 9023210947, "duration_seconds": None,
+    "match_record": {
+        "match_id": 9023210947, "timestamp": 1790783361,
+        "radiant_team_id": 15, "radiant_team_name": "Radiant",
+        "dire_team_id": 9572001, "dire_team_name": "Dire",
+        "radiant_player_ids": [11, 12, 13, 14, 15], "dire_player_ids": [16, 17, 18, 19, 20],
+        "radiant_player_positions": [], "dire_player_positions": [],
+        "radiant_kills": None, "dire_kills": None,
+        "league_id": 1, "league_name": "BLAST SLAM VIII",
+        "source_league_tier": "TIER1", "series_id": 9023210947, "series_type": "3",
+        "source_patch": None, "duration_seconds": None, "derived_league_tier": "TIER1",
+    },
+}
+_PREV_BASE = 1790370293          # base the serv1 ledger was rebased onto on 26.09
+_NIGHT_1 = 1790795857            # cutoff of the 02.10 rebuild (rejected nightly since 27.09)
+_DAY = 86400
+
+
+def _k24_state(reference: int) -> dict:
+    # A K24-current base: one event at the cutoff gives highwater == reference
+    # and a 14-day rewind window, like the builder's snapshot.
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    model.process_match(lts.result_record(_live_record(1, start=reference - 100), reference),
+                        duration_seconds=60)
+    state = model.export_state()
+    assert state["k24_available"] is True
+    assert state["k24_history_coverage_since"] == reference - 14 * _DAY
+    return state
+
+
+def _real_night_snapshot(tmp_path: Path, name: str, reference: int, *, k24: bool = True) -> tuple[Path, dict]:
+    # Same index shape the builder emits: 14-day window, ids == keys. The corpus
+    # knows the teams (a later series of the pair, real id 9006285546, and team
+    # 15) but holds neither of the two live maps.
+    state = _k24_state(reference) if k24 else HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    meta = {
+        "reference_timestamp": reference,
+        "model_config_signature": f"history-{reference}",
+        "recent_completed_match_ids_coverage_since": reference - 14 * _DAY,
+        "recent_completed_match_ids": [9_006_285_546, 9_020_000_001],
+        "recent_completed_match_keys": [[9_006_285_546, 10241723, 10241728, 1_789_820_139],
+                                        [9_020_000_001, 15, 8_261_500, 1_790_000_000]],
+        "recent_completed_match_keys_tolerance_seconds": 10_800,
+    }
+    payload = {"meta": meta, "model_state": state}
+    path = tmp_path / name
+    _write(path, payload)
+    return path, payload
+
+
+def _seed_ledger(tmp_path: Path, rows: dict, *, base: int = _PREV_BASE) -> tuple[Path, Path]:
+    state_path, progress_path = tmp_path / "state.json", tmp_path / "progress.json"
+    _write(progress_path, {"base_reference_timestamp": base,
+                           "base_model_config_signature": "old-history",
+                           "pending_series": {}, "applied_maps": rows})
+    return state_path, progress_path
+
+
+def test_real_live_map_older_than_the_k24_window_is_expired_not_refused(tmp_path, capsys) -> None:
+    snap_path, snap = _real_night_snapshot(tmp_path, "night1.json", _NIGHT_1)
+    state_path, progress_path = _seed_ledger(tmp_path, {_REAL_MAP_KEY: _REAL_APPLIED_ROW})
+    # The map's result (12.09) is before the snapshot's coverage_since (16.09):
+    # neither the index nor K24's rewind window can place it any more.
+    assert _REAL_APPLIED_ROW["result_timestamp"] < snap["meta"]["recent_completed_match_ids_coverage_since"]
+
+    assert rebase_main(["--snapshot", str(snap_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    assert "старше окна перемотки" in capsys.readouterr().err
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert progress["base_reference_timestamp"] == _NIGHT_1
+    assert progress["applied_maps"] == {}  # dropped once, not carried (or counted) again
+    # Applied zero times: the base model is exactly the snapshot's.
+    assert json.loads(state_path.read_text(encoding="utf-8"))["model_state"] == snap["model_state"]
+
+
+def test_aged_out_row_is_still_refused_on_a_base_without_k24_window(tmp_path, capsys) -> None:
+    # No K24 state => no rewind bound to expire against => the original refusal.
+    snap_path, _snap = _real_night_snapshot(tmp_path, "night1.json", _NIGHT_1, k24=False)
+    state_path, progress_path = _seed_ledger(tmp_path, {_REAL_MAP_KEY: _REAL_APPLIED_ROW})
+    _write(state_path, {"base_reference_timestamp": _PREV_BASE,
+                        "base_model_config_signature": "old-history",
+                        "model_state": HybridPlayerRosterEloModel(HybridEloConfig()).export_state()})
+    before = state_path.read_bytes(), progress_path.read_bytes()
+    assert rebase_main(["--snapshot", str(snap_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 1
+    err = capsys.readouterr().err
+    assert "live-карта 8995525359 пересекает cutoff" in err
+    assert "а снимок не доказывает её membership; перебазировка отменена" in err
+    assert (state_path.read_bytes(), progress_path.read_bytes()) == before
+
+
+def test_aged_out_row_the_snapshot_proves_present_is_tombstoned_not_expired(tmp_path) -> None:
+    # Expiry is only for rows the snapshot cannot prove covered: an exact id
+    # hit (index wide enough to hold the map) still wins and tombstones it.
+    snap_path, snap = _real_night_snapshot(tmp_path, "night1.json", _NIGHT_1)
+    snap["meta"]["recent_completed_match_ids_coverage_since"] = _REAL_APPLIED_ROW["result_timestamp"] - 1
+    snap["meta"]["recent_completed_match_ids"].append(8995525359)
+    _write(snap_path, snap)
+    state_path, progress_path = _seed_ledger(tmp_path, {_REAL_MAP_KEY: _REAL_APPLIED_ROW})
+    assert rebase_main(["--snapshot", str(snap_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    row = json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"][_REAL_MAP_KEY]
+    assert row["snapshot_covered"] is True
+    assert json.loads(state_path.read_text(encoding="utf-8"))["model_state"] == snap["model_state"]
+
+
+def test_real_map_started_before_cutoff_but_applied_after_it_is_replayed_once(tmp_path) -> None:
+    # Second latent refusal on the same ledger: result_timestamp (01.10 03:00) is
+    # after the cutoff, so the old window rule (result in [coverage_since,
+    # cutoff]) never fired and the row hit the raise.  Its START is inside the
+    # window, so the id/pair index would hold it if the corpus did -> it is
+    # absent, and replaying after the cutoff keeps ELO event order.
+    snap_path, snap = _real_night_snapshot(tmp_path, "night1.json", _NIGHT_1)
+    state_path, progress_path = _seed_ledger(tmp_path, {_REAL_LATE_KEY: _REAL_LATE_ROW})
+    start = _REAL_LATE_ROW["match_record"]["timestamp"]
+    assert (snap["meta"]["recent_completed_match_ids_coverage_since"] <= start <= _NIGHT_1
+            < _REAL_LATE_ROW["result_timestamp"])
+    assert rebase_main(["--snapshot", str(snap_path), "--state", str(state_path),
+                        "--progress", str(progress_path)]) == 0
+    row = json.loads(progress_path.read_text(encoding="utf-8"))["applied_maps"][_REAL_LATE_KEY]
+    assert "snapshot_covered" not in row and row["result_timestamp"] == 1790812820
+
+    match = lts._deserialize_match_record(_REAL_LATE_ROW["match_record"], radiant_win=False)
+    expected = HybridPlayerRosterEloModel.from_state(lts.full_model_state(snap))
+    expected.process_match(lts.result_record(match, 1790812820), duration_seconds=None)
+    assert json.loads(state_path.read_text(encoding="utf-8"))["model_state"] == expected.export_state()

@@ -1059,8 +1059,9 @@ def _applied_entry_for_rebase(
     recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None = None,
     known_team_ids: set[int] | None = None,
     consumed: set[int] | None = None,
+    replay_floor_timestamp: int | None = None,
 ) -> tuple[str, MatchRecord | None, int | None]:
-    """Classify an old live result as covered, replayable, or unsafe.
+    """Classify an old live result as covered, replayable, expired, or unsafe.
 
     `result_timestamp` is when live ELO processed a result, rather than proof
     of when the upstream corpus learned it.  We therefore use only an actual
@@ -1080,6 +1081,17 @@ def _applied_entry_for_rebase(
     given) is a set of snapshot key `match_id`s already used as proof for
     another entry in this same rebase; the caller should share ONE such set
     across every entry so a key proves at most one ledger row.
+
+    `replay_floor_timestamp` (E-355) is the oldest result timestamp the base
+    model can still absorb in order: K24/A keep only
+    `K24_HISTORY_RETENTION_SECONDS` of history to rewind, and an older event
+    flips `k24_available` off, which the caller (rightly) refuses to promote.
+    A row below that floor that the snapshot does not prove covered is
+    "expired": dropped from the ledger instead of replayed or refused.  It is
+    never counted twice; if the corpus never ingested the map (tier-2 league
+    outside the topup seeds) its update is lost, which is the price of the
+    model's 14-day rewind and strictly better than freezing prod on a stale
+    snapshot (rejected every night 27.09-02.10.2026, map 8995525359).
     """
     if consumed is None:
         consumed = set()
@@ -1202,6 +1214,16 @@ def _applied_entry_for_rebase(
         consumed.add(found_match_id)
         return "covered", match, result_timestamp
 
+    if replay_floor_timestamp is not None and result_timestamp < replay_floor_timestamp:
+        print(
+            f"[ELO] live-карта {match.match_id} (result {result_timestamp}) старше окна перемотки "
+            f"базовой модели ({replay_floor_timestamp}) и не найдена в снимке; "
+            "исключена из ledger (в порядке её уже не применить)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return "expired", match, result_timestamp
+
     if (known_team_ids and match.radiant_team_id is not None and match.dire_team_id is not None
             and match.radiant_team_id not in known_team_ids
             and match.dire_team_id not in known_team_ids):
@@ -1221,6 +1243,17 @@ def _applied_entry_for_rebase(
         return _replay()
     if (recent_completed_keys is not None and coverage_since is not None
             and coverage_since <= result_timestamp <= snapshot_reference):
+        return _replay()
+    if (recent_completed_keys is not None and coverage_since is not None
+            and coverage_since <= match.timestamp <= snapshot_reference):
+        # `result_timestamp` is when live ELO PROCESSED the result and can lag
+        # the real finish by hours (BLAST SLAM map 9023210947: started 30.09
+        # 20:09 MSK, applied 01.10 03:00, cutoff 30.09 22:17).  A corpus map
+        # that started inside the window finished no earlier than its start and
+        # no later than `snapshot_reference` (the snapshot's newest result), so
+        # it would have a result inside the window and an id/pair hit above.
+        # Neither hit exists: the snapshot lacks it, and replaying after the
+        # cutoff keeps the event order.
         return _replay()
 
     if recent_completed_keys is not None:
@@ -1309,6 +1342,22 @@ def _pending_entry_for_rebase(
         "а снимок не доказывает её membership; перебазировка отменена"
         f" ({proof_note})"
     )
+
+
+def _replay_floor_timestamp(base_state: dict[str, Any] | None) -> int | None:
+    """Oldest event timestamp a K24-current base can still absorb in order.
+
+    `None` for a base without current K24 state (nothing bounds replay then).
+    """
+    if not isinstance(base_state, dict):
+        return None
+    if base_state.get("k24_schema_version") != K24_SCHEMA_VERSION or base_state.get("k24_available") is not True:
+        return None
+    floors = [base_state.get("k24_history_coverage_since")]
+    if base_state.get("a_available") is True:
+        floors.append(base_state.get("a_history_coverage_since"))
+    values = [int(v) for v in floors if isinstance(v, int) and not isinstance(v, bool)]
+    return max(values) if values else None
 
 
 def rebase_runtime_model_state(
@@ -1401,6 +1450,8 @@ def rebase_runtime_model_state(
     known_team_ids = _known_team_ids_from_model_state(base_state, recent_completed_keys)
     unknown_teams_accepted = 0
     late_replays_accepted = 0
+    expired_by_floor = 0
+    replay_floor = _replay_floor_timestamp(base_state)
     # One snapshot key proves at most one ledger entry (E-294 review FIX 3);
     # shared across the applied AND pending loops below.
     consumed_keys: set[int] = set()
@@ -1441,8 +1492,12 @@ def rebase_runtime_model_state(
             recent_completed_keys=recent_completed_keys,
             known_team_ids=known_team_ids,
             consumed=consumed_keys,
+            replay_floor_timestamp=replay_floor,
         )
-        if action == "tombstone":
+        if action == "expired":
+            if match is not None:
+                expired_by_floor += 1
+        elif action == "tombstone":
             rebased_applied[str(map_key)] = dict(raw)
         elif action == "covered":
             match_id = _coerce_optional_int((raw or {}).get("match_id"))
@@ -1572,6 +1627,13 @@ def rebase_runtime_model_state(
         copied["applied_at"] = int(result_timestamp)
         copied["match_record"] = _serialize_match_record(match)
         rebased_applied[map_key] = copied
+
+    if expired_by_floor:
+        print(
+            f"[ELO] rebase: {expired_by_floor} live-карт(а) старше окна перемотки K24/A "
+            f"({replay_floor}) и не покрыты снимком — исключены из ledger, не применены повторно",
+            flush=True,
+        )
 
     if alias_twins_skipped:
         print(
