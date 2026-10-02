@@ -1,0 +1,208 @@
+{
+  "schema": "minute-model-v1",
+  "created": "2026-10-02T11:18:29.632267+00:00",
+  "training_window": {
+    "start_inclusive": "2025-01-01T00:00:00Z",
+    "end_exclusive": "2026-10-01T00:00:00Z",
+    "cohort": "all available labelled league maps in canonical E347 dataset, duration > 60*t",
+    "stack": "all available variant-A joined rows; see per-minute actual timestamp bounds"
+  },
+  "evaluation_sha256": "4411e71a3f9bd4fda386fdb38349223ef11906c42ac9050d50924ed1f167127f",
+  "minutes": {
+    "10": {
+      "head": {
+        "features": [
+          "nw_thousands",
+          "kill_diff",
+          "kill_total",
+          "logit_all",
+          "logit_late",
+          "logit_early_win",
+          "logit_enw_rad"
+        ],
+        "mean": [
+          0.1435731086745623,
+          0.13985649173546155,
+          13.753299408760594,
+          0.1324509969113569,
+          0.028539945806330482,
+          0.3425830348785443,
+          0.14738814006608505
+        ],
+        "scale": [
+          2.2645136252206925,
+          4.681786925773332,
+          5.3051690589086435,
+          0.4402423386814138,
+          0.43230082168540773,
+          0.8328923745576889,
+          0.8438149651349234
+        ],
+        "coef": [
+          0.9685039188705272,
+          0.14888372976499648,
+          0.008092438513229055,
+          0.6472743665950422,
+          -0.15998951612396237,
+          -0.13519178077922955,
+          -0.24454994265640884
+        ],
+        "intercept": 0.12828058844471246
+      },
+      "stack": {
+        "features": [
+          "logit_head",
+          "logit_elo"
+        ],
+        "mean": [
+          0.12836820478002114,
+          0.015899173006298874
+        ],
+        "scale": [
+          1.1127219609361723,
+          0.7581850286497959
+        ],
+        "coef": [
+          1.026625614640479,
+          0.535374749438182
+        ],
+        "intercept": 0.13469976436079867
+      },
+      "n_train": {
+        "head": 109262,
+        "stack": 109192
+      },
+      "selected_C": {
+        "head": 10.0,
+        "stack": 10.0
+      },
+      "actual_training_ts": {
+        "head_min": 1735690278,
+        "head_max": 1790006825,
+        "stack_min": 1735690278,
+        "stack_max": 1789863724
+      },
+      "feature_definitions": {
+        "nw_thousands": "Radiant NW lead at minute t divided by 1000 (gold in thousands).",
+        "kill_diff": "Radiant cumulative kills at index t minus Dire cumulative kills at index t; raw counts.",
+        "kill_total": "Radiant plus Dire cumulative kills at index t; raw counts.",
+        "logit_all": "logit of binary Radiant probability from served All draft verdict.",
+        "logit_late": "logit of binary Radiant probability from served Late draft verdict.",
+        "logit_early_win": "logit of binary Radiant probability from served Early Win draft verdict.",
+        "logit_enw_rad": "logit(P_Radiant/(P_Radiant+P_Dire)) from Early NW; conditional direction, excludes no-marker.",
+        "logit_head": "logit of head Radiant map-win probability.",
+        "logit_elo": "logit of prematch variant-A Radiant probability; live formula 1/(1+10**((dire_rating-radiant_rating)/400))."
+      }
+    },
+    "31": {
+      "head": {
+        "features": [
+          "nw_thousands",
+          "kill_diff",
+          "kill_total",
+          "logit_all",
+          "logit_late",
+          "logit_early_win",
+          "logit_enw_rad"
+        ],
+        "mean": [
+          0.08245471038277398,
+          0.17268419607796331,
+          50.020362125968276,
+          0.12980538812217504,
+          0.029954942832859866,
+          0.3332823299446717,
+          0.13860710689677122
+        ],
+        "scale": [
+          12.689127944672657,
+          13.187196338643663,
+          13.390307187824925,
+          0.43811451919962974,
+          0.4319196480074295,
+          0.8272268871650447,
+          0.8394564749473734
+        ],
+        "coef": [
+          2.3964524565140892,
+          0.06384577849164642,
+          0.0009684558989769681,
+          0.5521646059990027,
+          0.04585787664746037,
+          0.009534003121841921,
+          -0.5938718127293322
+        ],
+        "intercept": 0.10732040891210627
+      },
+      "stack": {
+        "features": [
+          "logit_head",
+          "logit_elo"
+        ],
+        "mean": [
+          0.10757228866985091,
+          0.0047925783802907854
+        ],
+        "scale": [
+          2.461513238299017,
+          0.6884218010001697
+        ],
+        "coef": [
+          2.426343186233832,
+          0.2721244391370714
+        ],
+        "intercept": 0.10838939862079155
+      },
+      "n_train": {
+        "head": 83783,
+        "stack": 83731
+      },
+      "selected_C": {
+        "head": 10.0,
+        "stack": 10.0
+      },
+      "actual_training_ts": {
+        "head_min": 1735690278,
+        "head_max": 1790002727,
+        "stack_min": 1735690278,
+        "stack_max": 1789863724
+      },
+      "feature_definitions": {
+        "nw_thousands": "Radiant NW lead at minute t divided by 1000 (gold in thousands).",
+        "kill_diff": "Radiant cumulative kills at index t minus Dire cumulative kills at index t; raw counts.",
+        "kill_total": "Radiant plus Dire cumulative kills at index t; raw counts.",
+        "logit_all": "logit of binary Radiant probability from served All draft verdict.",
+        "logit_late": "logit of binary Radiant probability from served Late draft verdict.",
+        "logit_early_win": "logit of binary Radiant probability from served Early Win draft verdict.",
+        "logit_enw_rad": "logit(P_Radiant/(P_Radiant+P_Dire)) from Early NW; conditional direction, excludes no-marker.",
+        "logit_head": "logit of head Radiant map-win probability.",
+        "logit_elo": "logit of prematch variant-A Radiant probability; live formula 1/(1+10**((dire_rating-radiant_rating)/400))."
+      }
+    }
+  },
+  "feature_definitions": {
+    "nw_thousands": "Radiant NW lead at minute t divided by 1000 (gold in thousands).",
+    "kill_diff": "Radiant cumulative kills at index t minus Dire cumulative kills at index t; raw counts.",
+    "kill_total": "Radiant plus Dire cumulative kills at index t; raw counts.",
+    "logit_all": "logit of binary Radiant probability from served All draft verdict.",
+    "logit_late": "logit of binary Radiant probability from served Late draft verdict.",
+    "logit_early_win": "logit of binary Radiant probability from served Early Win draft verdict.",
+    "logit_enw_rad": "logit(P_Radiant/(P_Radiant+P_Dire)) from Early NW; conditional direction, excludes no-marker.",
+    "logit_head": "logit of head Radiant map-win probability.",
+    "logit_elo": "logit of prematch variant-A Radiant probability; live formula 1/(1+10**((dire_rating-radiant_rating)/400))."
+  },
+  "probability_clip": [
+    1e-06,
+    0.999999
+  ],
+  "inference": "p=sigmoid(((features-mean)/scale) dot coef + intercept); head first, then stack",
+  "limitations": [
+    "Retrospective static September pub draft bundles, not forward-time pub training or prospective serving validation.",
+    "Canonical hero intersection excludes some short maps; 10-minute population is not all maps alive at minute 10.",
+    "Variant-A replay stops before 2026-09-21; missing ELO is kept missing. Stack coverage differs from head coverage.",
+    "F vs A6 changes state/draft features, ELO variant (A vs K24), and stack training population (league vs master). This is not an isolated feature ablation.",
+    "Evaluation stack uses prior-month OOS heads (April onward), with current test-series purge propagated to prior heads. Serving stack uses all available league rows with final-head fitted predictions, as requested; this differs from OOS evaluation training.",
+    "Live adapters round probabilities to six decimals; artifact/fixture use unrounded offline probabilities. Neither local defaults nor historical export proves current production configuration.",
+    "No SSH, production, bets, Telegram, price, deploy, profitability or live calibration check. No commits or deletions."
+  ]
+}

@@ -13103,6 +13103,7 @@ def _ml_dispatch_tick_once_per_cycle(
     match_key: str,
     live_league: Optional[Dict[str, Any]],
     game_time_seconds: Any,
+    live_kills: Any = None,
     **kwargs: Any,
 ) -> None:
     """Обёртка над `_ml_dispatch_tick` для нескольких мест диспетчера, видящих
@@ -13139,6 +13140,594 @@ def _ml_dispatch_tick_once_per_cycle(
         game_time_seconds=game_time_seconds,
         **kwargs,
     )
+    # E-347 minute model: display-only line + shadow journal. Runs AFTER the
+    # dispatch tick (bets/timing/messages untouched) and never raises.
+    _minute_model_tick_safe(
+        match_key=match_key,
+        live_league=live_league,
+        game_time_seconds=game_time_seconds,
+        live_kills=live_kills,
+        **kwargs,
+    )
+
+
+# --- E-347 minute model: DISPLAY-ONLY line at 10:00 / 31:00 + shadow journal ----
+#
+# Pure information: one admin/odds-bot Telegram line and one row in
+# runtime/ml_minute_shadow.jsonl per (map, minute). No dispatch decision, gate,
+# timing, price floor or existing message reads anything from here. Model and
+# live-verdict semantics: base/minute_model_serving.py docstring.
+
+_MINUTE_MODEL_MINUTES = (10, 31)
+_MINUTE_MODEL_WINDOW_SECONDS = 120.0
+_minute_model_lock = threading.Lock()
+_MINUTE_MODEL_QUEUE_MAX = 64
+_MINUTE_MODEL_JOURNAL_BYTES = 2 * 1024 * 1024
+_MINUTE_MODEL_JOURNAL_SECONDS = 6 * 3600.0
+# The stack was trained on variant-A ELO (ELO/models.py a_lineup_summary source).
+_MINUTE_MODEL_ELO_SOURCE = "elo_composition_a"
+_minute_model_done: set = set()
+_minute_model_inflight: set = set()
+# Journal dedup state: read and written ONLY by the worker thread (never the poll thread).
+_minute_model_journal_path: Optional[str] = None
+_minute_model_journal_done: set = set()
+_minute_model_queue: Optional["queue.Queue"] = None
+_minute_model_worker: Optional[threading.Thread] = None
+_minute_model_drop_logged = False
+_minute_model_missing_detail: Dict[str, str] = {}
+_minute_model_error_logged: set = set()
+_minute_model_identifiers_cache: Optional[Dict[str, Any]] = None
+_minute_model_shadow_lock = threading.Lock()
+
+
+def _minute_model_serving_module():
+    try:
+        import minute_model_serving as _mms
+    except ImportError:
+        from base import minute_model_serving as _mms
+    return _mms
+
+
+def _minute_model_shadow_path() -> Path:
+    raw = os.getenv("MINUTE_MODEL_SHADOW_PATH", "runtime/ml_minute_shadow.jsonl")
+    path = Path(raw)
+    return path if path.is_absolute() else Path(__file__).resolve().parents[1] / path
+
+
+def _minute_model_draft_identifiers() -> Dict[str, Any]:
+    """Which four draft-model directories this process actually serves.
+
+    Computed and printed once. The minute model was trained on E-347 offline
+    outputs (20260923_all7m); a mismatch with the live directories must be
+    visible in the shadow record, not fatal.
+    """
+    global _minute_model_identifiers_cache
+    with _minute_model_lock:
+        if _minute_model_identifiers_cache is not None:
+            return dict(_minute_model_identifiers_cache)
+    ids: Dict[str, Any] = {}
+    try:
+        directory = Path(win_model_veto.MODEL_DIR)
+        try:
+            ids["all"] = win_model_veto._draft_paths.model_fingerprint(directory)
+        except Exception:                           # noqa: BLE001
+            ids["all"] = directory.name
+    except Exception:                               # noqa: BLE001
+        ids["all"] = None
+    for label, module_name in (("late", "late_win_model"), ("early_win", "early_win_model"),
+                               ("early_nw", "early_nw_win_model")):
+        try:
+            try:
+                module = __import__(module_name)
+            except ImportError:
+                module = __import__(f"base.{module_name}", fromlist=[module_name])
+            directory = Path(module.MODEL_DIR)
+            ids[label] = f"{directory.parent.name}/{directory.name}"
+            if not getattr(module, "ENABLED", True):
+                ids[label] += " (disabled)"
+        except Exception:                           # noqa: BLE001
+            ids[label] = None
+    with _minute_model_lock:
+        _minute_model_identifiers_cache = dict(ids)
+    print(f"🧮 minute model: draft models in use {json.dumps(ids, ensure_ascii=False)}", flush=True)
+    return ids
+
+
+def _minute_model_verdicts(index, details, radiant_heroes_and_pos, dire_heroes_and_pos) -> Dict[str, Any]:
+    """Raw late/early_win/early_nw verdict dicts and the unshifted All index.
+
+    Same source order as `_ml_dispatch_tick`: the per-card details dict (in prod
+    PREMATCH_ML_ENABLED=0, so these come from `laning_serving.fallback_verdicts`
+    stored under DETAILS_KEY), else `win_model_veto.last_*` by index; any model
+    still missing is filled by `fallback_verdicts` from the hero vector itself
+    (per-model heroes-keyed caches, no extra model load). `index`/`details` come
+    from `_ml_dispatch_extract_index_details` (taken on the poll thread).
+    """
+    if details:
+        pairs = {name: details.get(name) for name in ("late", "early_win", "early_nw")}
+    elif index is not None:
+        pairs = {"late": win_model_veto.last_late(index),
+                 "early_win": win_model_veto.last_early_win(index),
+                 "early_nw": win_model_veto.last_early_nw(index)}
+    else:
+        pairs = {"late": None, "early_win": None, "early_nw": None}
+    mms = _minute_model_serving_module()
+    missing = [name for name, pair in pairs.items() if mms.radiant_probability(pair) is None]
+    if missing:
+        from base import laning_serving as _laning_serving
+        fallback = _laning_serving.fallback_verdicts(
+            radiant_heroes_and_pos, dire_heroes_and_pos, draft_model=win_model_veto) or {}
+        for name in missing:
+            pairs[name] = fallback.get(name)
+    # All: UNSHIFTED draft index (offline p_all had no hero-pool correction),
+    # NOT laning_serving._all_index / the dispatch `all` verdict.
+    all_index = win_model_veto.win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos)
+    return {"all_index": all_index, **pairs}
+
+
+def _minute_model_kills(live_kills: Any) -> Optional[Tuple[int, int]]:
+    try:
+        radiant_kills, dire_kills = live_kills
+        radiant_kills, dire_kills = int(float(radiant_kills)), int(float(dire_kills))
+    except (TypeError, ValueError):
+        return None
+    if radiant_kills < 0 or dire_kills < 0:
+        return None
+    return radiant_kills, dire_kills
+
+
+def _minute_model_message(minute: int, radiant: str, dire: str, map_num: Any, result: Dict[str, Any],
+                          nw_lead: float, kills: Tuple[int, int],
+                          prices: Tuple[Optional[float], Optional[float]]) -> str:
+    def lead_side(p_radiant: float) -> Tuple[str, float]:
+        return (radiant, p_radiant) if p_radiant >= 0.5 else (dire, 1.0 - p_radiant)
+
+    fav, fav_p = lead_side(result["p_head"])
+    line2 = f"{fav} {fav_p * 100:.1f}% (состояние+драфт)"
+    if result.get("p_stack") is None:
+        line2 += " · без ELO"
+    else:
+        stack_team, stack_p = lead_side(result["p_stack"])
+        line2 += (f" · с ELO {stack_p * 100:.1f}%" if stack_team == fav
+                  else f" · с ELO {stack_team} {stack_p * 100:.1f}%")
+    parts = [f"NW {nw_lead / 1000.0:+.1f}k", f"киллы {kills[0]}:{kills[1]}"]
+    if prices[0] is not None or prices[1] is not None:
+        fmt = lambda v: "—" if v is None else f"{v:.2f}"      # noqa: E731
+        parts.append(f"Winline {fmt(prices[0])} / {fmt(prices[1])}")
+    head = f"🧮 Минутная модель {minute}:00 · {radiant} vs {dire}"
+    if map_num:
+        head += f" · карта {map_num}"
+    return f"{head}\n{line2}\n{' · '.join(parts)}"
+
+
+def _minute_model_append_shadow(record: Dict[str, Any]) -> None:
+    path = _minute_model_shadow_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    with _minute_model_shadow_lock:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.flush()
+
+
+def _minute_model_slot(map_num: Any) -> Any:
+    """Map part of the dedup key. An unknown map is NOT slot 0 (or any real map)."""
+    return map_num if map_num is not None else "unknown"
+
+
+def _minute_model_key(base_url: Any, map_num: Any, minute: Any) -> str:
+    return f"{base_url}|{_minute_model_slot(map_num)}|{minute}"
+
+
+def _minute_model_resolve_map_num(match_key: Any, live_league: Any) -> Optional[int]:
+    """Map number of THIS card, preferring what the card pipeline already settled.
+
+    Order: the number the card parse remembered for this match key
+    (`_remember_match_map_num`: SourceTV cleared-draft / `series_game_number` /
+    series score / Winline map identity), then the verified ``series_game`` the
+    SourceTV payload carries (1..5), then the plain series-score inference the
+    dispatch tick uses. Unknown stays None (the caller skips with "map_unknown").
+    """
+    league = live_league if isinstance(live_league, dict) else {}
+    try:
+        remembered = _lookup_match_map_num(match_key)
+    except Exception:                               # noqa: BLE001
+        remembered = None
+    if isinstance(remembered, int) and 1 <= remembered <= 5:
+        return remembered
+    try:
+        series_game = int(league.get("series_game"))
+    except (TypeError, ValueError):
+        series_game = 0
+    if 1 <= series_game <= 5:
+        return series_game
+    try:
+        inferred = _bookmaker_infer_map_num(league, score_text="")
+        return int(inferred) if inferred is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _minute_model_load_journal_done() -> None:
+    """WORKER thread only: rebuild the journal dedup set (restart safety).
+
+    Reads the last ``_MINUTE_MODEL_JOURNAL_BYTES`` bytes, rows younger than
+    ``_MINUTE_MODEL_JOURNAL_SECONDS``; keys exactly like the in-memory ones, so a
+    key whose row exists is dropped by the worker. Runs when the worker starts (and
+    again only if the journal path changes), always before any job is processed;
+    the poll thread never opens the journal.
+    """
+    global _minute_model_journal_path, _minute_model_journal_done
+    path = _minute_model_shadow_path()
+    keys: set = set()
+    try:
+        if path.is_file():
+            size = path.stat().st_size
+            with open(path, "rb") as handle:
+                offset = max(0, size - _MINUTE_MODEL_JOURNAL_BYTES)
+                handle.seek(offset)
+                raw = handle.read()
+            lines = raw.decode("utf-8", errors="ignore").splitlines()
+            if offset > 0 and lines:
+                lines = lines[1:]                   # first line is cut mid-row
+            cutoff = time.time() - _MINUTE_MODEL_JOURNAL_SECONDS
+            for text in lines:
+                try:
+                    row = json.loads(text)
+                    base_url, minute = row["base_url"], row["minute"]
+                except (ValueError, KeyError, TypeError):
+                    continue
+                try:
+                    stamp = datetime.fromisoformat(str(row.get("ts_utc"))).timestamp()
+                except (TypeError, ValueError):
+                    stamp = None
+                if stamp is not None and stamp < cutoff:
+                    continue
+                keys.add(_minute_model_key(base_url, row.get("map_num"), minute))
+    except Exception:                               # noqa: BLE001
+        logger.warning("minute model journal replay failed", exc_info=True)
+    _minute_model_journal_done = keys
+    _minute_model_journal_path = str(path)
+
+
+def _minute_model_sync_journal_done() -> None:
+    """WORKER thread only: (re)load the journal set if it is not loaded for this path."""
+    if _minute_model_journal_path != str(_minute_model_shadow_path()):
+        _minute_model_load_journal_done()
+
+
+def _minute_model_worker_loop(jobs: "queue.Queue") -> None:
+    try:
+        _minute_model_sync_journal_done()           # replay BEFORE the first job
+    except Exception:                               # noqa: BLE001
+        pass
+    while True:
+        job = jobs.get()
+        try:
+            _minute_model_sync_journal_done()
+            job()
+        except Exception:                           # noqa: BLE001
+            try:
+                logger.warning("minute model worker job failed", exc_info=True)
+            except Exception:                       # noqa: BLE001
+                pass
+        finally:
+            jobs.task_done()
+
+
+def _minute_model_enqueue(job: Any) -> bool:
+    """Hand a job to the single lazy daemon worker; never blocks the poll thread."""
+    global _minute_model_queue, _minute_model_worker, _minute_model_drop_logged
+    with _minute_model_lock:
+        if _minute_model_queue is None:
+            _minute_model_queue = queue.Queue(maxsize=_MINUTE_MODEL_QUEUE_MAX)
+        jobs = _minute_model_queue
+        if _minute_model_worker is None or not _minute_model_worker.is_alive():
+            _minute_model_worker = threading.Thread(
+                target=_minute_model_worker_loop, args=(jobs,),
+                name="minute-model-worker", daemon=True)
+            _minute_model_worker.start()
+    try:
+        jobs.put_nowait(job)
+        return True
+    except queue.Full:
+        with _minute_model_lock:
+            first = not _minute_model_drop_logged
+            _minute_model_drop_logged = True
+        if first:
+            logger.warning("minute model queue full: dropping jobs (display-only)")
+        return False
+
+
+def _minute_model_drain(timeout: float = 15.0) -> bool:
+    """Wait until the worker queue is empty and idle (tests, shutdown)."""
+    jobs = _minute_model_queue
+    if jobs is None:
+        return True
+    deadline = time.monotonic() + timeout
+    while jobs.unfinished_tasks:
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.005)
+    return True
+
+
+def _minute_model_reserve(key: str, *, final: bool) -> bool:
+    """Atomic check-and-reserve of one key. final -> done now; else in flight."""
+    with _minute_model_lock:
+        if key in _minute_model_done or key in _minute_model_inflight:
+            return False
+        if final:
+            _minute_model_done.add(key)
+            _minute_model_missing_detail.pop(key, None)
+        else:
+            _minute_model_inflight.add(key)
+        return True
+
+
+def _minute_model_finish(key: str, *, retry: bool) -> None:
+    with _minute_model_lock:
+        _minute_model_inflight.discard(key)
+        if not retry:
+            _minute_model_done.add(key)
+            _minute_model_missing_detail.pop(key, None)
+
+
+def _minute_model_log_once(key: str, what: str) -> None:
+    with _minute_model_lock:
+        first = key not in _minute_model_error_logged
+        _minute_model_error_logged.add(key)
+    if first:                                       # one line per key: never floods the log
+        logger.exception("minute model %s for %s", what, key)
+
+
+def _minute_model_warn_once(token: str, text: str) -> None:
+    with _minute_model_lock:
+        first = token not in _minute_model_error_logged
+        _minute_model_error_logged.add(token)
+    if first:
+        logger.warning("%s", text)
+
+
+def _minute_model_tick(
+    *,
+    match_key: str,
+    live_league: Optional[Dict[str, Any]],
+    game_time_seconds: Any,
+    radiant_lead: Any = None,
+    live_kills: Any = None,
+    radiant_team_name: Any = "",
+    dire_team_name: Any = "",
+    early_output: Any = None,
+    mid_output: Any = None,
+    all_output: Any = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+    team_elo_meta: Any = None,
+    radiant_team_id: Any = 0,
+    dire_team_id: Any = 0,
+    **_ignored: Any,
+) -> None:
+    """Poll-thread part: cheap due/window check, reserve the key, take a snapshot.
+
+    Everything slow (fallback verdicts, prediction, Winline price reads, the
+    Telegram send, the journal append) runs on ONE background daemon worker, so
+    the dispatch / kills delivery that follows the call site is never delayed.
+
+    Window: the FIRST poll with game_time in [60*m, 60*m + 120) takes the
+    snapshot (inputs missing at that poll -> retried while the window lasts).
+    A map first seen past the window gets one shadow row with
+    skip="window_missed" and no Telegram line (a restart mid-map must not post
+    a stale 10:00 line at minute 20). An unknown map number never fires
+    (skip="map_unknown" once the window is over).
+    """
+    mms = _minute_model_serving_module()
+    if not mms.enabled():
+        return
+    try:
+        game_time = float(game_time_seconds)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(game_time):
+        return
+    due = [m for m in _MINUTE_MODEL_MINUTES if game_time >= 60.0 * m]
+    if not due:
+        return
+    base_url = _signal_fingerprint_registry_key(match_key)
+    map_num = _minute_model_resolve_map_num(match_key, live_league)
+    teams = {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")}
+    for minute in due:
+        # One skip row per map: older missed minutes are retired silently.
+        record_skip = minute == due[-1]
+        key = _minute_model_key(base_url, map_num, minute)
+        with _minute_model_lock:
+            if key in _minute_model_done or key in _minute_model_inflight:
+                continue
+        in_window = game_time < 60.0 * minute + _MINUTE_MODEL_WINDOW_SECONDS
+        if map_num is None and in_window:
+            continue                                # the number may still resolve
+        if not in_window or map_num is None:
+            with _minute_model_lock:
+                detail = _minute_model_missing_detail.get(key)
+            if not _minute_model_reserve(key, final=True) or not record_skip:
+                continue
+            skip = "map_unknown" if map_num is None else "window_missed"
+            row = {
+                "ts_utc": datetime.now(timezone.utc).isoformat(), "base_url": base_url,
+                "map_num": map_num, "radiant": teams["radiant"], "dire": teams["dire"],
+                "radiant_team_id": radiant_team_id, "dire_team_id": dire_team_id,
+                "minute": minute, "game_time": game_time, "p_head": None, "p_stack": None,
+                "tg": "off", "skip": skip, "detail": detail}
+            if not _minute_model_enqueue(lambda row=row, key=key: _minute_model_skip_job(key, row)):
+                _minute_model_log_once(key, "queue full (skip row dropped)")
+            continue
+        missing: List[str] = []
+        try:
+            nw_lead = float(radiant_lead)
+            if not math.isfinite(nw_lead):
+                raise ValueError
+        except (TypeError, ValueError):
+            nw_lead, missing = 0.0, missing + ["nw_lead"]
+        kills = _minute_model_kills(live_kills)
+        if kills is None:
+            missing.append("kills")
+        if missing:
+            with _minute_model_lock:
+                _minute_model_missing_detail[key] = ",".join(missing)
+            continue                                # retry on the next poll inside the window
+        if not _minute_model_reserve(key, final=False):
+            continue
+        index, details = _ml_dispatch_extract_index_details(early_output, mid_output, all_output)
+        elo_radiant = _team_elo_base_rating_for_side(team_elo_meta, "radiant")
+        elo_dire = _team_elo_base_rating_for_side(team_elo_meta, "dire")
+        snapshot = {
+            "minute": minute, "key": key, "base_url": base_url, "map_num": map_num,
+            "game_time": game_time, "nw_lead": nw_lead, "kills": kills,
+            "index": index, "details": copy.deepcopy(details) if details else {},
+            "radiant_heroes": copy.deepcopy(radiant_heroes_and_pos),
+            "dire_heroes": copy.deepcopy(dire_heroes_and_pos),
+            "elo_radiant": elo_radiant, "elo_dire": elo_dire,
+            "elo_source": (team_elo_meta.get("source") if isinstance(team_elo_meta, dict) else None),
+            "radiant_team_name": radiant_team_name, "dire_team_name": dire_team_name,
+            "radiant_team_id": radiant_team_id, "dire_team_id": dire_team_id,
+            "match_id": live_league.get("match_id") if isinstance(live_league, dict) else None,
+        }
+        if not _minute_model_enqueue(lambda snap=snapshot: _minute_model_fire_job(snap)):
+            # dropped (queue full, already logged once): release the in-flight
+            # reservation so a later poll inside the window can enqueue again
+            _minute_model_finish(key, retry=True)
+
+
+def _minute_model_skip_job(key: str, row: Dict[str, Any]) -> None:
+    if key in _minute_model_journal_done:
+        logger.debug("minute model skip row for %s already journaled: dropped", key)
+        return
+    try:
+        _minute_model_append_shadow(row)
+        _minute_model_journal_done.add(key)
+    except Exception:                               # noqa: BLE001
+        _minute_model_log_once(key, "skip-row journal append failed")
+
+
+def _minute_model_fire_job(snap: Dict[str, Any]) -> None:
+    """Worker part: journal check -> compute -> journal row -> Telegram."""
+    key = snap["key"]
+    retry = False
+    try:
+        if key in _minute_model_journal_done:
+            logger.debug("minute model %s already journaled: dropped", key)
+        else:
+            retry = not _minute_model_compute_and_publish(snap)
+    except Exception:                               # noqa: BLE001
+        _minute_model_log_once(key, "failed")
+    finally:
+        _minute_model_finish(key, retry=retry)
+
+
+def _minute_model_compute_and_publish(snap: Dict[str, Any]) -> bool:
+    """False = inputs missing, retry on a later poll inside the window."""
+    mms = _minute_model_serving_module()
+    key, minute = snap["key"], snap["minute"]
+    verdicts = _minute_model_verdicts(
+        snap["index"], snap["details"], snap["radiant_heroes"], snap["dire_heroes"])
+    p_all = mms.all_probability_from_index(verdicts.get("all_index"))
+    p_late = mms.radiant_probability(verdicts.get("late"))
+    p_early_win = mms.radiant_probability(verdicts.get("early_win"))
+    p_enw_rad = mms.radiant_probability(verdicts.get("early_nw"))
+    missing = [name for name, value in (("p_all", p_all), ("p_late", p_late),
+                                        ("p_early_win", p_early_win), ("p_enw_rad", p_enw_rad))
+               if value is None]
+    # The stack was trained on the pre-map variant-A ELO only: the normal A -> K24
+    # fallback (or any other source) must not feed it; the head is still shown.
+    p_elo, elo_skip = None, None
+    if snap["elo_radiant"] is not None and snap["elo_dire"] is not None:
+        if snap["elo_source"] == _MINUTE_MODEL_ELO_SOURCE:
+            p_elo = _elo_probability_from_ratings(snap["elo_radiant"], snap["elo_dire"])
+        else:
+            elo_skip = f"elo_source_{snap['elo_source']}"
+    nw_lead, kills = snap["nw_lead"], snap["kills"]
+    result = None
+    if not missing:
+        result = mms.predict(minute, nw_lead=nw_lead, radiant_kills=kills[0], dire_kills=kills[1],
+                             p_all=p_all, p_late=p_late, p_early_win=p_early_win,
+                             p_enw_rad=p_enw_rad, p_elo=p_elo)
+        if result is None:
+            missing.append("model_unavailable")
+    if missing or result is None:
+        with _minute_model_lock:
+            _minute_model_missing_detail[key] = ",".join(missing)
+        return False
+    radiant, dire, map_num, game_time = (snap["radiant_team_name"], snap["dire_team_name"],
+                                         snap["map_num"], snap["game_time"])
+    prices: List[Optional[float]] = []
+    for team_name in (radiant, dire):
+        try:
+            prices.append(_ml_dispatch_fresh_winline_price(
+                {"radiant_team_name": radiant, "dire_team_name": dire,
+                 "stake_team_name": team_name, "game_time_seconds": game_time}, map_num))
+        except Exception:                           # noqa: BLE001
+            prices.append(None)
+    tg_enabled = os.getenv("MINUTE_MODEL_TG", "1") == "1"
+    raw_verdicts = {name: ({k: v for k, v in verdicts[name].items() if k != "freshness_note"}
+                           if isinstance(verdicts.get(name), dict) else None)
+                    for name in ("late", "early_win", "early_nw")}
+    record = {
+        "ts_utc": datetime.now(timezone.utc).isoformat(),
+        "base_url": snap["base_url"],
+        "map_num": map_num,
+        "match_id": snap["match_id"],
+        "radiant": str(radiant or ""),
+        "dire": str(dire or ""),
+        "radiant_team_id": snap["radiant_team_id"],
+        "dire_team_id": snap["dire_team_id"],
+        "minute": minute,
+        "game_time": game_time,
+        "inputs": {"nw_lead": nw_lead, "radiant_kills": kills[0], "dire_kills": kills[1],
+                   "p_all": p_all, "p_late": p_late, "p_early_win": p_early_win,
+                   "p_enw_rad": p_enw_rad, "p_elo": p_elo},
+        "verdicts": {"all_index": verdicts.get("all_index"), **raw_verdicts},
+        "features": result["features"],
+        "p_head": result["p_head"],
+        "p_stack": result["p_stack"],
+        "p_elo": p_elo,
+        "elo_skip": elo_skip,
+        "model_sha256": result["model_sha256"],
+        "draft_models": _minute_model_draft_identifiers(),
+        "winline_radiant": prices[0],
+        "winline_dire": prices[1],
+        "tg_enabled": tg_enabled,
+        "tg": "queued" if tg_enabled else "off",      # evidence row precedes the send
+        "skip": None,
+    }
+    try:
+        _minute_model_append_shadow(record)
+    except Exception:                               # noqa: BLE001
+        # no line without its evidence row (a resend after a restart would double-count)
+        _minute_model_log_once(key, "journal append failed")
+        return True
+    _minute_model_journal_done.add(key)
+    if tg_enabled:
+        try:
+            message = _minute_model_message(
+                minute, str(radiant), str(dire), map_num, result, nw_lead, kills,
+                (prices[0], prices[1]))
+            delivered = bool(_winline_send_lifecycle_message(message, kind="minute_model", key=key))
+            if not delivered:
+                _minute_model_warn_once(f"{key}|tg", f"minute model telegram not delivered for {key}")
+        except Exception:                           # noqa: BLE001
+            _minute_model_log_once(f"{key}|tg", "telegram failed")
+    return True
+
+
+def _minute_model_tick_safe(**kwargs: Any) -> None:
+    """Never lets anything out: the dispatch path must not notice this hook."""
+    try:
+        _minute_model_tick(**kwargs)
+    except Exception:                               # noqa: BLE001
+        try:
+            logger.warning("minute model hook failed", exc_info=True)
+        except Exception:                           # noqa: BLE001
+            pass
 
 
 def _half_stake_elo_underdog_reject_for_delivery(
@@ -41891,6 +42480,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _ml_dispatch_tick_once_per_cycle(
                     position_source=listing_context.get('source'),
                     position_resolution=data.get('_pos_resolution'),
+                    # E-347 minute model reads live kills from the same payload (display-only).
+                    live_kills=(data.get('radiant_score'), data.get('dire_score')),
                     radiant_team_id=radiant_team_id,
                     dire_team_id=dire_team_id,
                     match_key=check_uniq_url,
@@ -42064,6 +42655,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             _ml_dispatch_tick_once_per_cycle(
                 position_source=listing_context.get('source'),
                 position_resolution=data.get('_pos_resolution'),
+                # E-347 minute model reads live kills from the same payload (display-only).
+                live_kills=(data.get('radiant_score'), data.get('dire_score')),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
@@ -44474,6 +45067,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             _ml_dispatch_tick_once_per_cycle(
                 position_source=listing_context.get('source'),
                 position_resolution=data.get('_pos_resolution'),
+                # E-347 minute model reads live kills from the same payload (display-only).
+                live_kills=(data.get('radiant_score'), data.get('dire_score')),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,
@@ -48085,6 +48680,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             _ml_dispatch_tick_once_per_cycle(
                 position_source=listing_context.get('source'),
                 position_resolution=data.get('_pos_resolution'),
+                # E-347 minute model reads live kills from the same payload (display-only).
+                live_kills=(data.get('radiant_score'), data.get('dire_score')),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
                 match_key=check_uniq_url,

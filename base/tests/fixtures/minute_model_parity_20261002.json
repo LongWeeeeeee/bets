@@ -1,0 +1,6656 @@
+{
+  "schema": "minute-model-parity-v1",
+  "rows": [
+    {
+      "minute": 10,
+      "match_id": 8137628505,
+      "ts": 1737372004,
+      "series": 101765670,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 795,
+        "radiant_kills": 8,
+        "dire_kills": 4,
+        "p_all": 0.13788353266471737,
+        "p_late": 0.17070081608651527,
+        "p_early_win": 0.09844892565452187,
+        "p_enw_rad": 0.10596662180744096,
+        "p_elo": 0.552954988180491
+      },
+      "expected": {
+        "head": 0.33373347886745575,
+        "stack": 0.3816188996366973
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8150918037,
+      "ts": 1738166169,
+      "series": 944793,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -54,
+        "radiant_kills": 0,
+        "dire_kills": 0,
+        "p_all": 0.38131081760587354,
+        "p_late": 0.37076655919392004,
+        "p_early_win": 0.48813919834889985,
+        "p_enw_rad": 0.5749840284970519,
+        "p_elo": 0.5771153407125074
+      },
+      "expected": {
+        "head": 0.34001534771035086,
+        "stack": 0.40436577114659805
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8180050145,
+      "ts": 1739923801,
+      "series": 950863,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -10822,
+        "radiant_kills": 6,
+        "dire_kills": 32,
+        "p_all": 0.5549688310599344,
+        "p_late": 0.38937707818953676,
+        "p_early_win": 0.7826406741273702,
+        "p_enw_rad": 0.7936958824669212,
+        "p_elo": 0.12696833982709937
+      },
+      "expected": {
+        "head": 0.0038762045625482127,
+        "stack": 0.0015374953309261875
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8203270469,
+      "ts": 1741288038,
+      "series": 955376,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 12567,
+        "radiant_kills": 39,
+        "dire_kills": 6,
+        "p_all": 0.524984553282645,
+        "p_late": 0.6458315696124707,
+        "p_early_win": 0.4170726647060729,
+        "p_enw_rad": 0.25675318501781125,
+        "p_elo": 0.7978187682292183
+      },
+      "expected": {
+        "head": 0.9988134510897947,
+        "stack": 0.9992455077076648
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8231927246,
+      "ts": 1743128811,
+      "series": 961990,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1197,
+        "radiant_kills": 28,
+        "dire_kills": 28,
+        "p_all": 0.40402328647421004,
+        "p_late": 0.3956117180797406,
+        "p_early_win": 0.4325560482998929,
+        "p_enw_rad": 0.4432594230232209,
+        "p_elo": 0.44905600677879554
+      },
+      "expected": {
+        "head": 0.5617775186777666,
+        "stack": 0.5224362696364269
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8252260988,
+      "ts": 1744481361,
+      "series": 966910,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -2897,
+        "radiant_kills": 3,
+        "dire_kills": 7,
+        "p_all": 0.8612496080683635,
+        "p_late": 0.6047643516578247,
+        "p_early_win": 0.9840585480570447,
+        "p_enw_rad": 0.9633132141658174,
+        "p_elo": 0.4393590872491338
+      },
+      "expected": {
+        "head": 0.38112011100600296,
+        "stack": 0.35106149590990654
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8262981088,
+      "ts": 1745194991,
+      "series": 969530,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2091,
+        "radiant_kills": 6,
+        "dire_kills": 5,
+        "p_all": 0.7853368309277434,
+        "p_late": 0.6127539432205156,
+        "p_early_win": 0.9387301781873421,
+        "p_enw_rad": 0.9733444125247216,
+        "p_elo": 0.6937385540213236
+      },
+      "expected": {
+        "head": 0.7595033076859307,
+        "stack": 0.837995256110335
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8317967331,
+      "ts": 1748843599,
+      "series": 981805,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 6460,
+        "radiant_kills": 11,
+        "dire_kills": 1,
+        "p_all": 0.3601076298365391,
+        "p_late": 0.39494769141771635,
+        "p_early_win": 0.2843717412541628,
+        "p_enw_rad": 0.4730392025826993,
+        "p_elo": 0.9967919479629043
+      },
+      "expected": {
+        "head": 0.9274701317163069,
+        "stack": 0.9983555257903087
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8321088330,
+      "ts": 1749048528,
+      "series": 982642,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3451,
+        "radiant_kills": 5,
+        "dire_kills": 11,
+        "p_all": 0.2120519349849889,
+        "p_late": 0.3521817346444958,
+        "p_early_win": 0.09557392811260759,
+        "p_enw_rad": 0.02966468167523989,
+        "p_elo": 0.6275721015309355
+      },
+      "expected": {
+        "head": 0.11758503288149026,
+        "stack": 0.18451572275117356
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8473662979,
+      "ts": 1758475013,
+      "series": 1013347,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 15721,
+        "radiant_kills": 20,
+        "dire_kills": 6,
+        "p_all": 0.4918530232231657,
+        "p_late": 0.52802075734439,
+        "p_early_win": 0.4012557936288291,
+        "p_enw_rad": 0.4636103329809866,
+        "p_elo": 0.5221748855723067
+      },
+      "expected": {
+        "head": 0.9992403710327521,
+        "stack": 0.9987631306147641
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8485977311,
+      "ts": 1759106127,
+      "series": 1016424,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -16901,
+        "radiant_kills": 2,
+        "dire_kills": 16,
+        "p_all": 0.7296320782920439,
+        "p_late": 0.7237271214136163,
+        "p_early_win": 0.707392164769115,
+        "p_enw_rad": 0.7568436393628308,
+        "p_elo": 0.555575306861704
+      },
+      "expected": {
+        "head": 0.0008583480710165344,
+        "stack": 0.001742406192056912
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8498010302,
+      "ts": 1759745444,
+      "series": 1019478,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -6547,
+        "radiant_kills": 3,
+        "dire_kills": 14,
+        "p_all": 0.4604987504388744,
+        "p_late": 0.47353801437810705,
+        "p_early_win": 0.4524846210510327,
+        "p_enw_rad": 0.6747848132530432,
+        "p_elo": 0.003997710888314591
+      },
+      "expected": {
+        "head": 0.02812608373359805,
+        "stack": 0.000776593143422087
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8603059846,
+      "ts": 1765622900,
+      "series": 1046168,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4245,
+        "radiant_kills": 7,
+        "dire_kills": 11,
+        "p_all": 0.820192242548869,
+        "p_late": 0.8850501451132343,
+        "p_early_win": 0.6497407159039525,
+        "p_enw_rad": 0.49604758664056436,
+        "p_elo": 0.4342217682989504
+      },
+      "expected": {
+        "head": 0.3590596000527305,
+        "stack": 0.3281750669582836
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8844960105,
+      "ts": 1781008150,
+      "series": 1108122,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3064,
+        "radiant_kills": 1,
+        "dire_kills": 8,
+        "p_all": 0.9049678183405407,
+        "p_late": 0.8167177540165227,
+        "p_early_win": 0.9702953634908174,
+        "p_enw_rad": 0.8892228316703606,
+        "p_elo": 0.5001140334413111
+      },
+      "expected": {
+        "head": 0.5068192799865263,
+        "stack": 0.507631250486114
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8863640595,
+      "ts": 1782239073,
+      "series": 101877855,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1225,
+        "radiant_kills": 11,
+        "dire_kills": 9,
+        "p_all": 0.18614287403418883,
+        "p_late": 0.39296496175759005,
+        "p_early_win": 0.031143613777657134,
+        "p_enw_rad": 0.07330193884864247,
+        "p_elo": 0.5592644897381666
+      },
+      "expected": {
+        "head": 0.4647463702863206,
+        "stack": 0.5107235774820342
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8991241111,
+      "ts": 1789013467,
+      "series": 1140191,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -7514,
+        "radiant_kills": 3,
+        "dire_kills": 15,
+        "p_all": 0.249850100162337,
+        "p_late": 0.15406206101148456,
+        "p_early_win": 0.5284025536831465,
+        "p_enw_rad": 0.39691253411369243,
+        "p_elo": 0.42205332148426156
+      },
+      "expected": {
+        "head": 0.01103537601494054,
+        "stack": 0.012559425230047869
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8107480347,
+      "ts": 1735690278,
+      "series": 938496,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1981,
+        "radiant_kills": 6,
+        "dire_kills": 5,
+        "p_all": 0.5280776164891688,
+        "p_late": 0.4905327970887675,
+        "p_early_win": 0.5539027424798367,
+        "p_enw_rad": 0.36605681445831,
+        "p_elo": 0.40340533693283037
+      },
+      "expected": {
+        "head": 0.7603801688401179,
+        "stack": 0.688721297484083
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8125967355,
+      "ts": 1736688891,
+      "series": 940934,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 2530,
+        "radiant_kills": 4,
+        "dire_kills": 6,
+        "p_all": 0.6835955141231008,
+        "p_late": 0.629556410018344,
+        "p_early_win": 0.7836263453278728,
+        "p_enw_rad": 0.7999608056958264,
+        "p_elo": 0.5406295736059928
+      },
+      "expected": {
+        "head": 0.7883589155761936,
+        "stack": 0.791395644817151
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8139969239,
+      "ts": 1737510159,
+      "series": 943084,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -859,
+        "radiant_kills": 4,
+        "dire_kills": 9,
+        "p_all": 0.5814546670081907,
+        "p_late": 0.5574422165434789,
+        "p_early_win": 0.6798875478125138,
+        "p_enw_rad": 0.5492721492165548,
+        "p_elo": 0.4533013343678847
+      },
+      "expected": {
+        "head": 0.41760907477610143,
+        "stack": 0.3931451447529273
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8155788623,
+      "ts": 1738465211,
+      "series": 945722,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2063,
+        "radiant_kills": 12,
+        "dire_kills": 6,
+        "p_all": 0.48704041713605273,
+        "p_late": 0.5879721437101502,
+        "p_early_win": 0.32561774586684283,
+        "p_enw_rad": 0.4805480822061253,
+        "p_elo": 0.21128682332408702
+      },
+      "expected": {
+        "head": 0.7289064899214136,
+        "stack": 0.4968722010505909
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8167655169,
+      "ts": 1739171231,
+      "series": 948200,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1414,
+        "radiant_kills": 12,
+        "dire_kills": 11,
+        "p_all": 0.4762108387689258,
+        "p_late": 0.4177704366357288,
+        "p_early_win": 0.6443556887013208,
+        "p_enw_rad": 0.4364795119453998,
+        "p_elo": 0.4697930124860503
+      },
+      "expected": {
+        "head": 0.6428215905344299,
+        "stack": 0.6134357297191314
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8177356807,
+      "ts": 1739747521,
+      "series": 950313,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -830,
+        "radiant_kills": 6,
+        "dire_kills": 11,
+        "p_all": 0.6259554701012706,
+        "p_late": 0.5459805018902837,
+        "p_early_win": 0.7628689983320032,
+        "p_enw_rad": 0.8797550096281963,
+        "p_elo": 0.610368606025193
+      },
+      "expected": {
+        "head": 0.3520375099139581,
+        "stack": 0.44006489465251514
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8192228343,
+      "ts": 1740609718,
+      "series": 953195,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4087,
+        "radiant_kills": 5,
+        "dire_kills": 12,
+        "p_all": 0.5252396365263945,
+        "p_late": 0.5268040219692209,
+        "p_early_win": 0.540058672853998,
+        "p_enw_rad": 0.554805874698927,
+        "p_elo": 0.1957850853358113
+      },
+      "expected": {
+        "head": 0.1223839573724166,
+        "stack": 0.05677397823707585
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8204586502,
+      "ts": 1741374210,
+      "series": 101773864,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3241,
+        "radiant_kills": 8,
+        "dire_kills": 9,
+        "p_all": 0.44940271649134694,
+        "p_late": 0.5211730760880091,
+        "p_early_win": 0.33564345087078645,
+        "p_enw_rad": 0.4654355019040125,
+        "p_elo": 0.47330856623185646
+      },
+      "expected": {
+        "head": 0.16584001480966704,
+        "stack": 0.1735268019257086
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8217198433,
+      "ts": 1742154550,
+      "series": 958523,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 5887,
+        "radiant_kills": 13,
+        "dire_kills": 3,
+        "p_all": 0.5300031221087351,
+        "p_late": 0.4682900531723915,
+        "p_early_win": 0.615960462357403,
+        "p_enw_rad": 0.6535441732957729,
+        "p_elo": 0.5270770387867928
+      },
+      "expected": {
+        "head": 0.9415224233428507,
+        "stack": 0.9337289800259764
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8228096762,
+      "ts": 1742864008,
+      "series": 961137,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -36,
+        "radiant_kills": 5,
+        "dire_kills": 8,
+        "p_all": 0.5224090237784195,
+        "p_late": 0.4634430745732551,
+        "p_early_win": 0.5670033543398705,
+        "p_enw_rad": 0.6256599040284937,
+        "p_elo": 0.3702644854509757
+      },
+      "expected": {
+        "head": 0.4645821543988415,
+        "stack": 0.37732843557298523
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8239013329,
+      "ts": 1743598518,
+      "series": 963640,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -167,
+        "radiant_kills": 3,
+        "dire_kills": 4,
+        "p_all": 0.5265521852466769,
+        "p_late": 0.34527431310495943,
+        "p_early_win": 0.7487730210198953,
+        "p_enw_rad": 0.7870346455981083,
+        "p_elo": 0.15164835099813034
+      },
+      "expected": {
+        "head": 0.4255748455411216,
+        "stack": 0.18430549559128379
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8249658529,
+      "ts": 1744315583,
+      "series": 101780606,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3887,
+        "radiant_kills": 10,
+        "dire_kills": 4,
+        "p_all": 0.5703947131560099,
+        "p_late": 0.6115132528867561,
+        "p_early_win": 0.5848303405501966,
+        "p_enw_rad": 0.3725019950410637,
+        "p_elo": 0.8394772236515211
+      },
+      "expected": {
+        "head": 0.8979418055631446,
+        "stack": 0.9600562532226978
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8261893516,
+      "ts": 1745135918,
+      "series": 969257,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 6981,
+        "radiant_kills": 8,
+        "dire_kills": 0,
+        "p_all": 0.7758281336768896,
+        "p_late": 0.6128607206426869,
+        "p_early_win": 0.9285044832121603,
+        "p_enw_rad": 0.8776655874189679,
+        "p_elo": 0.49298641678929267
+      },
+      "expected": {
+        "head": 0.9796875925274643,
+        "stack": 0.9723831529345247
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8274212157,
+      "ts": 1745983372,
+      "series": 972262,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -710,
+        "radiant_kills": 5,
+        "dire_kills": 10,
+        "p_all": 0.38218272342220516,
+        "p_late": 0.4098066818673625,
+        "p_early_win": 0.3466990032960844,
+        "p_enw_rad": 0.4974159408784064,
+        "p_elo": 0.32805909598215865
+      },
+      "expected": {
+        "head": 0.27898239920930806,
+        "stack": 0.20144526239144236
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8290862341,
+      "ts": 1747071901,
+      "series": 975522,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 2127,
+        "radiant_kills": 15,
+        "dire_kills": 10,
+        "p_all": 0.5229717200875362,
+        "p_late": 0.48655243940380105,
+        "p_early_win": 0.5595253153616239,
+        "p_enw_rad": 0.699064529790278,
+        "p_elo": 0.3356831057729155
+      },
+      "expected": {
+        "head": 0.717972844974251,
+        "stack": 0.5951190267257426
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8301794119,
+      "ts": 1747830905,
+      "series": 977995,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1701,
+        "radiant_kills": 6,
+        "dire_kills": 7,
+        "p_all": 0.2287730029506213,
+        "p_late": 0.34434810943996097,
+        "p_early_win": 0.15980517262522365,
+        "p_enw_rad": 0.31284606849059615,
+        "p_elo": 0.651051897784078
+      },
+      "expected": {
+        "head": 0.13766054137787898,
+        "stack": 0.2231397259882205
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8315460781,
+      "ts": 1748696649,
+      "series": 980963,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3140,
+        "radiant_kills": 12,
+        "dire_kills": 7,
+        "p_all": 0.7836062345707725,
+        "p_late": 0.7217405725762869,
+        "p_early_win": 0.8587052689914979,
+        "p_enw_rad": 0.6876888168320054,
+        "p_elo": 0.2916848795355883
+      },
+      "expected": {
+        "head": 0.9244260788522437,
+        "stack": 0.844074451514983
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8326636297,
+      "ts": 1749393876,
+      "series": 982885,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3331,
+        "radiant_kills": 6,
+        "dire_kills": 4,
+        "p_all": 0.518325667093354,
+        "p_late": 0.47535521033869776,
+        "p_early_win": 0.6711864751883001,
+        "p_enw_rad": 0.6608719140853174,
+        "p_elo": 0.4044900189327914
+      },
+      "expected": {
+        "head": 0.7848626056539652,
+        "stack": 0.7162640512178858
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8340592035,
+      "ts": 1750302047,
+      "series": 986739,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2516,
+        "radiant_kills": 4,
+        "dire_kills": 3,
+        "p_all": 0.48243241545098675,
+        "p_late": 0.5157791166157836,
+        "p_early_win": 0.44936732835482507,
+        "p_enw_rad": 0.3804505569762751,
+        "p_elo": 0.5349187029792759
+      },
+      "expected": {
+        "head": 0.7543078161383596,
+        "stack": 0.7574508926683781
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8355310818,
+      "ts": 1751241933,
+      "series": 989710,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 49,
+        "radiant_kills": 6,
+        "dire_kills": 7,
+        "p_all": 0.6279474656980233,
+        "p_late": 0.5129927560694602,
+        "p_early_win": 0.8674273790569739,
+        "p_enw_rad": 0.9057797532547658,
+        "p_elo": 0.6574653113846394
+      },
+      "expected": {
+        "head": 0.4388381497480481,
+        "stack": 0.5593664759553539
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8370137548,
+      "ts": 1752241646,
+      "series": 992527,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3109,
+        "radiant_kills": 4,
+        "dire_kills": 6,
+        "p_all": 0.6112627954017184,
+        "p_late": 0.4434927912919782,
+        "p_early_win": 0.8615004576200077,
+        "p_enw_rad": 0.8007505434164937,
+        "p_elo": 0.24123298025131829
+      },
+      "expected": {
+        "head": 0.20217474709678576,
+        "stack": 0.1119797446911057
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8384647734,
+      "ts": 1753189379,
+      "series": 995727,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1216,
+        "radiant_kills": 10,
+        "dire_kills": 7,
+        "p_all": 0.5687102506896696,
+        "p_late": 0.4383879850442703,
+        "p_early_win": 0.7862763877142871,
+        "p_enw_rad": 0.6079627452432336,
+        "p_elo": 0.550963651398588
+      },
+      "expected": {
+        "head": 0.6806450941873279,
+        "stack": 0.7000785017182094
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8397560225,
+      "ts": 1754010051,
+      "series": 998582,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1694,
+        "radiant_kills": 7,
+        "dire_kills": 9,
+        "p_all": 0.5596518943013418,
+        "p_late": 0.5060539190444826,
+        "p_early_win": 0.6286681978641271,
+        "p_enw_rad": 0.525169247858012,
+        "p_elo": 0.2913194348465168
+      },
+      "expected": {
+        "head": 0.35910943050895694,
+        "stack": 0.2391923748391221
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8411054760,
+      "ts": 1754828247,
+      "series": 1001432,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3617,
+        "radiant_kills": 9,
+        "dire_kills": 4,
+        "p_all": 0.47221491848607655,
+        "p_late": 0.42771338941730563,
+        "p_early_win": 0.5227401705274378,
+        "p_enw_rad": 0.5918812458596829,
+        "p_elo": 0.3692290595994761
+      },
+      "expected": {
+        "head": 0.8180291352986813,
+        "stack": 0.7337322248478536
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8425580766,
+      "ts": 1755712882,
+      "series": 1004398,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1343,
+        "radiant_kills": 11,
+        "dire_kills": 6,
+        "p_all": 0.5982556239126742,
+        "p_late": 0.5333251348610482,
+        "p_early_win": 0.6895233068797879,
+        "p_enw_rad": 0.7281160471946909,
+        "p_elo": 0.5551937577694986
+      },
+      "expected": {
+        "head": 0.6976156024023945,
+        "stack": 0.7176544815273102
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8441348223,
+      "ts": 1756643181,
+      "series": 1007312,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4666,
+        "radiant_kills": 0,
+        "dire_kills": 8,
+        "p_all": 0.5728430853146366,
+        "p_late": 0.46900723045693654,
+        "p_early_win": 0.736662659125079,
+        "p_enw_rad": 0.7144728592082707,
+        "p_elo": 0.4069546193920488
+      },
+      "expected": {
+        "head": 0.09642574373542843,
+        "stack": 0.08904745004667732
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8459719894,
+      "ts": 1757768800,
+      "series": 1009483,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -490,
+        "radiant_kills": 3,
+        "dire_kills": 3,
+        "p_all": 0.4074936106501622,
+        "p_late": 0.3585873039152497,
+        "p_early_win": 0.5905456673486678,
+        "p_enw_rad": 0.549406273596315,
+        "p_elo": 0.6711816906487895
+      },
+      "expected": {
+        "head": 0.33250140556952645,
+        "stack": 0.4665280327138165
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8475704000,
+      "ts": 1758582335,
+      "series": 1013838,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -106,
+        "radiant_kills": 4,
+        "dire_kills": 3,
+        "p_all": 0.4380207901991827,
+        "p_late": 0.6207966155511362,
+        "p_early_win": 0.18751418725010918,
+        "p_enw_rad": 0.24307714322856977,
+        "p_elo": 0.407478723415431
+      },
+      "expected": {
+        "head": 0.49277861384551613,
+        "stack": 0.42898641939414955
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8487210990,
+      "ts": 1759169800,
+      "series": 1016722,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 4320,
+        "radiant_kills": 15,
+        "dire_kills": 6,
+        "p_all": 0.6447988990613481,
+        "p_late": 0.5415812550234479,
+        "p_early_win": 0.7804945804303773,
+        "p_enw_rad": 0.6060132785619048,
+        "p_elo": 0.5449309956457046
+      },
+      "expected": {
+        "head": 0.9312277859690018,
+        "stack": 0.9266529825674368
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8499089691,
+      "ts": 1759795361,
+      "series": 1019673,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -227,
+        "radiant_kills": 10,
+        "dire_kills": 10,
+        "p_all": 0.4639220868987475,
+        "p_late": 0.44414950470731585,
+        "p_early_win": 0.5650609186580267,
+        "p_enw_rad": 0.39504241661999284,
+        "p_elo": 0.3173444641898811
+      },
+      "expected": {
+        "head": 0.460215050273199,
+        "stack": 0.3355931218270904
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8511850274,
+      "ts": 1760500118,
+      "series": 1023022,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3135,
+        "radiant_kills": 9,
+        "dire_kills": 4,
+        "p_all": 0.5504564378359723,
+        "p_late": 0.4828715986589648,
+        "p_early_win": 0.6563334824034519,
+        "p_enw_rad": 0.7160244476403834,
+        "p_elo": 0.48664936750503157
+      },
+      "expected": {
+        "head": 0.8061678983439573,
+        "stack": 0.7828473288196117
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8522436618,
+      "ts": 1761080646,
+      "series": 1025975,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3081,
+        "radiant_kills": 11,
+        "dire_kills": 6,
+        "p_all": 0.45888814438913744,
+        "p_late": 0.45911342839319397,
+        "p_early_win": 0.466587092952911,
+        "p_enw_rad": 0.18441516060545532,
+        "p_elo": 0.6158237494604608
+      },
+      "expected": {
+        "head": 0.8493057352291468,
+        "stack": 0.873647620278109
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8535772799,
+      "ts": 1761850663,
+      "series": 1029471,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -803,
+        "radiant_kills": 8,
+        "dire_kills": 12,
+        "p_all": 0.5905767725542702,
+        "p_late": 0.5821178318606638,
+        "p_early_win": 0.6365836486325975,
+        "p_enw_rad": 0.6195203012692341,
+        "p_elo": 0.7320327051465445
+      },
+      "expected": {
+        "head": 0.4253494677709942,
+        "stack": 0.6075663069356572
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8549399572,
+      "ts": 1762634883,
+      "series": 1033146,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -889,
+        "radiant_kills": 5,
+        "dire_kills": 4,
+        "p_all": 0.6291081092077853,
+        "p_late": 0.5551101466855155,
+        "p_early_win": 0.7483358319911969,
+        "p_enw_rad": 0.8160822143251001,
+        "p_elo": 0.5187882144353269
+      },
+      "expected": {
+        "head": 0.42730809722914825,
+        "stack": 0.44718415948878515
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8562864576,
+      "ts": 1763345919,
+      "series": 1036670,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1208,
+        "radiant_kills": 4,
+        "dire_kills": 8,
+        "p_all": 0.3709309202281852,
+        "p_late": 0.3754166105471406,
+        "p_early_win": 0.3606515195112985,
+        "p_enw_rad": 0.4944798778675734,
+        "p_elo": 0.22013050168848608
+      },
+      "expected": {
+        "head": 0.23887498796642034,
+        "stack": 0.12375541684350663
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8576666033,
+      "ts": 1764103693,
+      "series": 1040093,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 27,
+        "radiant_kills": 7,
+        "dire_kills": 7,
+        "p_all": 0.6115147860250639,
+        "p_late": 0.5907683781191471,
+        "p_early_win": 0.6363879745954842,
+        "p_enw_rad": 0.7206244908968295,
+        "p_elo": 0.42323178180889165
+      },
+      "expected": {
+        "head": 0.5384716632190427,
+        "stack": 0.48219187831706994
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8591852175,
+      "ts": 1764971805,
+      "series": 1043535,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1519,
+        "radiant_kills": 10,
+        "dire_kills": 11,
+        "p_all": 0.5705966404213361,
+        "p_late": 0.49896016729305004,
+        "p_early_win": 0.7448686879549729,
+        "p_enw_rad": 0.6121173070332498,
+        "p_elo": 0.5333707906502426
+      },
+      "expected": {
+        "head": 0.6723583626684456,
+        "stack": 0.6819357940945359
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8605523090,
+      "ts": 1765739294,
+      "series": 101830232,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3619,
+        "radiant_kills": 14,
+        "dire_kills": 5,
+        "p_all": 0.44257290006953054,
+        "p_late": 0.4418277451649369,
+        "p_early_win": 0.4972477295318887,
+        "p_enw_rad": 0.3932833744740015,
+        "p_elo": 0.3846381531649293
+      },
+      "expected": {
+        "head": 0.8446565955050037,
+        "stack": 0.7747792688242148
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8622595561,
+      "ts": 1766790304,
+      "series": 101832543,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1829,
+        "radiant_kills": 13,
+        "dire_kills": 13,
+        "p_all": 0.5041816714559091,
+        "p_late": 0.5599527206544906,
+        "p_early_win": 0.3936511662485381,
+        "p_enw_rad": 0.4625040613183201,
+        "p_elo": 0.6399371074520236
+      },
+      "expected": {
+        "head": 0.32346273157625727,
+        "stack": 0.4329846154916111
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8636676831,
+      "ts": 1767629623,
+      "series": 101834908,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1492,
+        "radiant_kills": 8,
+        "dire_kills": 11,
+        "p_all": 0.5344335901007631,
+        "p_late": 0.5805086261262603,
+        "p_early_win": 0.4905273190504418,
+        "p_enw_rad": 0.34276377113626444,
+        "p_elo": 0.3796893964176512
+      },
+      "expected": {
+        "head": 0.3842582305181851,
+        "stack": 0.315051658533462
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8650889697,
+      "ts": 1768530199,
+      "series": 1055426,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3574,
+        "radiant_kills": 6,
+        "dire_kills": 13,
+        "p_all": 0.6385613435966421,
+        "p_late": 0.6024789879194249,
+        "p_early_win": 0.7023929511649012,
+        "p_enw_rad": 0.4895590086638349,
+        "p_elo": 0.6455224570819996
+      },
+      "expected": {
+        "head": 0.22952818632652666,
+        "stack": 0.3342603964718678
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8663526940,
+      "ts": 1769327975,
+      "series": 1058210,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1818,
+        "radiant_kills": 4,
+        "dire_kills": 13,
+        "p_all": 0.4813377930373163,
+        "p_late": 0.5196668781387281,
+        "p_early_win": 0.39326518659788556,
+        "p_enw_rad": 0.3274894434787281,
+        "p_elo": 0.43888871584388545
+      },
+      "expected": {
+        "head": 0.2804507055159452,
+        "stack": 0.26158203552444736
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8674474485,
+      "ts": 1770022073,
+      "series": 1060911,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 238,
+        "radiant_kills": 8,
+        "dire_kills": 5,
+        "p_all": 0.5695219839591391,
+        "p_late": 0.5490300868926302,
+        "p_early_win": 0.6137056899267866,
+        "p_enw_rad": 0.5572683620295998,
+        "p_elo": 0.3003559922899621
+      },
+      "expected": {
+        "head": 0.5913407091527416,
+        "stack": 0.4375414330984523
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8687244701,
+      "ts": 1770836184,
+      "series": 1063736,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1977,
+        "radiant_kills": 6,
+        "dire_kills": 3,
+        "p_all": 0.47769320062152903,
+        "p_late": 0.4776102337274411,
+        "p_early_win": 0.4909382972960347,
+        "p_enw_rad": 0.27672739421220416,
+        "p_elo": 0.2974428088382812
+      },
+      "expected": {
+        "head": 0.3555810249863506,
+        "stack": 0.24040295528103475
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8698245679,
+      "ts": 1771575699,
+      "series": 1066481,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2922,
+        "radiant_kills": 5,
+        "dire_kills": 8,
+        "p_all": 0.6331027965711375,
+        "p_late": 0.6495567284343072,
+        "p_early_win": 0.6000357815775447,
+        "p_enw_rad": 0.5312698881266099,
+        "p_elo": 0.2505852682293623
+      },
+      "expected": {
+        "head": 0.2894440131371511,
+        "stack": 0.16838495848829696
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8709851497,
+      "ts": 1772280088,
+      "series": 1069414,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -286,
+        "radiant_kills": 3,
+        "dire_kills": 7,
+        "p_all": 0.42965620033152996,
+        "p_late": 0.5220914799423025,
+        "p_early_win": 0.33499473774867256,
+        "p_enw_rad": 0.3406498184222146,
+        "p_elo": 0.6691801697549382
+      },
+      "expected": {
+        "head": 0.39528138774122545,
+        "stack": 0.5275272768554429
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8721388260,
+      "ts": 1772996915,
+      "series": 1072374,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -10,
+        "radiant_kills": 6,
+        "dire_kills": 6,
+        "p_all": 0.5231658552319673,
+        "p_late": 0.5238875057075628,
+        "p_early_win": 0.4949796674700273,
+        "p_enw_rad": 0.5509896933225459,
+        "p_elo": 0.6162505600709465
+      },
+      "expected": {
+        "head": 0.5036287059036801,
+        "stack": 0.5873196328831137
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8732434080,
+      "ts": 1773732263,
+      "series": 1075529,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1796,
+        "radiant_kills": 6,
+        "dire_kills": 8,
+        "p_all": 0.5348622106798485,
+        "p_late": 0.5307547147931313,
+        "p_early_win": 0.5239509514808013,
+        "p_enw_rad": 0.44374365786301334,
+        "p_elo": 0.48499550222971277
+      },
+      "expected": {
+        "head": 0.34410102565037975,
+        "stack": 0.346940430346485
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8740981718,
+      "ts": 1774282660,
+      "series": 101850379,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1715,
+        "radiant_kills": 11,
+        "dire_kills": 9,
+        "p_all": 0.5885947983690468,
+        "p_late": 0.6367554894726524,
+        "p_early_win": 0.4749886149210185,
+        "p_enw_rad": 0.41377306573557965,
+        "p_elo": 0.46436812035720726
+      },
+      "expected": {
+        "head": 0.43838908488411776,
+        "stack": 0.4196250416838888
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8751278343,
+      "ts": 1774923701,
+      "series": 1081123,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 948,
+        "radiant_kills": 5,
+        "dire_kills": 5,
+        "p_all": 0.5241076585966948,
+        "p_late": 0.5894623540574767,
+        "p_early_win": 0.46112492894528573,
+        "p_enw_rad": 0.5036308090867329,
+        "p_elo": 0.485515114875377
+      },
+      "expected": {
+        "head": 0.5999821882108662,
+        "stack": 0.5837379086962798
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8753926295,
+      "ts": 1775102427,
+      "series": 1081848,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1382,
+        "radiant_kills": 1,
+        "dire_kills": 3,
+        "p_all": 0.6961798714781172,
+        "p_late": 0.6217203913859203,
+        "p_early_win": 0.8027998888255419,
+        "p_enw_rad": 0.7512241965312241,
+        "p_elo": 0.42069514474732056
+      },
+      "expected": {
+        "head": 0.44870455882165705,
+        "stack": 0.39871036316622865
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8762690102,
+      "ts": 1775636581,
+      "series": 1084036,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1481,
+        "radiant_kills": 3,
+        "dire_kills": 5,
+        "p_all": 0.2721007050138286,
+        "p_late": 0.37371251847370107,
+        "p_early_win": 0.14524724128727592,
+        "p_enw_rad": 0.24144268213909173,
+        "p_elo": 0.41686439733149777
+      },
+      "expected": {
+        "head": 0.4753744066849213,
+        "stack": 0.41996066330195747
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8763253407,
+      "ts": 1775665508,
+      "series": 1084163,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -2587,
+        "radiant_kills": 4,
+        "dire_kills": 7,
+        "p_all": 0.6667350327494498,
+        "p_late": 0.5762588055707472,
+        "p_early_win": 0.8167756924077713,
+        "p_enw_rad": 0.5932383418606737,
+        "p_elo": 0.37463306527701784
+      },
+      "expected": {
+        "head": 0.3372349135327688,
+        "stack": 0.27286407234152227
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8763605163,
+      "ts": 1775685058,
+      "series": 101853505,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3701,
+        "radiant_kills": 14,
+        "dire_kills": 6,
+        "p_all": 0.4635582222796072,
+        "p_late": 0.4062569500358547,
+        "p_early_win": 0.6178970582646383,
+        "p_enw_rad": 0.6795723966631947,
+        "p_elo": 0.977077715907081
+      },
+      "expected": {
+        "head": 0.8104929733905678,
+        "stack": 0.9819345234127516
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8765510106,
+      "ts": 1775826147,
+      "series": 1084738,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 12342,
+        "radiant_kills": 25,
+        "dire_kills": 2,
+        "p_all": 0.5158463110091578,
+        "p_late": 0.5224751118167797,
+        "p_early_win": 0.5589666652944861,
+        "p_enw_rad": 0.6590566445342628,
+        "p_elo": 0.9433965341203078
+      },
+      "expected": {
+        "head": 0.9970913838386876,
+        "stack": 0.9993750307399196
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8768062819,
+      "ts": 1775966758,
+      "series": 1085570,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 162,
+        "radiant_kills": 4,
+        "dire_kills": 2,
+        "p_all": 0.473461492978858,
+        "p_late": 0.5028265031400219,
+        "p_early_win": 0.4214626537948071,
+        "p_enw_rad": 0.6647409369385741,
+        "p_elo": 0.06434495435964796
+      },
+      "expected": {
+        "head": 0.4477586193040113,
+        "stack": 0.11117853072322043
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8769757960,
+      "ts": 1776070803,
+      "series": 1086065,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1027,
+        "radiant_kills": 5,
+        "dire_kills": 3,
+        "p_all": 0.49926932136564484,
+        "p_late": 0.44615867775690204,
+        "p_early_win": 0.6086528971126246,
+        "p_enw_rad": 0.3564456709432169,
+        "p_elo": 0.23742487207806345
+      },
+      "expected": {
+        "head": 0.44211672538741165,
+        "stack": 0.2624086166321287
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8771661539,
+      "ts": 1776187134,
+      "series": 1086482,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1581,
+        "radiant_kills": 6,
+        "dire_kills": 12,
+        "p_all": 0.42223691832232074,
+        "p_late": 0.4084174811443601,
+        "p_early_win": 0.4280306117828337,
+        "p_enw_rad": 0.34102307564090406,
+        "p_elo": 0.2787944065491924
+      },
+      "expected": {
+        "head": 0.2748985349142125,
+        "stack": 0.17350836202776826
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8774234648,
+      "ts": 1776368837,
+      "series": 1087168,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1720,
+        "radiant_kills": 7,
+        "dire_kills": 7,
+        "p_all": 0.7384334494768413,
+        "p_late": 0.6983336694575654,
+        "p_early_win": 0.8268242112943706,
+        "p_enw_rad": 0.7543790819037302,
+        "p_elo": 0.44733493909853683
+      },
+      "expected": {
+        "head": 0.4694488586699754,
+        "stack": 0.43606217844665296
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8778927086,
+      "ts": 1776675404,
+      "series": 1088697,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 640,
+        "radiant_kills": 2,
+        "dire_kills": 6,
+        "p_all": 0.5211720210936988,
+        "p_late": 0.4463323734910425,
+        "p_early_win": 0.6003650524628344,
+        "p_enw_rad": 0.6415465317359931,
+        "p_elo": 0.3849450742238553
+      },
+      "expected": {
+        "head": 0.5209632756116424,
+        "stack": 0.43820475595010294
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8781585273,
+      "ts": 1776861284,
+      "series": 1089414,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -638,
+        "radiant_kills": 2,
+        "dire_kills": 4,
+        "p_all": 0.5654215974519249,
+        "p_late": 0.4850209232036651,
+        "p_early_win": 0.7317139785493139,
+        "p_enw_rad": 0.6328237178116297,
+        "p_elo": 0.19307195976449987
+      },
+      "expected": {
+        "head": 0.4296724658076024,
+        "stack": 0.2199219365203201
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8783774718,
+      "ts": 1777010892,
+      "series": 1090027,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1157,
+        "radiant_kills": 2,
+        "dire_kills": 5,
+        "p_all": 0.6527480350498851,
+        "p_late": 0.6541334317417927,
+        "p_early_win": 0.6734081339984153,
+        "p_enw_rad": 0.46132528786798677,
+        "p_elo": 0.09367156059993734
+      },
+      "expected": {
+        "head": 0.49890155851372336,
+        "stack": 0.16775154811657808
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8783958269,
+      "ts": 1777025732,
+      "series": 1090055,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -548,
+        "radiant_kills": 10,
+        "dire_kills": 10,
+        "p_all": 0.5491826911919421,
+        "p_late": 0.5403244490447489,
+        "p_early_win": 0.524611975898173,
+        "p_enw_rad": 0.44522890698272644,
+        "p_elo": 0.4688827020983
+      },
+      "expected": {
+        "head": 0.5074615522698791,
+        "stack": 0.4861463742875703
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8785899094,
+      "ts": 1777132945,
+      "series": 1090652,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1195,
+        "radiant_kills": 3,
+        "dire_kills": 4,
+        "p_all": 0.4962871549585977,
+        "p_late": 0.453482159463758,
+        "p_early_win": 0.5334553932650786,
+        "p_enw_rad": 0.6819555862073581,
+        "p_elo": 0.5257906793288036
+      },
+      "expected": {
+        "head": 0.5621687862860851,
+        "stack": 0.5765374631311125
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8790876969,
+      "ts": 1777465949,
+      "series": 1092319,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -383,
+        "radiant_kills": 3,
+        "dire_kills": 3,
+        "p_all": 0.44787465704193213,
+        "p_late": 0.49468364695246875,
+        "p_early_win": 0.3558485378844621,
+        "p_enw_rad": 0.5721999873791682,
+        "p_elo": 0.34187222513697746
+      },
+      "expected": {
+        "head": 0.3806425831469693,
+        "stack": 0.2876954387968037
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8793927551,
+      "ts": 1777656685,
+      "series": 101860530,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -26,
+        "radiant_kills": 12,
+        "dire_kills": 8,
+        "p_all": 0.5905409282085889,
+        "p_late": 0.46961270984611897,
+        "p_early_win": 0.7842591262622057,
+        "p_enw_rad": 0.7841970397494665,
+        "p_elo": 0.44161650518451406
+      },
+      "expected": {
+        "head": 0.5255275320264138,
+        "stack": 0.4834231510721432
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8807622057,
+      "ts": 1778547668,
+      "series": 1096611,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 665,
+        "radiant_kills": 12,
+        "dire_kills": 11,
+        "p_all": 0.7058954447061211,
+        "p_late": 0.548218589829067,
+        "p_early_win": 0.892092865181016,
+        "p_enw_rad": 0.8259854263768839,
+        "p_elo": 0.6285363235108028
+      },
+      "expected": {
+        "head": 0.6744380663153926,
+        "stack": 0.7404661082439717
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8809227928,
+      "ts": 1778671131,
+      "series": 1096969,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1632,
+        "radiant_kills": 7,
+        "dire_kills": 2,
+        "p_all": 0.530235210042494,
+        "p_late": 0.47860371993870204,
+        "p_early_win": 0.6475569755971409,
+        "p_enw_rad": 0.6648319528940132,
+        "p_elo": 0.569617612225338
+      },
+      "expected": {
+        "head": 0.6767343527661471,
+        "stack": 0.7077741351764482
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8810508497,
+      "ts": 1778760781,
+      "series": 1097302,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1351,
+        "radiant_kills": 9,
+        "dire_kills": 4,
+        "p_all": 0.5521233557935099,
+        "p_late": 0.4456794733545534,
+        "p_early_win": 0.7368741406232585,
+        "p_enw_rad": 0.686015198633962,
+        "p_elo": 0.3241079248945759
+      },
+      "expected": {
+        "head": 0.6697309916040152,
+        "stack": 0.5345278844310056
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8811958377,
+      "ts": 1778856421,
+      "series": 1097727,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3063,
+        "radiant_kills": 1,
+        "dire_kills": 5,
+        "p_all": 0.4781943669461641,
+        "p_late": 0.38630957827091356,
+        "p_early_win": 0.6531531935866471,
+        "p_enw_rad": 0.43916137937012895,
+        "p_elo": 0.41312327082410405
+      },
+      "expected": {
+        "head": 0.18826203004328523,
+        "stack": 0.1692244110185824
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8813556518,
+      "ts": 1778950860,
+      "series": 1098281,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 369,
+        "radiant_kills": 7,
+        "dire_kills": 3,
+        "p_all": 0.4143100890317457,
+        "p_late": 0.43790371945129636,
+        "p_early_win": 0.3772170916405083,
+        "p_enw_rad": 0.45128380058431045,
+        "p_elo": 0.32132791974441327
+      },
+      "expected": {
+        "head": 0.4943338532564588,
+        "stack": 0.3672973934729483
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8817062805,
+      "ts": 1779187621,
+      "series": 1099328,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 149,
+        "radiant_kills": 7,
+        "dire_kills": 6,
+        "p_all": 0.5506944120851369,
+        "p_late": 0.4675193480157989,
+        "p_early_win": 0.7096138213780118,
+        "p_enw_rad": 0.5880036365256139,
+        "p_elo": 0.571358514546702
+      },
+      "expected": {
+        "head": 0.5424337302701112,
+        "stack": 0.5902392584318388
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8818364531,
+      "ts": 1779279406,
+      "series": 1099674,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -311,
+        "radiant_kills": 7,
+        "dire_kills": 5,
+        "p_all": 0.4621592491207461,
+        "p_late": 0.4849699021842265,
+        "p_early_win": 0.4524423400222992,
+        "p_enw_rad": 0.4524220068974769,
+        "p_elo": 0.5660200992545227
+      },
+      "expected": {
+        "head": 0.447709419221263,
+        "stack": 0.4997299728005956
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8821169334,
+      "ts": 1779472021,
+      "series": 1100511,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 21,
+        "radiant_kills": 2,
+        "dire_kills": 2,
+        "p_all": 0.46006761756253867,
+        "p_late": 0.4287396703897212,
+        "p_early_win": 0.5184600688728054,
+        "p_enw_rad": 0.7136906347270903,
+        "p_elo": 0.40614664726279803
+      },
+      "expected": {
+        "head": 0.39289592007750507,
+        "stack": 0.33968041025503837
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8826631538,
+      "ts": 1779815357,
+      "series": 1102470,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -2453,
+        "radiant_kills": 5,
+        "dire_kills": 6,
+        "p_all": 0.6351353572046142,
+        "p_late": 0.6259193042758114,
+        "p_early_win": 0.6115634970055791,
+        "p_enw_rad": 0.6315028816418402,
+        "p_elo": 0.3567935483908415
+      },
+      "expected": {
+        "head": 0.32874933393936834,
+        "stack": 0.2554596081929159
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8826940393,
+      "ts": 1779832578,
+      "series": 101868818,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 586,
+        "radiant_kills": 9,
+        "dire_kills": 3,
+        "p_all": 0.5858390924687983,
+        "p_late": 0.47264186672435227,
+        "p_early_win": 0.7694274538695896,
+        "p_enw_rad": 0.797847562877931,
+        "p_elo": 0.4380312849007262
+      },
+      "expected": {
+        "head": 0.5920036829150583,
+        "stack": 0.5430315862993703
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8829158433,
+      "ts": 1779986403,
+      "series": 1103229,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2991,
+        "radiant_kills": 7,
+        "dire_kills": 9,
+        "p_all": 0.5092578148107331,
+        "p_late": 0.4653787695064407,
+        "p_early_win": 0.6104672611156078,
+        "p_enw_rad": 0.30172264591322406,
+        "p_elo": 0.2450638490366322
+      },
+      "expected": {
+        "head": 0.25222779407449514,
+        "stack": 0.14281373497676772
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8830017584,
+      "ts": 1780053722,
+      "series": 101869586,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 319,
+        "radiant_kills": 1,
+        "dire_kills": 4,
+        "p_all": 0.5050297361993163,
+        "p_late": 0.43157993146277335,
+        "p_early_win": 0.6875540707458283,
+        "p_enw_rad": 0.5158084196954349,
+        "p_elo": 0.8419634278292922
+      },
+      "expected": {
+        "head": 0.4973517542542779,
+        "stack": 0.7643269766323216
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8831356217,
+      "ts": 1780135417,
+      "series": 1104005,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1066,
+        "radiant_kills": 7,
+        "dire_kills": 2,
+        "p_all": 0.6510827735265221,
+        "p_late": 0.5250009976264235,
+        "p_early_win": 0.8417690026734221,
+        "p_enw_rad": 0.8422267240740937,
+        "p_elo": 0.7516264862858816
+      },
+      "expected": {
+        "head": 0.6698808172589326,
+        "stack": 0.8084279686160152
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8832952327,
+      "ts": 1780228937,
+      "series": 1104624,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1673,
+        "radiant_kills": 10,
+        "dire_kills": 9,
+        "p_all": 0.47818200003370254,
+        "p_late": 0.5700275475398958,
+        "p_early_win": 0.312284655693134,
+        "p_enw_rad": 0.23811360011057223,
+        "p_elo": 0.45504845162443625
+      },
+      "expected": {
+        "head": 0.7239946728331385,
+        "stack": 0.6829742402712584
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8834714093,
+      "ts": 1780333483,
+      "series": 1105187,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1558,
+        "radiant_kills": 5,
+        "dire_kills": 6,
+        "p_all": 0.5047316205405195,
+        "p_late": 0.4180390441777888,
+        "p_early_win": 0.7038848424103847,
+        "p_enw_rad": 0.5635933341182995,
+        "p_elo": 0.7824030369673876
+      },
+      "expected": {
+        "head": 0.3121330496023877,
+        "stack": 0.544794174857193
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8835703860,
+      "ts": 1780409034,
+      "series": 1105443,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -737,
+        "radiant_kills": 3,
+        "dire_kills": 5,
+        "p_all": 0.56290838818187,
+        "p_late": 0.5715204043116895,
+        "p_early_win": 0.5624947403090196,
+        "p_enw_rad": 0.5653241504175269,
+        "p_elo": 0.3579573658622642
+      },
+      "expected": {
+        "head": 0.4347180324887412,
+        "stack": 0.34303070349064313
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8836914676,
+      "ts": 1780493546,
+      "series": 1105703,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3107,
+        "radiant_kills": 12,
+        "dire_kills": 2,
+        "p_all": 0.6051044891452466,
+        "p_late": 0.43758556580819635,
+        "p_early_win": 0.8417361517207411,
+        "p_enw_rad": 0.6715234231353219,
+        "p_elo": 0.44353934047454285
+      },
+      "expected": {
+        "head": 0.8659527386584422,
+        "stack": 0.8272362960757567
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8836916511,
+      "ts": 1780493624,
+      "series": 1105743,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2019,
+        "radiant_kills": 6,
+        "dire_kills": 3,
+        "p_all": 0.48149553840712755,
+        "p_late": 0.5013438779234198,
+        "p_early_win": 0.4289467532408534,
+        "p_enw_rad": 0.31268445888993573,
+        "p_elo": 0.6283381103296313
+      },
+      "expected": {
+        "head": 0.7487704949698439,
+        "stack": 0.7995345070177752
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8838364056,
+      "ts": 1780589031,
+      "series": 1106075,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1014,
+        "radiant_kills": 4,
+        "dire_kills": 3,
+        "p_all": 0.31897828448326365,
+        "p_late": 0.29931666486300773,
+        "p_early_win": 0.3807401791710694,
+        "p_enw_rad": 0.3669534799328545,
+        "p_elo": 0.535919288760375
+      },
+      "expected": {
+        "head": 0.4671381703322898,
+        "stack": 0.4963037661255026
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8842924338,
+      "ts": 1780860778,
+      "series": 1107447,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 408,
+        "radiant_kills": 5,
+        "dire_kills": 7,
+        "p_all": 0.432478121474638,
+        "p_late": 0.5150110173763391,
+        "p_early_win": 0.3224355269594689,
+        "p_enw_rad": 0.3186383904370413,
+        "p_elo": 0.4664654726622517
+      },
+      "expected": {
+        "head": 0.50095770318471,
+        "stack": 0.4784410379012762
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8845631451,
+      "ts": 1781040262,
+      "series": 101873590,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 742,
+        "radiant_kills": 14,
+        "dire_kills": 9,
+        "p_all": 0.41531383660695587,
+        "p_late": 0.3066793298905532,
+        "p_early_win": 0.6260117316792652,
+        "p_enw_rad": 0.434724869531792,
+        "p_elo": 0.6577993093376859
+      },
+      "expected": {
+        "head": 0.5642677456610985,
+        "stack": 0.6692936967528677
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8853743296,
+      "ts": 1781579522,
+      "series": 1111317,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -728,
+        "radiant_kills": 7,
+        "dire_kills": 11,
+        "p_all": 0.6031841659515537,
+        "p_late": 0.48682959451163305,
+        "p_early_win": 0.7752850331582756,
+        "p_enw_rad": 0.7274029104844674,
+        "p_elo": 0.670957918416786
+      },
+      "expected": {
+        "head": 0.42414250159403805,
+        "stack": 0.5562698288464626
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8855077855,
+      "ts": 1781678284,
+      "series": 1111656,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 4660,
+        "radiant_kills": 8,
+        "dire_kills": 2,
+        "p_all": 0.6410490577215339,
+        "p_late": 0.4832500504131389,
+        "p_early_win": 0.8998204473681569,
+        "p_enw_rad": 0.8407058934913897,
+        "p_elo": 0.9501412542917955
+      },
+      "expected": {
+        "head": 0.8996818686604873,
+        "stack": 0.9838609963209527
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8857534603,
+      "ts": 1781847946,
+      "series": 1112307,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -12,
+        "radiant_kills": 5,
+        "dire_kills": 5,
+        "p_all": 0.5743209547621299,
+        "p_late": 0.5308404907750297,
+        "p_early_win": 0.5964767177182085,
+        "p_enw_rad": 0.705916112960629,
+        "p_elo": 0.29001865769516966
+      },
+      "expected": {
+        "head": 0.5107854746883168,
+        "stack": 0.3572446066517044
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8860634747,
+      "ts": 1782044710,
+      "series": 1113140,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -329,
+        "radiant_kills": 5,
+        "dire_kills": 4,
+        "p_all": 0.48093044682088115,
+        "p_late": 0.45687056230281364,
+        "p_early_win": 0.509240504178812,
+        "p_enw_rad": 0.40420036597037723,
+        "p_elo": 0.61669120019909
+      },
+      "expected": {
+        "head": 0.47967703540232004,
+        "stack": 0.5660557650550858
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8863048425,
+      "ts": 1782211484,
+      "series": 1113711,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1807,
+        "radiant_kills": 0,
+        "dire_kills": 0,
+        "p_all": 0.529826440864858,
+        "p_late": 0.5120209777673587,
+        "p_early_win": 0.5622975580110067,
+        "p_enw_rad": 0.4976509981076431,
+        "p_elo": 0.6887954577692644
+      },
+      "expected": {
+        "head": 0.3323999708650629,
+        "stack": 0.4806740120694228
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8866153239,
+      "ts": 1782408222,
+      "series": 1114420,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -350,
+        "radiant_kills": 5,
+        "dire_kills": 7,
+        "p_all": 0.4071364896735137,
+        "p_late": 0.30454570713555723,
+        "p_early_win": 0.7190263213420649,
+        "p_enw_rad": 0.6646773880760687,
+        "p_elo": 0.6343547279406341
+      },
+      "expected": {
+        "head": 0.30213423570632886,
+        "stack": 0.4065353097500572
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8867258849,
+      "ts": 1782478568,
+      "series": 1114643,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1731,
+        "radiant_kills": 0,
+        "dire_kills": 1,
+        "p_all": 0.5220688528481655,
+        "p_late": 0.5200302893155051,
+        "p_early_win": 0.5772841460485505,
+        "p_enw_rad": 0.49727405976297967,
+        "p_elo": 0.7165593154669518
+      },
+      "expected": {
+        "head": 0.6722609607319785,
+        "stack": 0.7896440217156204
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8873061977,
+      "ts": 1782746135,
+      "series": 1115660,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -5545,
+        "radiant_kills": 6,
+        "dire_kills": 21,
+        "p_all": 0.5911829760367081,
+        "p_late": 0.6261979000283391,
+        "p_early_win": 0.6180469469034826,
+        "p_enw_rad": 0.5225948147109644,
+        "p_elo": 0.06013635244363119
+      },
+      "expected": {
+        "head": 0.06883611179871063,
+        "stack": 0.012876908079278802
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8873357441,
+      "ts": 1782757000,
+      "series": 1115703,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2530,
+        "radiant_kills": 13,
+        "dire_kills": 3,
+        "p_all": 0.6487364536417054,
+        "p_late": 0.6378267071444994,
+        "p_early_win": 0.6448927197350316,
+        "p_enw_rad": 0.7348605731162136,
+        "p_elo": 0.6520387285662996
+      },
+      "expected": {
+        "head": 0.8429455374782099,
+        "stack": 0.8806700106808147
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8873810098,
+      "ts": 1782783515,
+      "series": 1115848,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3965,
+        "radiant_kills": 2,
+        "dire_kills": 11,
+        "p_all": 0.5090482429888762,
+        "p_late": 0.4440199328531676,
+        "p_early_win": 0.6421276126013689,
+        "p_enw_rad": 0.5665714871145033,
+        "p_elo": 0.029998367924280865
+      },
+      "expected": {
+        "head": 0.11479731563138368,
+        "stack": 0.01294305527641385
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8874717635,
+      "ts": 1782833686,
+      "series": 1115953,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2641,
+        "radiant_kills": 3,
+        "dire_kills": 9,
+        "p_all": 0.4698260409744837,
+        "p_late": 0.6087667785354798,
+        "p_early_win": 0.23139712867377463,
+        "p_enw_rad": 0.23806397000066404,
+        "p_elo": 0.5195453904182031
+      },
+      "expected": {
+        "head": 0.2394446841395861,
+        "stack": 0.2677572644179378
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8875229263,
+      "ts": 1782855554,
+      "series": 1116062,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1663,
+        "radiant_kills": 4,
+        "dire_kills": 6,
+        "p_all": 0.6264411532342099,
+        "p_late": 0.5655178842461812,
+        "p_early_win": 0.7331468963047235,
+        "p_enw_rad": 0.7236053980217707,
+        "p_elo": 0.5137401683397125
+      },
+      "expected": {
+        "head": 0.357917284189162,
+        "stack": 0.37863635435739434
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8875961002,
+      "ts": 1782909991,
+      "series": 1116155,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 573,
+        "radiant_kills": 5,
+        "dire_kills": 6,
+        "p_all": 0.3985589231071689,
+        "p_late": 0.3259969977042577,
+        "p_early_win": 0.5691325057419614,
+        "p_enw_rad": 0.6352466753508577,
+        "p_elo": 0.4596010712277025
+      },
+      "expected": {
+        "head": 0.4118103891259829,
+        "stack": 0.392164578214293
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8876860926,
+      "ts": 1782951377,
+      "series": 1116383,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1446,
+        "radiant_kills": 5,
+        "dire_kills": 8,
+        "p_all": 0.544242544652906,
+        "p_late": 0.5880542805610994,
+        "p_early_win": 0.5131177297925792,
+        "p_enw_rad": 0.5012815204987796,
+        "p_elo": 0.931152018198021
+      },
+      "expected": {
+        "head": 0.34994847550171754,
+        "stack": 0.7812232782511319
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8884077076,
+      "ts": 1783345955,
+      "series": 1117863,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -699,
+        "radiant_kills": 6,
+        "dire_kills": 7,
+        "p_all": 0.5315418306910465,
+        "p_late": 0.5037117602021005,
+        "p_early_win": 0.5790193959508027,
+        "p_enw_rad": 0.4684271596925291,
+        "p_elo": 0.7375594097396602
+      },
+      "expected": {
+        "head": 0.45260141272905885,
+        "stack": 0.6362771401549107
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8886736772,
+      "ts": 1783511657,
+      "series": 1118338,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3712,
+        "radiant_kills": 3,
+        "dire_kills": 4,
+        "p_all": 0.4896647048337926,
+        "p_late": 0.4745044542487568,
+        "p_early_win": 0.46064723420676207,
+        "p_enw_rad": 0.31678610928958156,
+        "p_elo": 0.29510662038789615
+      },
+      "expected": {
+        "head": 0.19344639475034664,
+        "stack": 0.12707288383240198
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8888555097,
+      "ts": 1783613340,
+      "series": 1118650,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -452,
+        "radiant_kills": 5,
+        "dire_kills": 7,
+        "p_all": 0.715210501387247,
+        "p_late": 0.6421211715089873,
+        "p_early_win": 0.8466703509028523,
+        "p_enw_rad": 0.7511192159578397,
+        "p_elo": 0.2915590643700806
+      },
+      "expected": {
+        "head": 0.563903515923285,
+        "stack": 0.404982653891837
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8891108843,
+      "ts": 1783760415,
+      "series": 1119240,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 1969,
+        "radiant_kills": 5,
+        "dire_kills": 2,
+        "p_all": 0.5933564755226413,
+        "p_late": 0.5289271061044708,
+        "p_early_win": 0.7051897288388496,
+        "p_enw_rad": 0.48821858560595677,
+        "p_elo": 0.4458774122003045
+      },
+      "expected": {
+        "head": 0.7839055831156554,
+        "stack": 0.7389342468755653
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8897696869,
+      "ts": 1784119160,
+      "series": 1120662,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1052,
+        "radiant_kills": 5,
+        "dire_kills": 5,
+        "p_all": 0.5392940602903151,
+        "p_late": 0.46588564372834984,
+        "p_early_win": 0.6457586276121747,
+        "p_enw_rad": 0.6621024479699368,
+        "p_elo": 0.3846117668838522
+      },
+      "expected": {
+        "head": 0.6012103872589879,
+        "stack": 0.5129701065611372
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8905885788,
+      "ts": 1784571754,
+      "series": 1122384,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2956,
+        "radiant_kills": 3,
+        "dire_kills": 3,
+        "p_all": 0.6393503250695014,
+        "p_late": 0.44809203805666237,
+        "p_early_win": 0.8642727934626115,
+        "p_enw_rad": 0.7736521637824856,
+        "p_elo": 0.7237553180811203
+      },
+      "expected": {
+        "head": 0.8162619690523927,
+        "stack": 0.8870540246565906
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8906112666,
+      "ts": 1784582896,
+      "series": 1122487,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1828,
+        "radiant_kills": 5,
+        "dire_kills": 4,
+        "p_all": 0.438741212157585,
+        "p_late": 0.4581224385834682,
+        "p_early_win": 0.40375827994152225,
+        "p_enw_rad": 0.423298289250653,
+        "p_elo": 0.6791143957686483
+      },
+      "expected": {
+        "head": 0.6538237838075893,
+        "stack": 0.7541949424544035
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8909780227,
+      "ts": 1784812570,
+      "series": 1123216,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1644,
+        "radiant_kills": 4,
+        "dire_kills": 3,
+        "p_all": 0.6089598345854548,
+        "p_late": 0.6299957562540884,
+        "p_early_win": 0.614263458411253,
+        "p_enw_rad": 0.5442112259834501,
+        "p_elo": 0.5524522703681833
+      },
+      "expected": {
+        "head": 0.7366381209728701,
+        "stack": 0.7507691814633352
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8914520562,
+      "ts": 1785061646,
+      "series": 1124330,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -664,
+        "radiant_kills": 4,
+        "dire_kills": 5,
+        "p_all": 0.6450839432759846,
+        "p_late": 0.613962263002337,
+        "p_early_win": 0.6339821699413949,
+        "p_enw_rad": 0.3916874205083083,
+        "p_elo": 0.3557291517863478
+      },
+      "expected": {
+        "head": 0.5983799708693528,
+        "stack": 0.48837765264049493
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8921021224,
+      "ts": 1785422334,
+      "series": 1125809,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3049,
+        "radiant_kills": 8,
+        "dire_kills": 6,
+        "p_all": 0.385369258167436,
+        "p_late": 0.256312430272264,
+        "p_early_win": 0.6539563776835207,
+        "p_enw_rad": 0.49617271588249307,
+        "p_elo": 0.5981573111431179
+      },
+      "expected": {
+        "head": 0.7218334292879681,
+        "stack": 0.7623707747641775
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8923040358,
+      "ts": 1785528851,
+      "series": 1126150,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -698,
+        "radiant_kills": 4,
+        "dire_kills": 2,
+        "p_all": 0.581118733242298,
+        "p_late": 0.6010896466872463,
+        "p_early_win": 0.5950615307713466,
+        "p_enw_rad": 0.38948370652457565,
+        "p_elo": 0.3971697494838241
+      },
+      "expected": {
+        "head": 0.5317544012625436,
+        "stack": 0.4570406613979634
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8925425359,
+      "ts": 1785659250,
+      "series": 1126666,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1110,
+        "radiant_kills": 2,
+        "dire_kills": 8,
+        "p_all": 0.6314367193953193,
+        "p_late": 0.5191793837224389,
+        "p_early_win": 0.7839394015425849,
+        "p_enw_rad": 0.7084068063541155,
+        "p_elo": 0.8083785298321206
+      },
+      "expected": {
+        "head": 0.4018006683713924,
+        "stack": 0.6579872034389733
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8927998383,
+      "ts": 1785781921,
+      "series": 1127197,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -323,
+        "radiant_kills": 5,
+        "dire_kills": 5,
+        "p_all": 0.36516120119509476,
+        "p_late": 0.337331119828047,
+        "p_early_win": 0.43218539226287417,
+        "p_enw_rad": 0.4634111176953917,
+        "p_elo": 0.6404841655812791
+      },
+      "expected": {
+        "head": 0.3444066749763201,
+        "stack": 0.45484618448426517
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8928436894,
+      "ts": 1785810205,
+      "series": 1127295,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2997,
+        "radiant_kills": 10,
+        "dire_kills": 4,
+        "p_all": 0.5541875958069569,
+        "p_late": 0.4587119064277743,
+        "p_early_win": 0.7208109527214299,
+        "p_enw_rad": 0.7984380758744027,
+        "p_elo": 0.6290530150883381
+      },
+      "expected": {
+        "head": 0.782080087477178,
+        "stack": 0.8259139079493534
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8932085762,
+      "ts": 1786021651,
+      "series": 1127878,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1984,
+        "radiant_kills": 2,
+        "dire_kills": 3,
+        "p_all": 0.5886193393417507,
+        "p_late": 0.4360763273121502,
+        "p_early_win": 0.775222919791651,
+        "p_enw_rad": 0.8502790415808626,
+        "p_elo": 0.6105451055709293
+      },
+      "expected": {
+        "head": 0.667642483262971,
+        "stack": 0.7243383254894419
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8939023869,
+      "ts": 1786374602,
+      "series": 1129288,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 4718,
+        "radiant_kills": 4,
+        "dire_kills": 0,
+        "p_all": 0.4578398742534539,
+        "p_late": 0.4024395074648769,
+        "p_early_win": 0.5866092011541919,
+        "p_enw_rad": 0.5687947819961509,
+        "p_elo": 0.6079891699050731
+      },
+      "expected": {
+        "head": 0.8661602117639118,
+        "stack": 0.8847160456250124
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8943182700,
+      "ts": 1786608823,
+      "series": 1130053,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 998,
+        "radiant_kills": 6,
+        "dire_kills": 4,
+        "p_all": 0.486901402170076,
+        "p_late": 0.4785058425466069,
+        "p_early_win": 0.5105578575720569,
+        "p_enw_rad": 0.578019660418478,
+        "p_elo": 0.8663706937478237
+      },
+      "expected": {
+        "head": 0.578842554435108,
+        "stack": 0.834571136922357
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8944752572,
+      "ts": 1786697516,
+      "series": 1130320,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1857,
+        "radiant_kills": 6,
+        "dire_kills": 5,
+        "p_all": 0.5259410886555664,
+        "p_late": 0.61874227491807,
+        "p_early_win": 0.382238291277919,
+        "p_enw_rad": 0.2981788446738118,
+        "p_elo": 0.4985021269360145
+      },
+      "expected": {
+        "head": 0.37976514119307825,
+        "stack": 0.3889369020842819
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8946649932,
+      "ts": 1786790443,
+      "series": 1130622,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -247,
+        "radiant_kills": 4,
+        "dire_kills": 5,
+        "p_all": 0.49180604158776947,
+        "p_late": 0.41577293367712553,
+        "p_early_win": 0.5910050549272531,
+        "p_enw_rad": 0.5239259611785442,
+        "p_elo": 0.43990081751007
+      },
+      "expected": {
+        "head": 0.45563371465695585,
+        "stack": 0.41831272256189433
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8955934230,
+      "ts": 1787236699,
+      "series": 1132197,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1297,
+        "radiant_kills": 8,
+        "dire_kills": 2,
+        "p_all": 0.6790129849173949,
+        "p_late": 0.5996454708460592,
+        "p_early_win": 0.7966838059195734,
+        "p_enw_rad": 0.7584485853757157,
+        "p_elo": 0.37246557560697713
+      },
+      "expected": {
+        "head": 0.7530893382637777,
+        "stack": 0.660507331586891
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8962736746,
+      "ts": 1787570382,
+      "series": 1133402,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 577,
+        "radiant_kills": 2,
+        "dire_kills": 4,
+        "p_all": 0.574935539262632,
+        "p_late": 0.6493188206976985,
+        "p_early_win": 0.4322107195336687,
+        "p_enw_rad": 0.3776309478462242,
+        "p_elo": 0.6108436611306308
+      },
+      "expected": {
+        "head": 0.6348448749617727,
+        "stack": 0.6971297757534409
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8970089224,
+      "ts": 1787916336,
+      "series": 1134841,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1485,
+        "radiant_kills": 3,
+        "dire_kills": 4,
+        "p_all": 0.5862111086506324,
+        "p_late": 0.7170196275798626,
+        "p_early_win": 0.40860510220900476,
+        "p_enw_rad": 0.43828107633701713,
+        "p_elo": 0.6308711359900957
+      },
+      "expected": {
+        "head": 0.7046554142566763,
+        "stack": 0.7659843556472244
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8972103119,
+      "ts": 1788005710,
+      "series": 1135344,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1016,
+        "radiant_kills": 3,
+        "dire_kills": 6,
+        "p_all": 0.5255574381380801,
+        "p_late": 0.5756651079818664,
+        "p_early_win": 0.42259034170315946,
+        "p_enw_rad": 0.46100195472257127,
+        "p_elo": 0.7837404052912874
+      },
+      "expected": {
+        "head": 0.39482316703013215,
+        "stack": 0.6271962695173209
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8974053011,
+      "ts": 1788090539,
+      "series": 1135891,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2847,
+        "radiant_kills": 2,
+        "dire_kills": 8,
+        "p_all": 0.48505140145493103,
+        "p_late": 0.5015190851418388,
+        "p_early_win": 0.4890057033239949,
+        "p_enw_rad": 0.30893996655349976,
+        "p_elo": 0.13721814709466104
+      },
+      "expected": {
+        "head": 0.2163091325245429,
+        "stack": 0.07720507884457749
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8980293569,
+      "ts": 1788426295,
+      "series": 1137358,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -1751,
+        "radiant_kills": 2,
+        "dire_kills": 7,
+        "p_all": 0.5678213594615491,
+        "p_late": 0.6448219343358493,
+        "p_early_win": 0.4149414168605863,
+        "p_enw_rad": 0.40214953915198426,
+        "p_elo": 0.39055602040486703
+      },
+      "expected": {
+        "head": 0.3572674579498216,
+        "stack": 0.2992276755919196
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8987965402,
+      "ts": 1788808811,
+      "series": 1139350,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -79,
+        "radiant_kills": 6,
+        "dire_kills": 5,
+        "p_all": 0.7835027268310433,
+        "p_late": 0.8015888523038649,
+        "p_early_win": 0.6585774431580951,
+        "p_enw_rad": 0.45065476343709693,
+        "p_elo": 0.5268938132109707
+      },
+      "expected": {
+        "head": 0.785069881970235,
+        "stack": 0.7818186991023338
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8994936160,
+      "ts": 1789210988,
+      "series": 1141061,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2795,
+        "radiant_kills": 5,
+        "dire_kills": 2,
+        "p_all": 0.552917848895763,
+        "p_late": 0.5522172826875874,
+        "p_early_win": 0.5802230194601061,
+        "p_enw_rad": 0.3187435386310667,
+        "p_elo": 0.3891511050686325
+      },
+      "expected": {
+        "head": 0.8401643210014889,
+        "stack": 0.7716601799477331
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 9007208887,
+      "ts": 1789854247,
+      "series": 1144336,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 2197,
+        "radiant_kills": 7,
+        "dire_kills": 3,
+        "p_all": 0.7107546016105453,
+        "p_late": 0.6650233102294606,
+        "p_early_win": 0.765966931306512,
+        "p_enw_rad": 0.7328899443192861,
+        "p_elo": 0.13033445009784364
+      },
+      "expected": {
+        "head": 0.8349001411875021,
+        "stack": 0.5399548897182272
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 9007339571,
+      "ts": 1789863724,
+      "series": 1144413,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3964,
+        "radiant_kills": 5,
+        "dire_kills": 7,
+        "p_all": 0.4324351104766048,
+        "p_late": 0.4391153144653047,
+        "p_early_win": 0.414298485768172,
+        "p_enw_rad": 0.23622266214133025,
+        "p_elo": 0.2781933713378851
+      },
+      "expected": {
+        "head": 0.15472957696738343,
+        "stack": 0.09666776833259222
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8107545445,
+      "ts": 1735696089,
+      "series": 938499,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 917,
+        "radiant_kills": 3,
+        "dire_kills": 3,
+        "p_all": 0.4666689533138173,
+        "p_late": 0.4828612645881691,
+        "p_early_win": 0.4067745507097864,
+        "p_enw_rad": 0.41261484864041476,
+        "p_elo": 0.74699958429109
+      },
+      "expected": {
+        "head": 0.5865210350704472,
+        "stack": 0.7487757380583813
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8107551610,
+      "ts": 1735696681,
+      "series": 938500,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3177,
+        "radiant_kills": 7,
+        "dire_kills": 4,
+        "p_all": 0.712639126201483,
+        "p_late": 0.6105880167037623,
+        "p_early_win": 0.8309565692026077,
+        "p_enw_rad": 0.7805996880511209,
+        "p_elo": 0.8440269881571844
+      },
+      "expected": {
+        "head": 0.8775178790227474,
+        "stack": 0.9532072836129566
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8107556342,
+      "ts": 1735697351,
+      "series": 938501,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3168,
+        "radiant_kills": 6,
+        "dire_kills": 15,
+        "p_all": 0.5597881326763607,
+        "p_late": 0.507507757907852,
+        "p_early_win": 0.6700289519083583,
+        "p_enw_rad": 0.6223811969045607,
+        "p_elo": 0.5211259756062592
+      },
+      "expected": {
+        "head": 0.1720626276517613,
+        "stack": 0.2002433194818018
+      }
+    },
+    {
+      "minute": 10,
+      "match_id": 8107584220,
+      "ts": 1735699891,
+      "series": 938502,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 799,
+        "radiant_kills": 8,
+        "dire_kills": 3,
+        "p_all": 0.6474882465766195,
+        "p_late": 0.5085739150606922,
+        "p_early_win": 0.8377901597814474,
+        "p_enw_rad": 0.8002516099652933,
+        "p_elo": 0.27604646851779313
+      },
+      "expected": {
+        "head": 0.6649933299895661,
+        "stack": 0.48920065850854755
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8137628505,
+      "ts": 1737372004,
+      "series": 101765670,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 10626,
+        "radiant_kills": 44,
+        "dire_kills": 29,
+        "p_all": 0.13788353266471737,
+        "p_late": 0.17070081608651527,
+        "p_early_win": 0.09844892565452187,
+        "p_enw_rad": 0.10596662180744096,
+        "p_elo": 0.552954988180491
+      },
+      "expected": {
+        "head": 0.7511352052288597,
+        "stack": 0.7637584758158049
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8232653837,
+      "ts": 1743177138,
+      "series": 101777987,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 5831,
+        "radiant_kills": 27,
+        "dire_kills": 22,
+        "p_all": 0.6897403725573039,
+        "p_late": 0.5788798793538698,
+        "p_early_win": 0.8517898761846995,
+        "p_enw_rad": 0.7948394524195322,
+        "p_elo": 0.9848341194311457
+      },
+      "expected": {
+        "head": 0.7766765980831188,
+        "stack": 0.9467862401311857
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8252260988,
+      "ts": 1744481361,
+      "series": 966910,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -4872,
+        "radiant_kills": 16,
+        "dire_kills": 22,
+        "p_all": 0.8612496080683635,
+        "p_late": 0.6047643516578247,
+        "p_early_win": 0.9840585480570447,
+        "p_enw_rad": 0.9633132141658174,
+        "p_elo": 0.4393590872491338
+      },
+      "expected": {
+        "head": 0.299444131166903,
+        "stack": 0.2821748203577368
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8254084635,
+      "ts": 1744592505,
+      "series": 101781415,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 23215,
+        "radiant_kills": 105,
+        "dire_kills": 67,
+        "p_all": 0.5733629264341393,
+        "p_late": 0.4576361148643671,
+        "p_early_win": 0.7293815174906847,
+        "p_enw_rad": 0.657643293748519,
+        "p_elo": 0.28296498794250047
+      },
+      "expected": {
+        "head": 0.989008725455917,
+        "stack": 0.9831801407924673
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8262981088,
+      "ts": 1745194991,
+      "series": 969530,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 31277,
+        "radiant_kills": 37,
+        "dire_kills": 13,
+        "p_all": 0.7853368309277434,
+        "p_late": 0.6127539432205156,
+        "p_early_win": 0.9387301781873421,
+        "p_enw_rad": 0.9733444125247216,
+        "p_elo": 0.6937385540213236
+      },
+      "expected": {
+        "head": 0.994574115485743,
+        "stack": 0.9957659188436979
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8321088330,
+      "ts": 1749048528,
+      "series": 982642,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 5839,
+        "radiant_kills": 26,
+        "dire_kills": 32,
+        "p_all": 0.2120519349849889,
+        "p_late": 0.3521817346444958,
+        "p_early_win": 0.09557392811260759,
+        "p_enw_rad": 0.02966468167523989,
+        "p_elo": 0.6275721015309355
+      },
+      "expected": {
+        "head": 0.8599739564705988,
+        "stack": 0.8803624047652147
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8326163499,
+      "ts": 1749373251,
+      "series": 983845,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2278,
+        "radiant_kills": 20,
+        "dire_kills": 19,
+        "p_all": 0.33992453322812644,
+        "p_late": 0.33107150325098494,
+        "p_early_win": 0.3889747003960872,
+        "p_enw_rad": 0.521139692046522,
+        "p_elo": 0.011368493700218987
+      },
+      "expected": {
+        "head": 0.20037561308871324,
+        "stack": 0.04193233630971352
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8461254706,
+      "ts": 1757845957,
+      "series": 1010684,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -7453,
+        "radiant_kills": 5,
+        "dire_kills": 2,
+        "p_all": 0.588329929035006,
+        "p_late": 0.7103929943520895,
+        "p_early_win": 0.35962672519530914,
+        "p_enw_rad": 0.2260563219938301,
+        "p_elo": 0.5221122043171987
+      },
+      "expected": {
+        "head": 0.5078748886834954,
+        "stack": 0.5166181849096472
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8491863030,
+      "ts": 1759425561,
+      "series": 1017728,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 49627,
+        "radiant_kills": 62,
+        "dire_kills": 11,
+        "p_all": 0.4219933287326161,
+        "p_late": 0.45732541083197464,
+        "p_early_win": 0.3251985592706858,
+        "p_enw_rad": 0.49127709146690174,
+        "p_elo": 0.7554243540086999
+      },
+      "expected": {
+        "head": 0.999903032295127,
+        "stack": 0.9999291763555066
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8540506092,
+      "ts": 1762108833,
+      "series": 1030839,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -13473,
+        "radiant_kills": 13,
+        "dire_kills": 40,
+        "p_all": 0.29567133088477204,
+        "p_late": 0.5994490706627079,
+        "p_early_win": 0.041511084781748274,
+        "p_enw_rad": 0.04925514370259456,
+        "p_elo": 0.5965533927417138
+      },
+      "expected": {
+        "head": 0.16114038422389806,
+        "stack": 0.18677102296816753
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8603059846,
+      "ts": 1765622900,
+      "series": 1046168,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -14802,
+        "radiant_kills": 10,
+        "dire_kills": 23,
+        "p_all": 0.820192242548869,
+        "p_late": 0.8850501451132343,
+        "p_early_win": 0.6497407159039525,
+        "p_enw_rad": 0.49604758664056436,
+        "p_elo": 0.4342217682989504
+      },
+      "expected": {
+        "head": 0.33324146683534456,
+        "stack": 0.312640622495324
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8610399089,
+      "ts": 1766058355,
+      "series": 1047757,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -41669,
+        "radiant_kills": 11,
+        "dire_kills": 79,
+        "p_all": 0.3396798067181931,
+        "p_late": 0.36166369359305134,
+        "p_early_win": 0.2624170368056177,
+        "p_enw_rad": 0.2031712516902656,
+        "p_elo": 0.6144876266098769
+      },
+      "expected": {
+        "head": 0.00029722155988926697,
+        "stack": 0.00040147739076069135
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8664552860,
+      "ts": 1769372788,
+      "series": 1058503,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 18506,
+        "radiant_kills": 29,
+        "dire_kills": 17,
+        "p_all": 0.35481426302995217,
+        "p_late": 0.15987769405353475,
+        "p_early_win": 0.8260699175558114,
+        "p_enw_rad": 0.793159336880509,
+        "p_elo": 0.17034014104921047
+      },
+      "expected": {
+        "head": 0.8466437335284707,
+        "stack": 0.7424493697604418
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8796335325,
+      "ts": 1777809793,
+      "series": 101861081,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -56938,
+        "radiant_kills": 5,
+        "dire_kills": 28,
+        "p_all": 0.442551284176049,
+        "p_late": 0.2999290063349324,
+        "p_early_win": 0.7544826338734756,
+        "p_enw_rad": 0.5435465563492136,
+        "p_elo": 0.48147613749998436
+      },
+      "expected": {
+        "head": 1.1899900742721864e-05,
+        "stack": 1.3594925119135812e-05
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8822865310,
+      "ts": 1779573853,
+      "series": 1101236,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 41589,
+        "radiant_kills": 66,
+        "dire_kills": 13,
+        "p_all": 0.593529565893343,
+        "p_late": 0.5300375894721719,
+        "p_early_win": 0.7030784459786936,
+        "p_enw_rad": 0.7281685289261504,
+        "p_elo": 0.896375164180026
+      },
+      "expected": {
+        "head": 0.9996418647391452,
+        "stack": 0.9998290898909482
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8844960105,
+      "ts": 1781008150,
+      "series": 1108122,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -9231,
+        "radiant_kills": 13,
+        "dire_kills": 21,
+        "p_all": 0.9049678183405407,
+        "p_late": 0.8167177540165227,
+        "p_early_win": 0.9702953634908174,
+        "p_enw_rad": 0.8892228316703606,
+        "p_elo": 0.5001140334413111
+      },
+      "expected": {
+        "head": 0.4503658745658531,
+        "stack": 0.4512289394850953
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8107480347,
+      "ts": 1735690278,
+      "series": 938496,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4389,
+        "radiant_kills": 31,
+        "dire_kills": 30,
+        "p_all": 0.5280776164891688,
+        "p_late": 0.4905327970887675,
+        "p_early_win": 0.5539027424798367,
+        "p_enw_rad": 0.36605681445831,
+        "p_elo": 0.40340533693283037
+      },
+      "expected": {
+        "head": 0.4313772367050283,
+        "stack": 0.3949618887506047
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8127522180,
+      "ts": 1736777832,
+      "series": 941201,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 20308,
+        "radiant_kills": 32,
+        "dire_kills": 14,
+        "p_all": 0.6476690795666835,
+        "p_late": 0.6873514542232738,
+        "p_early_win": 0.5122146330003053,
+        "p_enw_rad": 0.707719047422551,
+        "p_elo": 0.4989639543038176
+      },
+      "expected": {
+        "head": 0.9847292624060484,
+        "stack": 0.9837889771483583
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8143318205,
+      "ts": 1737726979,
+      "series": 943560,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -12861,
+        "radiant_kills": 20,
+        "dire_kills": 31,
+        "p_all": 0.7112852903233865,
+        "p_late": 0.6445965479774939,
+        "p_early_win": 0.7593802853928021,
+        "p_enw_rad": 0.6022095909335401,
+        "p_elo": 0.25354295535842414
+      },
+      "expected": {
+        "head": 0.17591034198419758,
+        "stack": 0.12470462778324953
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8159300107,
+      "ts": 1738677733,
+      "series": 946408,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 5067,
+        "radiant_kills": 28,
+        "dire_kills": 23,
+        "p_all": 0.4299014018065981,
+        "p_late": 0.2956206460011062,
+        "p_early_win": 0.7533562760356796,
+        "p_enw_rad": 0.563501719273317,
+        "p_elo": 0.5761566296302177
+      },
+      "expected": {
+        "head": 0.5948039854181052,
+        "stack": 0.6225052526061198
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8171490499,
+      "ts": 1739410857,
+      "series": 948936,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1636,
+        "radiant_kills": 25,
+        "dire_kills": 27,
+        "p_all": 0.49716426100551286,
+        "p_late": 0.4580708205645755,
+        "p_early_win": 0.6480191897235694,
+        "p_enw_rad": 0.7604935349633833,
+        "p_elo": 0.39270050693690156
+      },
+      "expected": {
+        "head": 0.37175336876802206,
+        "stack": 0.3342375597541694
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8183369069,
+      "ts": 1740107930,
+      "series": 951448,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2261,
+        "radiant_kills": 17,
+        "dire_kills": 19,
+        "p_all": 0.29198785590955506,
+        "p_late": 0.26406073684715076,
+        "p_early_win": 0.41031057257059944,
+        "p_enw_rad": 0.4758953974169756,
+        "p_elo": 0.6825869875648984
+      },
+      "expected": {
+        "head": 0.17073574950594148,
+        "stack": 0.2218850053216641
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8198875732,
+      "ts": 1741008246,
+      "series": 101773035,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3019,
+        "radiant_kills": 28,
+        "dire_kills": 20,
+        "p_all": 0.6335287789505072,
+        "p_late": 0.6509562009320512,
+        "p_early_win": 0.5553011788824038,
+        "p_enw_rad": 0.5431066914676841,
+        "p_elo": 0.45968852134680643
+      },
+      "expected": {
+        "head": 0.7796155583486081,
+        "stack": 0.7652997025281414
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8211492234,
+      "ts": 1741808849,
+      "series": 957107,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2368,
+        "radiant_kills": 19,
+        "dire_kills": 18,
+        "p_all": 0.38854829984281986,
+        "p_late": 0.4837272949575243,
+        "p_early_win": 0.18378251466566806,
+        "p_enw_rad": 0.4456568414694027,
+        "p_elo": 0.4844421549880692
+      },
+      "expected": {
+        "head": 0.29606112529911477,
+        "stack": 0.29361356028663127
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8223720822,
+      "ts": 1742600379,
+      "series": 101776677,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 5010,
+        "radiant_kills": 23,
+        "dire_kills": 25,
+        "p_all": 0.40967104093445866,
+        "p_late": 0.5727471121065435,
+        "p_early_win": 0.2564891491195475,
+        "p_enw_rad": 0.171288714237025,
+        "p_elo": 0.7116910232087181
+      },
+      "expected": {
+        "head": 0.8359549670348778,
+        "stack": 0.8768370014944767
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8234869023,
+      "ts": 1743314634,
+      "series": 962664,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -9060,
+        "radiant_kills": 26,
+        "dire_kills": 43,
+        "p_all": 0.3693201329592275,
+        "p_late": 0.27114003212161636,
+        "p_early_win": 0.6007741862043587,
+        "p_enw_rad": 0.5290652816891717,
+        "p_elo": 0.584710657194829
+      },
+      "expected": {
+        "head": 0.06718847333916675,
+        "stack": 0.07889834608549114
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8245653070,
+      "ts": 1744033679,
+      "series": 965325,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 17151,
+        "radiant_kills": 38,
+        "dire_kills": 24,
+        "p_all": 0.5571296905624348,
+        "p_late": 0.5039338105283143,
+        "p_early_win": 0.665995128905393,
+        "p_enw_rad": 0.49993787938330353,
+        "p_elo": 0.3826532906043866
+      },
+      "expected": {
+        "head": 0.9740473248806287,
+        "stack": 0.9672255274689672
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8258002697,
+      "ts": 1744890156,
+      "series": 968265,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -5080,
+        "radiant_kills": 11,
+        "dire_kills": 24,
+        "p_all": 0.49058098249951615,
+        "p_late": 0.424449558052101,
+        "p_early_win": 0.6064474872330976,
+        "p_enw_rad": 0.6112995504849088,
+        "p_elo": 0.4869801950677995
+      },
+      "expected": {
+        "head": 0.19777920421290962,
+        "stack": 0.19775940991795748
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8270947952,
+      "ts": 1745757517,
+      "series": 971456,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2037,
+        "radiant_kills": 24,
+        "dire_kills": 23,
+        "p_all": 0.5846809775627864,
+        "p_late": 0.45523444028145277,
+        "p_early_win": 0.790455238777494,
+        "p_enw_rad": 0.807250371477418,
+        "p_elo": 0.5052888564686413
+      },
+      "expected": {
+        "head": 0.279352836449343,
+        "stack": 0.2838769317121043
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8286261665,
+      "ts": 1746792739,
+      "series": 974647,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -11214,
+        "radiant_kills": 8,
+        "dire_kills": 16,
+        "p_all": 0.4496139050176933,
+        "p_late": 0.46597012858182435,
+        "p_early_win": 0.4754333671938304,
+        "p_enw_rad": 0.6385915808673939,
+        "p_elo": 0.5187884030167372
+      },
+      "expected": {
+        "head": 0.05660824688067395,
+        "stack": 0.06048608631238908
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8299481913,
+      "ts": 1747661222,
+      "series": 101787376,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 2660,
+        "radiant_kills": 34,
+        "dire_kills": 30,
+        "p_all": 0.4314763541222021,
+        "p_late": 0.5453424497107737,
+        "p_early_win": 0.23613826093089754,
+        "p_enw_rad": 0.26128089059549237,
+        "p_elo": 0.4671939704462213
+      },
+      "expected": {
+        "head": 0.7179880796659597,
+        "stack": 0.7046760384994123
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8311876769,
+      "ts": 1748458920,
+      "series": 980115,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 29342,
+        "radiant_kills": 32,
+        "dire_kills": 8,
+        "p_all": 0.5098785508963023,
+        "p_late": 0.44041069860319615,
+        "p_early_win": 0.6628437072795949,
+        "p_enw_rad": 0.8756654047652516,
+        "p_elo": 0.515013747074686
+      },
+      "expected": {
+        "head": 0.9869591444968755,
+        "stack": 0.9864660787154919
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8324524864,
+      "ts": 1749279615,
+      "series": 983459,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -6696,
+        "radiant_kills": 7,
+        "dire_kills": 16,
+        "p_all": 0.505463954367399,
+        "p_late": 0.5611477907418985,
+        "p_early_win": 0.40852659124144525,
+        "p_enw_rad": 0.4066383874003967,
+        "p_elo": 0.4606130128230269
+      },
+      "expected": {
+        "head": 0.2738724572877065,
+        "stack": 0.26442830883775886
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8337569666,
+      "ts": 1750094971,
+      "series": 986204,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 9248,
+        "radiant_kills": 26,
+        "dire_kills": 17,
+        "p_all": 0.7302427640482131,
+        "p_late": 0.5857862204755876,
+        "p_early_win": 0.8547983978619047,
+        "p_enw_rad": 0.8494476762392384,
+        "p_elo": 0.5049683045731955
+      },
+      "expected": {
+        "head": 0.8694637900604137,
+        "stack": 0.8673177619640211
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8352741566,
+      "ts": 1751098499,
+      "series": 989140,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -9247,
+        "radiant_kills": 11,
+        "dire_kills": 16,
+        "p_all": 0.5684275268708565,
+        "p_late": 0.45435987582294696,
+        "p_early_win": 0.7033797637867975,
+        "p_enw_rad": 0.5359812750554652,
+        "p_elo": 0.38113780499215766
+      },
+      "expected": {
+        "head": 0.17972107697701678,
+        "stack": 0.1560798069154415
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8367681025,
+      "ts": 1752069319,
+      "series": 992038,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -7525,
+        "radiant_kills": 33,
+        "dire_kills": 35,
+        "p_all": 0.7084965806277375,
+        "p_late": 0.5278581639944963,
+        "p_early_win": 0.9204868065952465,
+        "p_enw_rad": 0.8487621678444824,
+        "p_elo": 0.43669394229221553
+      },
+      "expected": {
+        "head": 0.18661796495563443,
+        "stack": 0.1749014392300325
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8381818234,
+      "ts": 1753006154,
+      "series": 995118,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4972,
+        "radiant_kills": 25,
+        "dire_kills": 19,
+        "p_all": 0.5663413270886882,
+        "p_late": 0.47568466382740027,
+        "p_early_win": 0.752757046582235,
+        "p_enw_rad": 0.6951405579251393,
+        "p_elo": 0.4403258216782776
+      },
+      "expected": {
+        "head": 0.24301178432749848,
+        "stack": 0.22893241368561967
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8395366220,
+      "ts": 1753873514,
+      "series": 998178,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -7512,
+        "radiant_kills": 11,
+        "dire_kills": 25,
+        "p_all": 0.7156971280980943,
+        "p_late": 0.6961759136166363,
+        "p_early_win": 0.7520478558928343,
+        "p_enw_rad": 0.4457122091161388,
+        "p_elo": 0.6495313814265193
+      },
+      "expected": {
+        "head": 0.4873654536880766,
+        "stack": 0.5484765811509041
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8410058588,
+      "ts": 1754766509,
+      "series": 101804949,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -2216,
+        "radiant_kills": 32,
+        "dire_kills": 37,
+        "p_all": 0.5461613830490264,
+        "p_late": 0.6197771172810481,
+        "p_early_win": 0.2628092555051805,
+        "p_enw_rad": 0.2661481230914957,
+        "p_elo": 0.4667817035458057
+      },
+      "expected": {
+        "head": 0.638279304327047,
+        "stack": 0.6242550665132143
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8424953611,
+      "ts": 1755684871,
+      "series": 1004282,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -4455,
+        "radiant_kills": 34,
+        "dire_kills": 38,
+        "p_all": 0.3770356481858386,
+        "p_late": 0.36267171657674063,
+        "p_early_win": 0.4869539200344809,
+        "p_enw_rad": 0.5191031298130836,
+        "p_elo": 0.3982510015826897
+      },
+      "expected": {
+        "head": 0.16963673436814175,
+        "stack": 0.15081667077606498
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8440770528,
+      "ts": 1756610966,
+      "series": 1007228,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 31582,
+        "radiant_kills": 32,
+        "dire_kills": 12,
+        "p_all": 0.48798989225900874,
+        "p_late": 0.4360194809427233,
+        "p_early_win": 0.5667156337707113,
+        "p_enw_rad": 0.4870554365596182,
+        "p_elo": 0.5081517864033706
+      },
+      "expected": {
+        "head": 0.9976029947108953,
+        "stack": 0.9974223919434485
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8457973381,
+      "ts": 1757680262,
+      "series": 1010227,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1538,
+        "radiant_kills": 32,
+        "dire_kills": 42,
+        "p_all": 0.4420090690911387,
+        "p_late": 0.45169210179770297,
+        "p_early_win": 0.43727878486358646,
+        "p_enw_rad": 0.4651314442805263,
+        "p_elo": 0.4355886736122611
+      },
+      "expected": {
+        "head": 0.5109506847991294,
+        "stack": 0.4853118423989754
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8474947782,
+      "ts": 1758550133,
+      "series": 1013697,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -29250,
+        "radiant_kills": 16,
+        "dire_kills": 48,
+        "p_all": 0.40573831085536294,
+        "p_late": 0.34787591378235533,
+        "p_early_win": 0.5532122283563177,
+        "p_enw_rad": 0.6750001105617008,
+        "p_elo": 0.38825869999673457
+      },
+      "expected": {
+        "head": 0.0012027325387681522,
+        "stack": 0.001106810480920163
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8486099774,
+      "ts": 1759118036,
+      "series": 1016473,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -17343,
+        "radiant_kills": 14,
+        "dire_kills": 34,
+        "p_all": 0.7055449298899359,
+        "p_late": 0.5456183331757029,
+        "p_early_win": 0.8730201335486524,
+        "p_enw_rad": 0.8224919669138997,
+        "p_elo": 0.5142901514809445
+      },
+      "expected": {
+        "head": 0.03571635733147279,
+        "stack": 0.03821267635001225
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8497229092,
+      "ts": 1759689851,
+      "series": 1019258,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -13984,
+        "radiant_kills": 25,
+        "dire_kills": 40,
+        "p_all": 0.5129780199995791,
+        "p_late": 0.5292795978295137,
+        "p_early_win": 0.5182731672855067,
+        "p_enw_rad": 0.5896581036058346,
+        "p_elo": 0.4902728538686994
+      },
+      "expected": {
+        "head": 0.053558105404416155,
+        "stack": 0.054897242842729115
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8510263640,
+      "ts": 1760397995,
+      "series": 1022636,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 26502,
+        "radiant_kills": 33,
+        "dire_kills": 11,
+        "p_all": 0.45191342969240117,
+        "p_late": 0.4079408859126068,
+        "p_early_win": 0.5400802185289234,
+        "p_enw_rad": 0.5378517212795839,
+        "p_elo": 0.6615731040090692
+      },
+      "expected": {
+        "head": 0.9913488969480523,
+        "stack": 0.9928895975881504
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8520788686,
+      "ts": 1760983124,
+      "series": 1025572,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 11532,
+        "radiant_kills": 19,
+        "dire_kills": 19,
+        "p_all": 0.26197526905920143,
+        "p_late": 0.3751629520636091,
+        "p_early_win": 0.1453772001467651,
+        "p_enw_rad": 0.2508576912931342,
+        "p_elo": 0.6628823422831555
+      },
+      "expected": {
+        "head": 0.8305393823244223,
+        "stack": 0.8622950364884834
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8533202316,
+      "ts": 1761696582,
+      "series": 101822202,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -17755,
+        "radiant_kills": 18,
+        "dire_kills": 44,
+        "p_all": 0.4590545146690209,
+        "p_late": 0.5373741765288357,
+        "p_early_win": 0.3644741686305295,
+        "p_enw_rad": 0.3975702881074967,
+        "p_elo": 0.729292191398858
+      },
+      "expected": {
+        "head": 0.03346492665923899,
+        "stack": 0.051030023399915365
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8548069936,
+      "ts": 1762573726,
+      "series": 101823902,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3344,
+        "radiant_kills": 27,
+        "dire_kills": 16,
+        "p_all": 0.6819962144213847,
+        "p_late": 0.7370248125637505,
+        "p_early_win": 0.35028066328041674,
+        "p_enw_rad": 0.17976384491520236,
+        "p_elo": 0.5879545504542805
+      },
+      "expected": {
+        "head": 0.8288214811158547,
+        "stack": 0.8449791125066018
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8561364358,
+      "ts": 1763280676,
+      "series": 1036208,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 944,
+        "radiant_kills": 18,
+        "dire_kills": 14,
+        "p_all": 0.5018842090117753,
+        "p_late": 0.45776062071924717,
+        "p_early_win": 0.5890271590609651,
+        "p_enw_rad": 0.49144386336074325,
+        "p_elo": 0.678358405241474
+      },
+      "expected": {
+        "head": 0.5583768324775906,
+        "stack": 0.6287046003076319
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8574498443,
+      "ts": 1763988886,
+      "series": 1039585,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 18059,
+        "radiant_kills": 41,
+        "dire_kills": 19,
+        "p_all": 0.4986071240220671,
+        "p_late": 0.5287956662061476,
+        "p_early_win": 0.3867371404944232,
+        "p_enw_rad": 0.5115776362936475,
+        "p_elo": 0.4573188220091016
+      },
+      "expected": {
+        "head": 0.9707822222989461,
+        "stack": 0.9672666279279092
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8590185256,
+      "ts": 1764874763,
+      "series": 101828432,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 9877,
+        "radiant_kills": 37,
+        "dire_kills": 24,
+        "p_all": 0.5839876684729212,
+        "p_late": 0.6091831075612949,
+        "p_early_win": 0.4331365085010284,
+        "p_enw_rad": 0.36230546235472516,
+        "p_elo": 0.5839993457062618
+      },
+      "expected": {
+        "head": 0.94368847328047,
+        "stack": 0.948493493502935
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8604385300,
+      "ts": 1765689550,
+      "series": 1046535,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -8873,
+        "radiant_kills": 20,
+        "dire_kills": 28,
+        "p_all": 0.5496145269872617,
+        "p_late": 0.5818747178288473,
+        "p_early_win": 0.45713118814399994,
+        "p_enw_rad": 0.3932812451098741,
+        "p_elo": 0.3040368864462701
+      },
+      "expected": {
+        "head": 0.2487088769524849,
+        "stack": 0.19519337274168044
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8621428408,
+      "ts": 1766729429,
+      "series": 1049878,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 11847,
+        "radiant_kills": 39,
+        "dire_kills": 26,
+        "p_all": 0.5210189579744572,
+        "p_late": 0.4371793025852381,
+        "p_early_win": 0.7164194003639599,
+        "p_enw_rad": 0.4484210022771822,
+        "p_elo": 0.7551705859980843
+      },
+      "expected": {
+        "head": 0.927985441337966,
+        "stack": 0.950983035342015
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8635597520,
+      "ts": 1767558455,
+      "series": 1052530,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 13414,
+        "radiant_kills": 22,
+        "dire_kills": 15,
+        "p_all": 0.3994196129383754,
+        "p_late": 0.34549362075362083,
+        "p_early_win": 0.5204252808428721,
+        "p_enw_rad": 0.6043509138999955,
+        "p_elo": 0.6464506736071635
+      },
+      "expected": {
+        "head": 0.8460564778040531,
+        "stack": 0.8719888037790832
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8650511285,
+      "ts": 1768500253,
+      "series": 1055290,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 9299,
+        "radiant_kills": 23,
+        "dire_kills": 21,
+        "p_all": 0.5056922819081454,
+        "p_late": 0.4199443082980435,
+        "p_early_win": 0.6420768661155961,
+        "p_enw_rad": 0.5912219529690906,
+        "p_elo": 0.560661072684812
+      },
+      "expected": {
+        "head": 0.8211081562268845,
+        "stack": 0.831871446684159
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8662517804,
+      "ts": 1769267459,
+      "series": 1058020,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 8387,
+        "radiant_kills": 15,
+        "dire_kills": 17,
+        "p_all": 0.41979244541877464,
+        "p_late": 0.42106860880190505,
+        "p_early_win": 0.45589738528755447,
+        "p_enw_rad": 0.6199672431438912,
+        "p_elo": 0.2980348827525165
+      },
+      "expected": {
+        "head": 0.6902690584252167,
+        "stack": 0.611056414810706
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8673792207,
+      "ts": 1769967186,
+      "series": 101840559,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 22839,
+        "radiant_kills": 43,
+        "dire_kills": 14,
+        "p_all": 0.2041976053174434,
+        "p_late": 0.23156148642431076,
+        "p_early_win": 0.21053556202583354,
+        "p_enw_rad": 0.27429272702257834,
+        "p_elo": 0.5695819375170341
+      },
+      "expected": {
+        "head": 0.9645644577897156,
+        "stack": 0.9666878064509523
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8686290800,
+      "ts": 1770779055,
+      "series": 1063529,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4877,
+        "radiant_kills": 18,
+        "dire_kills": 18,
+        "p_all": 0.5500767175007438,
+        "p_late": 0.4511161754766207,
+        "p_early_win": 0.6947725672476147,
+        "p_enw_rad": 0.5786581318646113,
+        "p_elo": 0.289197502623564
+      },
+      "expected": {
+        "head": 0.29188972752475817,
+        "stack": 0.22643046783883689
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8697634825,
+      "ts": 1771524323,
+      "series": 1066255,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -19823,
+        "radiant_kills": 12,
+        "dire_kills": 25,
+        "p_all": 0.6832069626765674,
+        "p_late": 0.6346747104565237,
+        "p_early_win": 0.7088166260541306,
+        "p_enw_rad": 0.5604538196626551,
+        "p_elo": 0.5154286929749243
+      },
+      "expected": {
+        "head": 0.05099551386645883,
+        "stack": 0.05431855119567362
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8708758022,
+      "ts": 1772208679,
+      "series": 1069131,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -25763,
+        "radiant_kills": 10,
+        "dire_kills": 41,
+        "p_all": 0.3341857142249656,
+        "p_late": 0.334612491484248,
+        "p_early_win": 0.4111870383087571,
+        "p_enw_rad": 0.42124220351966235,
+        "p_elo": 0.6515767505169828
+      },
+      "expected": {
+        "head": 0.003274308375886776,
+        "stack": 0.004546845122875691
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8720800565,
+      "ts": 1772971419,
+      "series": 101847570,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 14998,
+        "radiant_kills": 28,
+        "dire_kills": 13,
+        "p_all": 0.5268255512262006,
+        "p_late": 0.426629169197205,
+        "p_early_win": 0.7996745410349018,
+        "p_enw_rad": 0.8455415270059814,
+        "p_elo": 0.5112284058744904
+      },
+      "expected": {
+        "head": 0.8629556773064461,
+        "stack": 0.8619979838533572
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8731582409,
+      "ts": 1773669950,
+      "series": 1075272,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -27211,
+        "radiant_kills": 16,
+        "dire_kills": 39,
+        "p_all": 0.7692369425706075,
+        "p_late": 0.7693996854660458,
+        "p_early_win": 0.7590854034860575,
+        "p_enw_rad": 0.49519103491576205,
+        "p_elo": 0.43991267263234224
+      },
+      "expected": {
+        "head": 0.027666495409114897,
+        "stack": 0.026503233664735067
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8740105735,
+      "ts": 1774216944,
+      "series": 1077902,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 9873,
+        "radiant_kills": 11,
+        "dire_kills": 9,
+        "p_all": 0.5756984165297183,
+        "p_late": 0.6316869239503876,
+        "p_early_win": 0.44505131187835295,
+        "p_enw_rad": 0.6142773314501718,
+        "p_elo": 0.5509649822084003
+      },
+      "expected": {
+        "head": 0.880857522742223,
+        "stack": 0.886282190915995
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8749581726,
+      "ts": 1774809288,
+      "series": 101851542,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1963,
+        "radiant_kills": 25,
+        "dire_kills": 17,
+        "p_all": 0.5824913108279343,
+        "p_late": 0.6316230383208056,
+        "p_early_win": 0.3185399343858255,
+        "p_enw_rad": 0.22300287256240903,
+        "p_elo": 0.5122530195720286
+      },
+      "expected": {
+        "head": 0.8555098255951278,
+        "stack": 0.854819493442056
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8753926295,
+      "ts": 1775102427,
+      "series": 1081848,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4837,
+        "radiant_kills": 7,
+        "dire_kills": 16,
+        "p_all": 0.6961798714781172,
+        "p_late": 0.6217203913859203,
+        "p_early_win": 0.8027998888255419,
+        "p_enw_rad": 0.7512241965312241,
+        "p_elo": 0.42069514474732056
+      },
+      "expected": {
+        "head": 0.3523858395181337,
+        "stack": 0.3261008008307172
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8760290301,
+      "ts": 1775476000,
+      "series": 1083466,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3670,
+        "radiant_kills": 31,
+        "dire_kills": 28,
+        "p_all": 0.6073766383474695,
+        "p_late": 0.49926627431725074,
+        "p_early_win": 0.7801566273147663,
+        "p_enw_rad": 0.7294679984042244,
+        "p_elo": 0.5042433122296399
+      },
+      "expected": {
+        "head": 0.6431501554970479,
+        "stack": 0.642863817147442
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8762678355,
+      "ts": 1775635557,
+      "series": 101853364,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -7079,
+        "radiant_kills": 21,
+        "dire_kills": 16,
+        "p_all": 0.3789650586651223,
+        "p_late": 0.47435174354489157,
+        "p_early_win": 0.27859814574011366,
+        "p_enw_rad": 0.45763617504591564,
+        "p_elo": 0.6277103370925684
+      },
+      "expected": {
+        "head": 0.13948919686148858,
+        "stack": 0.1698654568778334
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8763893334,
+      "ts": 1775717178,
+      "series": 1084372,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -11604,
+        "radiant_kills": 11,
+        "dire_kills": 16,
+        "p_all": 0.48141965782353585,
+        "p_late": 0.5528656254621244,
+        "p_early_win": 0.2943973069186536,
+        "p_enw_rad": 0.35246193707815854,
+        "p_elo": 0.718939245550449
+      },
+      "expected": {
+        "head": 0.13587364513659195,
+        "stack": 0.18971777552929378
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8766239588,
+      "ts": 1775857955,
+      "series": 1084946,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -3204,
+        "radiant_kills": 17,
+        "dire_kills": 12,
+        "p_all": 0.5656544202196316,
+        "p_late": 0.6018330337373766,
+        "p_early_win": 0.4836422275422866,
+        "p_enw_rad": 0.3401186636986193,
+        "p_elo": 0.8248664526665582
+      },
+      "expected": {
+        "head": 0.5697468296300178,
+        "stack": 0.7088554319610034
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8769050548,
+      "ts": 1776013222,
+      "series": 1085823,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 6953,
+        "radiant_kills": 26,
+        "dire_kills": 18,
+        "p_all": 0.7022248521697124,
+        "p_late": 0.6740487572150013,
+        "p_early_win": 0.7655175380293002,
+        "p_enw_rad": 0.4396794140344679,
+        "p_elo": 0.28379374289342646
+      },
+      "expected": {
+        "head": 0.9378090452744858,
+        "stack": 0.9096281225676889
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8770372144,
+      "ts": 1776100100,
+      "series": 1086156,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -26067,
+        "radiant_kills": 5,
+        "dire_kills": 29,
+        "p_all": 0.4916435753793277,
+        "p_late": 0.4314944390108611,
+        "p_early_win": 0.5947755808686073,
+        "p_enw_rad": 0.3772243976762618,
+        "p_elo": 0.1870360340318953
+      },
+      "expected": {
+        "head": 0.008712091941417713,
+        "stack": 0.005235626145855338
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8771231238,
+      "ts": 1776169110,
+      "series": 1086384,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -7594,
+        "radiant_kills": 23,
+        "dire_kills": 24,
+        "p_all": 0.45805374290588224,
+        "p_late": 0.3871037714536544,
+        "p_early_win": 0.570101871201873,
+        "p_enw_rad": 0.38558204915133215,
+        "p_elo": 0.5023880827296835
+      },
+      "expected": {
+        "head": 0.20606977821946434,
+        "stack": 0.2099422115143972
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8777556612,
+      "ts": 1776589542,
+      "series": 1088222,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -11450,
+        "radiant_kills": 15,
+        "dire_kills": 19,
+        "p_all": 0.503608675485033,
+        "p_late": 0.5832919441689586,
+        "p_early_win": 0.396059567850396,
+        "p_enw_rad": 0.31661307615162987,
+        "p_elo": 0.3884172218594715
+      },
+      "expected": {
+        "head": 0.17203503741613987,
+        "stack": 0.1508677388698957
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8780579694,
+      "ts": 1776784230,
+      "series": 1089116,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 19373,
+        "radiant_kills": 36,
+        "dire_kills": 19,
+        "p_all": 0.5422015861455272,
+        "p_late": 0.4269100995416005,
+        "p_early_win": 0.798948303704705,
+        "p_enw_rad": 0.8568534975807665,
+        "p_elo": 0.7315358739752068
+      },
+      "expected": {
+        "head": 0.9365389946982715,
+        "stack": 0.9547830790483828
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8781452740,
+      "ts": 1776852578,
+      "series": 1089367,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 12396,
+        "radiant_kills": 12,
+        "dire_kills": 8,
+        "p_all": 0.5843840705147991,
+        "p_late": 0.44330322087813906,
+        "p_early_win": 0.8540088976845683,
+        "p_enw_rad": 0.8685296490114094,
+        "p_elo": 0.532925702880335
+      },
+      "expected": {
+        "head": 0.8125478977126126,
+        "stack": 0.8173195328746302
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8782965033,
+      "ts": 1776954488,
+      "series": 1089752,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -24587,
+        "radiant_kills": 13,
+        "dire_kills": 37,
+        "p_all": 0.5079403677599498,
+        "p_late": 0.4977892722750556,
+        "p_early_win": 0.4850657553105152,
+        "p_enw_rad": 0.256492211135377,
+        "p_elo": 0.2663541624954688
+      },
+      "expected": {
+        "head": 0.018891213790107098,
+        "stack": 0.013471785300471141
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8785521039,
+      "ts": 1777116792,
+      "series": 1090466,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -6661,
+        "radiant_kills": 10,
+        "dire_kills": 18,
+        "p_all": 0.5103608151156287,
+        "p_late": 0.4489630505961323,
+        "p_early_win": 0.6464496075330505,
+        "p_enw_rad": 0.6047085187685739,
+        "p_elo": 0.48734884759162134
+      },
+      "expected": {
+        "head": 0.17606045112721586,
+        "stack": 0.17642372671382656
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8788753093,
+      "ts": 1777305346,
+      "series": 1091717,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 641,
+        "radiant_kills": 12,
+        "dire_kills": 14,
+        "p_all": 0.7050103729345012,
+        "p_late": 0.6365205914245551,
+        "p_early_win": 0.7917162797056969,
+        "p_enw_rad": 0.6912313860743914,
+        "p_elo": 0.6018329675958437
+      },
+      "expected": {
+        "head": 0.6749872208314559,
+        "stack": 0.7076800881341854
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8788884751,
+      "ts": 1777311355,
+      "series": 1091749,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -607,
+        "radiant_kills": 20,
+        "dire_kills": 27,
+        "p_all": 0.4420263234173326,
+        "p_late": 0.49668919561985586,
+        "p_early_win": 0.35711938328442877,
+        "p_enw_rad": 0.3252241515978304,
+        "p_elo": 0.5084553566752206
+      },
+      "expected": {
+        "head": 0.5210335492646218,
+        "stack": 0.5241839078964693
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8796887656,
+      "ts": 1777833725,
+      "series": 1093983,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -19185,
+        "radiant_kills": 7,
+        "dire_kills": 31,
+        "p_all": 0.42230486285666663,
+        "p_late": 0.44483014123336645,
+        "p_early_win": 0.399910032257055,
+        "p_enw_rad": 0.27869189936174515,
+        "p_elo": 0.708193115150973
+      },
+      "expected": {
+        "head": 0.030110761873199304,
+        "stack": 0.04428744610113173
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8800967750,
+      "ts": 1778138155,
+      "series": 1094926,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -16424,
+        "radiant_kills": 15,
+        "dire_kills": 37,
+        "p_all": 0.5341629000465751,
+        "p_late": 0.5204756996492208,
+        "p_early_win": 0.5393272213552023,
+        "p_enw_rad": 0.5932533296724908,
+        "p_elo": 0.5642237997058109
+      },
+      "expected": {
+        "head": 0.03647976787886164,
+        "stack": 0.042108373120862116
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8809802771,
+      "ts": 1778699162,
+      "series": 1097135,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -9784,
+        "radiant_kills": 13,
+        "dire_kills": 20,
+        "p_all": 0.5004288712778702,
+        "p_late": 0.5097006749355006,
+        "p_early_win": 0.4975115928601389,
+        "p_enw_rad": 0.1792399940238683,
+        "p_elo": 0.28901392709168355
+      },
+      "expected": {
+        "head": 0.31388677419349137,
+        "stack": 0.24486189252233836
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8811075585,
+      "ts": 1778787120,
+      "series": 1097428,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 15999,
+        "radiant_kills": 39,
+        "dire_kills": 16,
+        "p_all": 0.4692192501747278,
+        "p_late": 0.5399616187277481,
+        "p_early_win": 0.35473663064318045,
+        "p_enw_rad": 0.20036308601581945,
+        "p_elo": 0.6471514108694995
+      },
+      "expected": {
+        "head": 0.9817556121177078,
+        "stack": 0.9847642571348526
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8812381459,
+      "ts": 1778876555,
+      "series": 1097876,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 13413,
+        "radiant_kills": 27,
+        "dire_kills": 26,
+        "p_all": 0.5797579222957534,
+        "p_late": 0.41770129773451364,
+        "p_early_win": 0.7911826737147134,
+        "p_enw_rad": 0.7843227628624518,
+        "p_elo": 0.5719994833868443
+      },
+      "expected": {
+        "head": 0.883793455403815,
+        "stack": 0.8923491533214808
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8812989544,
+      "ts": 1778925330,
+      "series": 1098055,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1856,
+        "radiant_kills": 13,
+        "dire_kills": 17,
+        "p_all": 0.5017090861484941,
+        "p_late": 0.5259825093882932,
+        "p_early_win": 0.4494676664151292,
+        "p_enw_rad": 0.4284055979398621,
+        "p_elo": 0.4199171352258524
+      },
+      "expected": {
+        "head": 0.46713191287864597,
+        "stack": 0.43609047600178236
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8814473986,
+      "ts": 1779011723,
+      "series": 1098541,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 25865,
+        "radiant_kills": 36,
+        "dire_kills": 14,
+        "p_all": 0.643035159832458,
+        "p_late": 0.6247498070156399,
+        "p_early_win": 0.6644492042986222,
+        "p_enw_rad": 0.4640900948514895,
+        "p_elo": 0.7501089992144635
+      },
+      "expected": {
+        "head": 0.9973092994913878,
+        "stack": 0.9981032206100122
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8817670980,
+      "ts": 1779216480,
+      "series": 1099484,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 12700,
+        "radiant_kills": 19,
+        "dire_kills": 10,
+        "p_all": 0.48905450846993154,
+        "p_late": 0.39892818403415103,
+        "p_early_win": 0.716992892213553,
+        "p_enw_rad": 0.8370513053045777,
+        "p_elo": 0.49893734943358353
+      },
+      "expected": {
+        "head": 0.7708663066562965,
+        "stack": 0.7675724737134071
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8821431723,
+      "ts": 1779486538,
+      "series": 101867430,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 2434,
+        "radiant_kills": 36,
+        "dire_kills": 24,
+        "p_all": 0.409437700039272,
+        "p_late": 0.43807721934274624,
+        "p_early_win": 0.38159209503151037,
+        "p_enw_rad": 0.3998618185470262,
+        "p_elo": 0.4188226390610173
+      },
+      "expected": {
+        "head": 0.5818725191190137,
+        "stack": 0.5490179303665114
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8821954344,
+      "ts": 1779530122,
+      "series": 1100890,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 7115,
+        "radiant_kills": 25,
+        "dire_kills": 13,
+        "p_all": 0.623389803070612,
+        "p_late": 0.4647185961245605,
+        "p_early_win": 0.8411380894589403,
+        "p_enw_rad": 0.7810310928814607,
+        "p_elo": 0.3958586675740164
+      },
+      "expected": {
+        "head": 0.7611531744139111,
+        "stack": 0.7262748025891594
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8827339763,
+      "ts": 1779872914,
+      "series": 1102678,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 4022,
+        "radiant_kills": 19,
+        "dire_kills": 16,
+        "p_all": 0.518240170005188,
+        "p_late": 0.5408535740661087,
+        "p_early_win": 0.4522710138553536,
+        "p_enw_rad": 0.4118070657191861,
+        "p_elo": 0.8336138821562414
+      },
+      "expected": {
+        "head": 0.7596498986272081,
+        "stack": 0.8546774168968417
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8829734715,
+      "ts": 1780031378,
+      "series": 1103481,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 20450,
+        "radiant_kills": 36,
+        "dire_kills": 12,
+        "p_all": 0.7062725030302562,
+        "p_late": 0.7261461552646896,
+        "p_early_win": 0.6219819447366715,
+        "p_enw_rad": 0.5228353409401776,
+        "p_elo": 0.952344447350143
+      },
+      "expected": {
+        "head": 0.9942163047220066,
+        "stack": 0.9980879963499412
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8829948957,
+      "ts": 1780049443,
+      "series": 1103543,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -13846,
+        "radiant_kills": 20,
+        "dire_kills": 35,
+        "p_all": 0.43076400100041284,
+        "p_late": 0.567314023989138,
+        "p_early_win": 0.3041227574175218,
+        "p_enw_rad": 0.2228331747129444,
+        "p_elo": 0.363940993172357
+      },
+      "expected": {
+        "head": 0.10744058808004436,
+        "stack": 0.09053382221847792
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8830206341,
+      "ts": 1780062716,
+      "series": 1103629,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 3701,
+        "radiant_kills": 23,
+        "dire_kills": 11,
+        "p_all": 0.495909846503981,
+        "p_late": 0.6148202231575629,
+        "p_early_win": 0.36422107258411207,
+        "p_enw_rad": 0.5052355002333528,
+        "p_elo": 0.3565583645775976
+      },
+      "expected": {
+        "head": 0.6861214521425809,
+        "stack": 0.6313430804400896
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8831556487,
+      "ts": 1780145605,
+      "series": 1104112,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 11170,
+        "radiant_kills": 24,
+        "dire_kills": 22,
+        "p_all": 0.35671166949324334,
+        "p_late": 0.3511288243704311,
+        "p_early_win": 0.37052446282017765,
+        "p_enw_rad": 0.4779874990332514,
+        "p_elo": 0.8021447181466187
+      },
+      "expected": {
+        "head": 0.7998173648226373,
+        "stack": 0.8720410107277011
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8833393817,
+      "ts": 1780246070,
+      "series": 101870428,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 5379,
+        "radiant_kills": 21,
+        "dire_kills": 16,
+        "p_all": 0.6674984282813258,
+        "p_late": 0.4992763365968158,
+        "p_early_win": 0.8829371275030483,
+        "p_enw_rad": 0.7613213032653813,
+        "p_elo": 0.14346828942526296
+      },
+      "expected": {
+        "head": 0.7573454526614122,
+        "stack": 0.602546653803919
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8834808503,
+      "ts": 1780338103,
+      "series": 1105184,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -3791,
+        "radiant_kills": 13,
+        "dire_kills": 22,
+        "p_all": 0.49115198334747484,
+        "p_late": 0.4667147320209022,
+        "p_early_win": 0.5647617179490056,
+        "p_enw_rad": 0.7036854081600286,
+        "p_elo": 0.5394754971836914
+      },
+      "expected": {
+        "head": 0.1962475005067818,
+        "stack": 0.2096952339023345
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8835979999,
+      "ts": 1780421012,
+      "series": 1105499,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -18533,
+        "radiant_kills": 13,
+        "dire_kills": 32,
+        "p_all": 0.5748086867168704,
+        "p_late": 0.46443387499752814,
+        "p_early_win": 0.7841445401626318,
+        "p_enw_rad": 0.616755379414354,
+        "p_elo": 0.39300264667599866
+      },
+      "expected": {
+        "head": 0.02844293066011525,
+        "stack": 0.02528522987344688
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8837288943,
+      "ts": 1780510820,
+      "series": 1105792,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3666,
+        "radiant_kills": 11,
+        "dire_kills": 12,
+        "p_all": 0.4802404895033769,
+        "p_late": 0.397080206734646,
+        "p_early_win": 0.6232607254769489,
+        "p_enw_rad": 0.6412257389015766,
+        "p_elo": 0.2903671521095102
+      },
+      "expected": {
+        "head": 0.5386476315654253,
+        "stack": 0.4501453486698366
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8839075338,
+      "ts": 1780646414,
+      "series": 1106316,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 6368,
+        "radiant_kills": 22,
+        "dire_kills": 14,
+        "p_all": 0.35878667613779913,
+        "p_late": 0.5060378844255368,
+        "p_early_win": 0.2996403753311388,
+        "p_enw_rad": 0.38452455182499634,
+        "p_elo": 0.5921972090730891
+      },
+      "expected": {
+        "head": 0.7010893471309402,
+        "stack": 0.7287390098214981
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8839616292,
+      "ts": 1780674290,
+      "series": 1106457,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -28458,
+        "radiant_kills": 8,
+        "dire_kills": 40,
+        "p_all": 0.5127092505710031,
+        "p_late": 0.42502663268132446,
+        "p_early_win": 0.7358156768642591,
+        "p_enw_rad": 0.5197559470321298,
+        "p_elo": 0.3831974860117125
+      },
+      "expected": {
+        "head": 0.00397641527242559,
+        "stack": 0.0035680251054877724
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8847462164,
+      "ts": 1781179543,
+      "series": 1109160,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -7831,
+        "radiant_kills": 13,
+        "dire_kills": 19,
+        "p_all": 0.5700209460959,
+        "p_late": 0.584472035738268,
+        "p_early_win": 0.5743972753281821,
+        "p_enw_rad": 0.5908308602482658,
+        "p_elo": 0.5101636493387243
+      },
+      "expected": {
+        "head": 0.20491346305116684,
+        "stack": 0.21082519180361323
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8852809218,
+      "ts": 1781521190,
+      "series": 1111084,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 14036,
+        "radiant_kills": 23,
+        "dire_kills": 13,
+        "p_all": 0.4694805110212414,
+        "p_late": 0.4700327082945144,
+        "p_early_win": 0.46613991259143983,
+        "p_enw_rad": 0.5176881921399917,
+        "p_elo": 0.9253211730885715
+      },
+      "expected": {
+        "head": 0.9240116304544709,
+        "stack": 0.9694636987841143
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8855968667,
+      "ts": 1781728904,
+      "series": 1111857,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 18633,
+        "radiant_kills": 19,
+        "dire_kills": 11,
+        "p_all": 0.5127104560353346,
+        "p_late": 0.58126812551585,
+        "p_early_win": 0.40963725222275893,
+        "p_enw_rad": 0.3895966865203935,
+        "p_elo": 0.7595613231855876
+      },
+      "expected": {
+        "head": 0.981782568110046,
+        "stack": 0.9876926400737857
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8856558798,
+      "ts": 1781784335,
+      "series": 101876081,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -4392,
+        "radiant_kills": 13,
+        "dire_kills": 28,
+        "p_all": 0.4578032699397916,
+        "p_late": 0.5610745665739227,
+        "p_early_win": 0.26528241267941655,
+        "p_enw_rad": 0.23888887274885914,
+        "p_elo": 0.5082762108815024
+      },
+      "expected": {
+        "head": 0.43449880179262473,
+        "stack": 0.4387572325772626
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8858503756,
+      "ts": 1781902332,
+      "series": 1112489,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -21228,
+        "radiant_kills": 9,
+        "dire_kills": 37,
+        "p_all": 0.5642673675875052,
+        "p_late": 0.49842710654661293,
+        "p_early_win": 0.6892362148451777,
+        "p_enw_rad": 0.7862186617269359,
+        "p_elo": 0.4187357680247423
+      },
+      "expected": {
+        "head": 0.00889275417372483,
+        "stack": 0.008364000844074864
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8861575178,
+      "ts": 1782103792,
+      "series": 1113401,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -16517,
+        "radiant_kills": 13,
+        "dire_kills": 21,
+        "p_all": 0.5692264449139866,
+        "p_late": 0.4598123122316183,
+        "p_early_win": 0.7123045523699392,
+        "p_enw_rad": 0.43836900708644183,
+        "p_elo": 0.4601548883941474
+      },
+      "expected": {
+        "head": 0.06779693058396509,
+        "stack": 0.066219910992414
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8863187227,
+      "ts": 1782218924,
+      "series": 1113711,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -52,
+        "radiant_kills": 17,
+        "dire_kills": 16,
+        "p_all": 0.5774448929961729,
+        "p_late": 0.5240898564086647,
+        "p_early_win": 0.6728137933493067,
+        "p_enw_rad": 0.5863813206527411,
+        "p_elo": 0.6630456704442178
+      },
+      "expected": {
+        "head": 0.5442243113776101,
+        "stack": 0.6089390789686083
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8868198692,
+      "ts": 1782515485,
+      "series": 1114833,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -19078,
+        "radiant_kills": 15,
+        "dire_kills": 35,
+        "p_all": 0.5208641280311911,
+        "p_late": 0.5590589595706641,
+        "p_early_win": 0.4283945975784544,
+        "p_enw_rad": 0.16483220035034732,
+        "p_elo": 0.07629762639087512
+      },
+      "expected": {
+        "head": 0.08268376734842497,
+        "stack": 0.033655841283948974
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8869207193,
+      "ts": 1782568744,
+      "series": 1115053,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -19649,
+        "radiant_kills": 12,
+        "dire_kills": 32,
+        "p_all": 0.5656983954775232,
+        "p_late": 0.630239565761712,
+        "p_early_win": 0.4533699197518278,
+        "p_enw_rad": 0.2423719188827603,
+        "p_elo": 0.376020743828749
+      },
+      "expected": {
+        "head": 0.06940167049547095,
+        "stack": 0.05960452296187355
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8873154946,
+      "ts": 1782749307,
+      "series": 1115662,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -8433,
+        "radiant_kills": 27,
+        "dire_kills": 45,
+        "p_all": 0.4195809146031989,
+        "p_late": 0.42841299064916966,
+        "p_early_win": 0.3740226894686659,
+        "p_enw_rad": 0.32096669296867664,
+        "p_elo": 0.23955419745168277
+      },
+      "expected": {
+        "head": 0.17146899935945337,
+        "stack": 0.11827254625622505
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8873737868,
+      "ts": 1782776775,
+      "series": 1115805,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 14438,
+        "radiant_kills": 31,
+        "dire_kills": 12,
+        "p_all": 0.43098807223575103,
+        "p_late": 0.40710330296934927,
+        "p_early_win": 0.5431935171047766,
+        "p_enw_rad": 0.3799160664849085,
+        "p_elo": 0.45198237992915696
+      },
+      "expected": {
+        "head": 0.9424101026032276,
+        "stack": 0.9358036335049081
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8874675861,
+      "ts": 1782832226,
+      "series": 1115958,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 16789,
+        "radiant_kills": 44,
+        "dire_kills": 22,
+        "p_all": 0.402269686453274,
+        "p_late": 0.3738878048222413,
+        "p_early_win": 0.4950924545813735,
+        "p_enw_rad": 0.5995325520427105,
+        "p_elo": 0.9144393696594553
+      },
+      "expected": {
+        "head": 0.9210883643569886,
+        "stack": 0.9663998731201148
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8875215366,
+      "ts": 1782855013,
+      "series": 1116073,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 16657,
+        "radiant_kills": 47,
+        "dire_kills": 23,
+        "p_all": 0.5439251088325525,
+        "p_late": 0.473568041381509,
+        "p_early_win": 0.673981912089163,
+        "p_enw_rad": 0.5498705153266723,
+        "p_elo": 0.6317068178690165
+      },
+      "expected": {
+        "head": 0.9664101271592747,
+        "stack": 0.971393580465761
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8875984903,
+      "ts": 1782910841,
+      "series": 1116202,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 4421,
+        "radiant_kills": 28,
+        "dire_kills": 24,
+        "p_all": 0.5121843361399218,
+        "p_late": 0.4948263027825288,
+        "p_early_win": 0.5635214526440528,
+        "p_enw_rad": 0.6610862773253284,
+        "p_elo": 0.4853241285207988
+      },
+      "expected": {
+        "head": 0.6135633192179892,
+        "stack": 0.606579820636007
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8876860926,
+      "ts": 1782951377,
+      "series": 1116383,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -17330,
+        "radiant_kills": 8,
+        "dire_kills": 28,
+        "p_all": 0.544242544652906,
+        "p_late": 0.5880542805610994,
+        "p_early_win": 0.5131177297925792,
+        "p_enw_rad": 0.5012815204987796,
+        "p_elo": 0.931152018198021
+      },
+      "expected": {
+        "head": 0.04335451298251767,
+        "stack": 0.11713754209725
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8886523862,
+      "ts": 1783497628,
+      "series": 1118314,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -105,
+        "radiant_kills": 20,
+        "dire_kills": 30,
+        "p_all": 0.5162161947671423,
+        "p_late": 0.4979329343422612,
+        "p_early_win": 0.6085671561984212,
+        "p_enw_rad": 0.37000200020702567,
+        "p_elo": 0.6444705397082592
+      },
+      "expected": {
+        "head": 0.6017115661168574,
+        "stack": 0.6552712477262395
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8886640910,
+      "ts": 1783506282,
+      "series": 1118317,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -12849,
+        "radiant_kills": 14,
+        "dire_kills": 28,
+        "p_all": 0.4844271311582685,
+        "p_late": 0.6216936077232913,
+        "p_early_win": 0.2558385772657219,
+        "p_enw_rad": 0.33765581478359596,
+        "p_elo": 0.2145571710282182
+      },
+      "expected": {
+        "head": 0.11525991024565808,
+        "stack": 0.07436618827226694
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8888318197,
+      "ts": 1783604820,
+      "series": 1118603,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 31809,
+        "radiant_kills": 25,
+        "dire_kills": 9,
+        "p_all": 0.456829514046675,
+        "p_late": 0.4029298484074789,
+        "p_early_win": 0.5523051640362696,
+        "p_enw_rad": 0.6318029474486854,
+        "p_elo": 0.5224617821193189
+      },
+      "expected": {
+        "head": 0.99577523722581,
+        "stack": 0.9955945976049816
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8890270555,
+      "ts": 1783707672,
+      "series": 1119018,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -5842,
+        "radiant_kills": 15,
+        "dire_kills": 23,
+        "p_all": 0.7123810328938975,
+        "p_late": 0.6705039039034553,
+        "p_early_win": 0.769913443814012,
+        "p_enw_rad": 0.5758689687017126,
+        "p_elo": 0.7532821884517139
+      },
+      "expected": {
+        "head": 0.4729030780810931,
+        "stack": 0.582910659208751
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8896486914,
+      "ts": 1784040961,
+      "series": 1120370,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 14722,
+        "radiant_kills": 22,
+        "dire_kills": 7,
+        "p_all": 0.6922951348773686,
+        "p_late": 0.6638591734055365,
+        "p_early_win": 0.70303114497573,
+        "p_enw_rad": 0.7326417573612584,
+        "p_elo": 0.6177146106360166
+      },
+      "expected": {
+        "head": 0.9630599936586958,
+        "stack": 0.9678408898707674
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8904322271,
+      "ts": 1784478900,
+      "series": 1122069,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -6835,
+        "radiant_kills": 12,
+        "dire_kills": 14,
+        "p_all": 0.6121150907056444,
+        "p_late": 0.5510072213204426,
+        "p_early_win": 0.6961633517910989,
+        "p_enw_rad": 0.6024991610159531,
+        "p_elo": 0.40734103933004584
+      },
+      "expected": {
+        "head": 0.27450752788767674,
+        "stack": 0.24866471851445357
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8907445721,
+      "ts": 1784662727,
+      "series": 101883572,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -14057,
+        "radiant_kills": 18,
+        "dire_kills": 34,
+        "p_all": 0.3435943624761979,
+        "p_late": 0.4059896618955772,
+        "p_early_win": 0.24233182936500283,
+        "p_enw_rad": 0.49738403760902417,
+        "p_elo": 0.4589127101148223
+      },
+      "expected": {
+        "head": 0.027232751206032826,
+        "stack": 0.026875761438971812
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8908830472,
+      "ts": 1784746136,
+      "series": 1123040,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -18729,
+        "radiant_kills": 6,
+        "dire_kills": 28,
+        "p_all": 0.5170209650559838,
+        "p_late": 0.57708766092733,
+        "p_early_win": 0.5120433006771011,
+        "p_enw_rad": 0.2706306119964805,
+        "p_elo": 0.5390832236495473
+      },
+      "expected": {
+        "head": 0.05701823969978357,
+        "stack": 0.06278444834927847
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8911784562,
+      "ts": 1784915130,
+      "series": 1123678,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -532,
+        "radiant_kills": 10,
+        "dire_kills": 20,
+        "p_all": 0.49252280325925074,
+        "p_late": 0.5198178348740087,
+        "p_early_win": 0.42927288781154377,
+        "p_enw_rad": 0.3845603178693613,
+        "p_elo": 0.3779382324915054
+      },
+      "expected": {
+        "head": 0.541932321314189,
+        "stack": 0.4923022538926326
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8917738415,
+      "ts": 1785240138,
+      "series": 1125096,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -2183,
+        "radiant_kills": 10,
+        "dire_kills": 17,
+        "p_all": 0.537638856311141,
+        "p_late": 0.5886062923752534,
+        "p_early_win": 0.4245290031087088,
+        "p_enw_rad": 0.18971191862474004,
+        "p_elo": 0.5648866533510781
+      },
+      "expected": {
+        "head": 0.6947206437116769,
+        "stack": 0.7138528705317131
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8922223454,
+      "ts": 1785495882,
+      "series": 1126058,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -7083,
+        "radiant_kills": 12,
+        "dire_kills": 28,
+        "p_all": 0.6010838756090497,
+        "p_late": 0.5984043814917928,
+        "p_early_win": 0.5929980550244485,
+        "p_enw_rad": 0.3789281148889793,
+        "p_elo": 0.8079153914692583
+      },
+      "expected": {
+        "head": 0.3811708707199,
+        "stack": 0.522644664454068
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8924005118,
+      "ts": 1785588214,
+      "series": 1126399,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 1979,
+        "radiant_kills": 22,
+        "dire_kills": 10,
+        "p_all": 0.526071288044427,
+        "p_late": 0.4556453034771949,
+        "p_early_win": 0.6751026017605358,
+        "p_enw_rad": 0.6080946774319876,
+        "p_elo": 0.5418222050567852
+      },
+      "expected": {
+        "head": 0.5644403108819592,
+        "stack": 0.5798703011354838
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8926236518,
+      "ts": 1785688438,
+      "series": 1126881,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -1919,
+        "radiant_kills": 7,
+        "dire_kills": 11,
+        "p_all": 0.7204653711278342,
+        "p_late": 0.7297912331828725,
+        "p_early_win": 0.6564361720096386,
+        "p_enw_rad": 0.5869828033661825,
+        "p_elo": 0.5996895840647025
+      },
+      "expected": {
+        "head": 0.6663590288193241,
+        "stack": 0.6989079307212909
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8928936480,
+      "ts": 1785845865,
+      "series": 1127352,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 13124,
+        "radiant_kills": 27,
+        "dire_kills": 23,
+        "p_all": 0.5120823776777385,
+        "p_late": 0.5996831187386891,
+        "p_early_win": 0.36996787696157246,
+        "p_enw_rad": 0.46391533304666893,
+        "p_elo": 0.7326245906495169
+      },
+      "expected": {
+        "head": 0.9379806999780885,
+        "stack": 0.955907642773507
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8929124210,
+      "ts": 1785853445,
+      "series": 1127406,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 11891,
+        "radiant_kills": 22,
+        "dire_kills": 12,
+        "p_all": 0.6163876456392886,
+        "p_late": 0.47929819832679105,
+        "p_early_win": 0.8348502776223689,
+        "p_enw_rad": 0.5962470362647143,
+        "p_elo": 0.5082810459515944
+      },
+      "expected": {
+        "head": 0.9335847020540629,
+        "stack": 0.9320677155873283
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8933988979,
+      "ts": 1786118955,
+      "series": 1128233,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -9476,
+        "radiant_kills": 22,
+        "dire_kills": 20,
+        "p_all": 0.4465503882687776,
+        "p_late": 0.3974899870012722,
+        "p_early_win": 0.5175556908613692,
+        "p_enw_rad": 0.4240717875284921,
+        "p_elo": 0.7457193566783552
+      },
+      "expected": {
+        "head": 0.13476437533726698,
+        "stack": 0.1966836076314334
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8942152024,
+      "ts": 1786545359,
+      "series": 1129810,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -20266,
+        "radiant_kills": 15,
+        "dire_kills": 33,
+        "p_all": 0.5687454994803053,
+        "p_late": 0.6251709325399251,
+        "p_early_win": 0.4597143855400969,
+        "p_enw_rad": 0.5457818835932254,
+        "p_elo": 0.31893054856761327
+      },
+      "expected": {
+        "head": 0.02595625693548485,
+        "stack": 0.020378412178598277
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8944475901,
+      "ts": 1786672825,
+      "series": 1130279,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 3759,
+        "radiant_kills": 15,
+        "dire_kills": 9,
+        "p_all": 0.7546480133064356,
+        "p_late": 0.6940040515470939,
+        "p_early_win": 0.80889251746825,
+        "p_enw_rad": 0.7020011192664803,
+        "p_elo": 0.6272203900333131
+      },
+      "expected": {
+        "head": 0.8414266295807136,
+        "stack": 0.8642642212837822
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8945052416,
+      "ts": 1786712063,
+      "series": 1130328,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -9077,
+        "radiant_kills": 9,
+        "dire_kills": 20,
+        "p_all": 0.49888722081873776,
+        "p_late": 0.5280920652888248,
+        "p_early_win": 0.44099510049420493,
+        "p_enw_rad": 0.48244812145876387,
+        "p_elo": 0.59567806277165
+      },
+      "expected": {
+        "head": 0.1548042158062021,
+        "stack": 0.17953140930913075
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8946735226,
+      "ts": 1786794277,
+      "series": 1130665,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -10793,
+        "radiant_kills": 13,
+        "dire_kills": 26,
+        "p_all": 0.5587400825266886,
+        "p_late": 0.5431475768939108,
+        "p_early_win": 0.5968442718947499,
+        "p_enw_rad": 0.5971477292370291,
+        "p_elo": 0.6072977181573529
+      },
+      "expected": {
+        "head": 0.11488416136661389,
+        "stack": 0.13707151348047758
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8955934230,
+      "ts": 1787236699,
+      "series": 1132197,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 13398,
+        "radiant_kills": 24,
+        "dire_kills": 5,
+        "p_all": 0.6790129849173949,
+        "p_late": 0.5996454708460592,
+        "p_early_win": 0.7966838059195734,
+        "p_enw_rad": 0.7584485853757157,
+        "p_elo": 0.37246557560697713
+      },
+      "expected": {
+        "head": 0.9444125730004541,
+        "stack": 0.929980530541706
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8960882635,
+      "ts": 1787482181,
+      "series": 1133004,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 7099,
+        "radiant_kills": 17,
+        "dire_kills": 8,
+        "p_all": 0.6307749254397316,
+        "p_late": 0.623689560826121,
+        "p_early_win": 0.5912609586663479,
+        "p_enw_rad": 0.5568602496327929,
+        "p_elo": 0.5526357606927834
+      },
+      "expected": {
+        "head": 0.8778337241405633,
+        "stack": 0.8836945304622231
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8970207176,
+      "ts": 1787920750,
+      "series": 1134841,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -30322,
+        "radiant_kills": 11,
+        "dire_kills": 27,
+        "p_all": 0.45230444363206335,
+        "p_late": 0.34063243353679823,
+        "p_early_win": 0.647097497757282,
+        "p_enw_rad": 0.6398236697788506,
+        "p_elo": 0.34834045649446
+      },
+      "expected": {
+        "head": 0.0015051275950197882,
+        "stack": 0.0012902058962946307
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8972115962,
+      "ts": 1788006142,
+      "series": 1135339,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -2088,
+        "radiant_kills": 13,
+        "dire_kills": 12,
+        "p_all": 0.5390661109969471,
+        "p_late": 0.485327510559621,
+        "p_early_win": 0.5889917609825025,
+        "p_enw_rad": 0.6343474137715583,
+        "p_elo": 0.7493380802876688
+      },
+      "expected": {
+        "head": 0.36182848080537694,
+        "stack": 0.46854253235940724
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8974217041,
+      "ts": 1788095810,
+      "series": 1135941,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": 6594,
+        "radiant_kills": 20,
+        "dire_kills": 16,
+        "p_all": 0.5661636509260605,
+        "p_late": 0.5901764431989797,
+        "p_early_win": 0.5452682030286157,
+        "p_enw_rad": 0.4477979470035587,
+        "p_elo": 0.3262831199767444
+      },
+      "expected": {
+        "head": 0.8589540036673168,
+        "stack": 0.8167789228986028
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8980569936,
+      "ts": 1788440414,
+      "series": 1137379,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -8630,
+        "radiant_kills": 18,
+        "dire_kills": 21,
+        "p_all": 0.363278999425503,
+        "p_late": 0.3438704276100685,
+        "p_early_win": 0.42076187142094346,
+        "p_enw_rad": 0.489302184674832,
+        "p_elo": 0.304803176862644
+      },
+      "expected": {
+        "head": 0.08501603475635318,
+        "stack": 0.0649134887581576
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8988904409,
+      "ts": 1788875456,
+      "series": 1139542,
+      "population": "pp",
+      "label": 1,
+      "raw": {
+        "nw_lead": -7653,
+        "radiant_kills": 28,
+        "dire_kills": 28,
+        "p_all": 0.5369691349205616,
+        "p_late": 0.4931505430598873,
+        "p_early_win": 0.5764891433111311,
+        "p_enw_rad": 0.5017040881866778,
+        "p_elo": 0.2096966655209722
+      },
+      "expected": {
+        "head": 0.2237376370789862,
+        "stack": 0.14801797264086045
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8995085405,
+      "ts": 1789216568,
+      "series": 1141065,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": -10979,
+        "radiant_kills": 10,
+        "dire_kills": 20,
+        "p_all": 0.46191202537783543,
+        "p_late": 0.43411604694387906,
+        "p_early_win": 0.5382052012053056,
+        "p_enw_rad": 0.26092045564301525,
+        "p_elo": 0.5192917824528445
+      },
+      "expected": {
+        "head": 0.1697827737104023,
+        "stack": 0.17748039710628694
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 9007208887,
+      "ts": 1789854247,
+      "series": 1144336,
+      "population": "pp",
+      "label": 0,
+      "raw": {
+        "nw_lead": 4982,
+        "radiant_kills": 25,
+        "dire_kills": 14,
+        "p_all": 0.7107546016105453,
+        "p_late": 0.6650233102294606,
+        "p_early_win": 0.765966931306512,
+        "p_enw_rad": 0.7328899443192861,
+        "p_elo": 0.13033445009784364
+      },
+      "expected": {
+        "head": 0.8201287981867159,
+        "stack": 0.6782507730095043
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 9007339571,
+      "ts": 1789863724,
+      "series": 1144413,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": -7507,
+        "radiant_kills": 22,
+        "dire_kills": 24,
+        "p_all": 0.4324351104766048,
+        "p_late": 0.4391153144653047,
+        "p_early_win": 0.414298485768172,
+        "p_enw_rad": 0.23622266214133025,
+        "p_elo": 0.2781933713378851
+      },
+      "expected": {
+        "head": 0.27850698382079453,
+        "stack": 0.21170099599195474
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8107545445,
+      "ts": 1735696089,
+      "series": 938499,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 19349,
+        "radiant_kills": 25,
+        "dire_kills": 12,
+        "p_all": 0.4666689533138173,
+        "p_late": 0.4828612645881691,
+        "p_early_win": 0.4067745507097864,
+        "p_enw_rad": 0.41261484864041476,
+        "p_elo": 0.74699958429109
+      },
+      "expected": {
+        "head": 0.9782150980438064,
+        "stack": 0.9849109279722769
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8107556342,
+      "ts": 1735697351,
+      "series": 938501,
+      "population": "league_other",
+      "label": 1,
+      "raw": {
+        "nw_lead": 8733,
+        "radiant_kills": 33,
+        "dire_kills": 39,
+        "p_all": 0.5597881326763607,
+        "p_late": 0.507507757907852,
+        "p_early_win": 0.6700289519083583,
+        "p_enw_rad": 0.6223811969045607,
+        "p_elo": 0.5211259756062592
+      },
+      "expected": {
+        "head": 0.8321464527724108,
+        "stack": 0.833678560165818
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8107584220,
+      "ts": 1735699891,
+      "series": 938502,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": 12906,
+        "radiant_kills": 32,
+        "dire_kills": 16,
+        "p_all": 0.6474882465766195,
+        "p_late": 0.5085739150606922,
+        "p_early_win": 0.8377901597814474,
+        "p_enw_rad": 0.8002516099652933,
+        "p_elo": 0.27604646851779313
+      },
+      "expected": {
+        "head": 0.9121437891488691,
+        "stack": 0.8728061375250612
+      }
+    },
+    {
+      "minute": 31,
+      "match_id": 8107587952,
+      "ts": 1735700290,
+      "series": 938503,
+      "population": "league_other",
+      "label": 0,
+      "raw": {
+        "nw_lead": -12702,
+        "radiant_kills": 23,
+        "dire_kills": 31,
+        "p_all": 0.4100963968323375,
+        "p_late": 0.45555713170725953,
+        "p_early_win": 0.3588129371032278,
+        "p_enw_rad": 0.4346917541566814,
+        "p_elo": 0.7645950929621427
+      },
+      "expected": {
+        "head": 0.06198164639293029,
+        "stack": 0.09867911521957955
+      }
+    }
+  ],
+  "selection": {
+    "10": {
+      "rows": 150,
+      "extreme_match_ids": [
+        8137628505,
+        8150918037,
+        8180050145,
+        8203270469,
+        8231927246,
+        8252260988,
+        8262981088,
+        8317967331,
+        8321088330,
+        8473662979,
+        8485977311,
+        8498010302,
+        8603059846,
+        8844960105,
+        8863640595,
+        8991241111
+      ],
+      "pp_n": 65,
+      "extremes": "global minimum/maximum of all seven head features and variant-A ELO among eligible ELO-covered rows"
+    },
+    "31": {
+      "rows": 150,
+      "extreme_match_ids": [
+        8137628505,
+        8232653837,
+        8252260988,
+        8254084635,
+        8262981088,
+        8321088330,
+        8326163499,
+        8461254706,
+        8491863030,
+        8540506092,
+        8603059846,
+        8610399089,
+        8664552860,
+        8796335325,
+        8822865310,
+        8844960105
+      ],
+      "pp_n": 65,
+      "extremes": "global minimum/maximum of all seven head features and variant-A ELO among eligible ELO-covered rows"
+    }
+  },
+  "expected_source": "sklearn Pipeline.predict_proba from final serving fits",
+  "tolerance": 1e-12,
+  "model_sha256": "d4a5af0df9203157b130aba4d90fd0d454fc439cc7e225bd64d8efcbb2d96f28"
+}
