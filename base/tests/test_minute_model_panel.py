@@ -237,7 +237,7 @@ def test_missing_inputs_are_retried_inside_the_window_then_missed(env):
     _drive(1865, kills=None)
     assert env["sent"] == [] and _rows(env) == []        # nothing consumed yet
     _drive(1870, suffix=30, kills=None)                  # kills still missing
-    _drive(1990, suffix=45, kills=(20, 13))              # past the window [1860, 1980)
+    _drive(2110, suffix=45, kills=(20, 13))              # past the window [1860, 2100)
     rows = _rows(env)
     assert env["sent"] == []
     assert len(rows) == 1 and rows[0]["skip"] == "window_missed"
@@ -249,6 +249,40 @@ def test_missing_inputs_are_retried_inside_the_window_then_missed(env):
     _drive(1900, suffix=31, kills=(19, 12))              # inputs arrive inside the window
     assert len(env["sent"]) == 1
     assert "киллы 19:12" in env["sent"][0] and _rows(env)[0]["game_time"] == 1900.0
+
+
+def test_window_default_240s_late_first_poll_fires_and_past_it_is_missed(env):
+    """W240: live polls reach the first poll 9..181 s after the minute; default window 240 s."""
+    _drive(60 * 31 + 200, suffix=77)                     # 2060: inside [1860, 2100)
+    rows = _rows(env)
+    assert len(env["sent"]) == 1 and env["sent"][0].startswith("🧮 Минутная модель 31:00")
+    assert len(rows) == 1 and rows[0]["skip"] is None and rows[0]["game_time"] == 2060.0
+    assert rows[0]["minute"] == 31 and rows[0]["base_url"] == "dltv.org/matches/2390001"
+
+    _reset_state()                                       # another map: first poll 250 s late
+    env["shadow"].unlink()
+    env["sent"].clear()
+    _drive(60 * 31 + 250, suffix=78, url="dltv.org/matches/2390009")
+    rows = _rows(env)
+    assert env["sent"] == []
+    assert len(rows) == 1 and rows[0]["skip"] == "window_missed" and rows[0]["minute"] == 31
+
+
+@pytest.mark.parametrize("raw, fires_at_2060", [
+    ("120", False),       # override honoured: 2060 is past [1860, 1980)
+    ("300", True),
+    ("600", True),
+    ("59", True), ("601", True), ("abc", True), ("", True), ("nan", True),   # -> default 240
+])
+def test_window_env_override_and_invalid_values_fall_back_to_default(env, raw, fires_at_2060):
+    env["mp"].setenv("MINUTE_MODEL_WINDOW_SECONDS", raw)
+    _drive(60 * 31 + 200, suffix=79)
+    rows = _rows(env)
+    assert len(rows) == 1 and rows[0]["minute"] == 31
+    if fires_at_2060:
+        assert rows[0]["skip"] is None and len(env["sent"]) == 1
+    else:
+        assert rows[0]["skip"] == "window_missed" and env["sent"] == []
 
 
 def test_dire_favoured_keeps_probability_as_p_radiant(env):
@@ -421,8 +455,8 @@ def test_map_number_comes_from_series_game_and_unknown_never_fires(env):
     # unknown map: nothing fires inside the window, one explicit skip row after it
     before = len(env["sent"])
     _drive(1865, url="dltv.org/matches/2390004", live_league={"match_id": 1})
-    _drive(1990, url="dltv.org/matches/2390004", live_league={"match_id": 1}, suffix=60)
-    _drive(1995, url="dltv.org/matches/2390004", live_league={"match_id": 1}, suffix=61)
+    _drive(2110, url="dltv.org/matches/2390004", live_league={"match_id": 1}, suffix=60)
+    _drive(2115, url="dltv.org/matches/2390004", live_league={"match_id": 1}, suffix=61)
     assert len(env["sent"]) == before
     unknown = [r for r in _rows(env) if r["base_url"].endswith("2390004")]
     assert len(unknown) == 1 and unknown[0]["skip"] == "map_unknown" and unknown[0]["map_num"] is None

@@ -13182,7 +13182,7 @@ def _ml_dispatch_tick_once_per_cycle(
 # live-verdict semantics: base/minute_model_serving.py docstring.
 
 _MINUTE_MODEL_MINUTES = (10, 31)
-_MINUTE_MODEL_WINDOW_SECONDS = 120.0
+_MINUTE_MODEL_WINDOW_SECONDS = 240.0          # default; env MINUTE_MODEL_WINDOW_SECONDS in [60, 600]
 _minute_model_lock = threading.Lock()
 _MINUTE_MODEL_QUEUE_MAX = 64
 _MINUTE_MODEL_JOURNAL_BYTES = 2 * 1024 * 1024
@@ -13201,6 +13201,17 @@ _minute_model_missing_detail: Dict[str, str] = {}
 _minute_model_error_logged: set = set()
 _minute_model_identifiers_cache: Optional[Dict[str, Any]] = None
 _minute_model_shadow_lock = threading.Lock()
+
+
+def _minute_model_window_seconds() -> float:
+    """First-poll window after the minute mark; env override, invalid -> default."""
+    try:
+        value = float(os.getenv("MINUTE_MODEL_WINDOW_SECONDS", ""))
+    except (TypeError, ValueError):
+        return _MINUTE_MODEL_WINDOW_SECONDS
+    if not math.isfinite(value) or not 60.0 <= value <= 600.0:
+        return _MINUTE_MODEL_WINDOW_SECONDS
+    return value
 
 
 def _minute_model_serving_module():
@@ -13537,7 +13548,7 @@ def _minute_model_tick(
     Telegram send, the journal append) runs on ONE background daemon worker, so
     the dispatch / kills delivery that follows the call site is never delayed.
 
-    Window: the FIRST poll with game_time in [60*m, 60*m + 120) takes the
+    Window: the FIRST poll with game_time in [60*m, 60*m + 240) takes the
     snapshot (inputs missing at that poll -> retried while the window lasts).
     A map first seen past the window gets one shadow row with
     skip="window_missed" and no Telegram line (a restart mid-map must not post
@@ -13556,6 +13567,7 @@ def _minute_model_tick(
     due = [m for m in _MINUTE_MODEL_MINUTES if game_time >= 60.0 * m]
     if not due:
         return
+    window_seconds = _minute_model_window_seconds()
     base_url = _signal_fingerprint_registry_key(match_key)
     map_num = _minute_model_resolve_map_num(match_key, live_league)
     teams = {"radiant": str(radiant_team_name or ""), "dire": str(dire_team_name or "")}
@@ -13566,7 +13578,7 @@ def _minute_model_tick(
         with _minute_model_lock:
             if key in _minute_model_done or key in _minute_model_inflight:
                 continue
-        in_window = game_time < 60.0 * minute + _MINUTE_MODEL_WINDOW_SECONDS
+        in_window = game_time < 60.0 * minute + window_seconds
         if map_num is None and in_window:
             continue                                # the number may still resolve
         if not in_window or map_num is None:
