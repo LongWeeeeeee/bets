@@ -236,7 +236,7 @@ LL одной и той же подгонки с живыми и канонич�
   `runtime/ml_minute_shadow.jsonl` на serv1: входы, вердикты, p_head, p_stack, p_elo, цены Winline на
   обе стороны, каталоги драфт-моделей. Выключатели `MINUTE_MODEL_ENABLED=0`, `MINUTE_MODEL_TG=0`.
 - **Как проверять переключение ветки Late** (решение владельца — после проверки на новых картах и
-  ценах): склеить журнал с исходами из `live_elo_progress.json` (applied_maps) по match_id; на 31-й
+  ценах): склеить журнал с исходами из `live_elo_progress.json` (applied_maps) по ключу `<base_url>.<map_num−1>` (match_id в строках журнала пуст; первые проверенные 02.10: `dltv.org/matches/9025822624.0` → radiant_win true, `…9025821355.0` → false; имена команд сверять); на 31-й
   считать log loss и ROI ставки «p_stack × цена Winline > 1» против текущей ветки Late; порог
   решения записать до подсчёта.
 - **Где искать ошибку**: номер карты (`_minute_model_resolve_map_num`: запомненный → series_game →
