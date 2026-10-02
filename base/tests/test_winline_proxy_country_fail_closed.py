@@ -1,6 +1,7 @@
 """Fail-closed Winline proxy country policy.
 
-Only explicitly classified DE/US proxies may be Winline candidates.
+Only explicitly classified DE/US/CA proxies may be Winline candidates
+(CA is classified solely through keys.PROXY_INVENTORY).
 RU, unknown, empty, and malformed entries must be skipped without error.
 """
 from __future__ import annotations
@@ -14,6 +15,20 @@ import pytest
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+
+# Never import the credential-bearing production keys module (it is gitignored:
+# a clean checkout has none). Same stub as test_winline_never_direct.py, so this
+# file collects on its own and in any order.
+if "keys" not in sys.modules:
+    from types import ModuleType
+
+    _keys_stub = ModuleType("keys")
+    _keys_stub.api_to_proxy = {}
+    _keys_stub.BOOKMAKER_PROXY_URL = ""
+    _keys_stub.BOOKMAKER_PROXY_POOL = []
+    _keys_stub.DLTV_PROXY_POOL = []
+    _keys_stub.Token = "0:STUB_MAIN_BOT"  # functions.send_message reads keys.Token directly
+    sys.modules["keys"] = _keys_stub
 
 import cyberscore_try as cs  # noqa: E402
 
@@ -124,3 +139,112 @@ def test_winline_proxy_candidates_allow_only_explicit_de_us(monkeypatch) -> None
     assert de_urls[0] == "http://user:pass@154.195.1.10:1000"
     if us_urls:
         assert us_urls[0] == "http://user:pass@172.121.1.20:1001"
+
+
+# --- Canadian pool (02.10.2026): classified only through keys.PROXY_INVENTORY ---
+
+_CA_HOSTS_PORTS = [
+    ("88.218.187.219", 64702),
+    ("185.101.201.130", 64822),
+    ("185.101.202.132", 64064),
+    ("176.118.38.219", 64790),
+    ("193.228.129.77", 64464),
+]
+
+
+def _ca_http(host: str, port: int) -> str:
+    return f"http://dummyuser:dummypass@{host}:{port}"
+
+
+def _ca_socks(host: str, port: int) -> str:
+    return f"socks5://dummyuser:dummypass@{host}:{port + 1}"
+
+
+def _set_inventory(monkeypatch, entries) -> None:
+    import keys  # same module cyberscore_try imported (sys.modules["keys"])
+
+    monkeypatch.setattr(keys, "PROXY_INVENTORY", tuple(entries), raising=False)
+
+
+def test_ca_pool_from_inventory_is_winline_candidates(monkeypatch) -> None:
+    """Five CA HTTP proxies known only via keys.PROXY_INVENTORY become candidates in pool order."""
+    _set_inventory(
+        monkeypatch,
+        [{"ip": host, "country": "ca"} for host, _ in _CA_HOSTS_PORTS],
+    )
+    pool = [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS] + [
+        _ca_socks(h, p) for h, p in _CA_HOSTS_PORTS
+    ]
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_POOL", pool, raising=False)
+    monkeypatch.setattr(cs, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_URL", "", raising=False)
+
+    candidates = cs._bookmaker_winline_proxy_candidates()
+    assert [c["url"] for c in candidates] == [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS]
+    assert {str(c["country"]).upper() for c in candidates} == {"CA"}
+    assert all("socks" not in c["url"] for c in candidates)
+
+
+def test_ca_host_absent_or_unknown_in_inventory_is_excluded(monkeypatch) -> None:
+    """Fail closed: a host missing from the inventory, or labelled unknown/empty, is skipped."""
+    _set_inventory(
+        monkeypatch,
+        [
+            {"ip": "88.218.187.219", "country": "ca"},
+            {"ip": "185.101.201.130", "country": "unknown"},
+            {"ip": "185.101.202.132", "country": ""},
+            # 176.118.38.219 deliberately absent; 193.228.129.77 labelled RU-like junk
+            {"ip": "193.228.129.77", "country": "zz"},
+        ],
+    )
+    pool = [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS]
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_POOL", pool, raising=False)
+    monkeypatch.setattr(cs, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_URL", "", raising=False)
+
+    candidates = cs._bookmaker_winline_proxy_candidates()
+    assert [c["url"] for c in candidates] == [_ca_http("88.218.187.219", 64702)]
+
+
+def test_inventory_missing_keeps_ca_hosts_fail_closed(monkeypatch) -> None:
+    """keys without PROXY_INVENTORY: the CA hosts stay unclassified and are not candidates."""
+    import keys
+
+    monkeypatch.delattr(keys, "PROXY_INVENTORY", raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_POOL", [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS], raising=False)
+    monkeypatch.setattr(cs, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_URL", "", raising=False)
+
+    assert cs._bookmaker_winline_proxy_candidates() == []
+
+
+def test_de_and_us_stay_before_ca(monkeypatch) -> None:
+    """Tier order is DE, then US, then CA regardless of pool order."""
+    _set_inventory(monkeypatch, [{"ip": h, "country": "ca"} for h, _ in _CA_HOSTS_PORTS])
+    de = "http://dummyuser:dummypass@154.195.1.10:1000"
+    us = "http://dummyuser:dummypass@172.121.1.20:1001"
+    ca = [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS]
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_POOL", ca[:3] + [us, de] + ca[3:], raising=False)
+    monkeypatch.setattr(cs, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_URL", "", raising=False)
+
+    candidates = cs._bookmaker_winline_proxy_candidates()
+    assert [c["url"] for c in candidates] == [de, us] + ca
+    assert [str(c["country"]).upper() for c in candidates] == ["DE", "US"] + ["CA"] * 5
+
+
+def test_ca_candidates_flow_into_shared_route_selection(monkeypatch) -> None:
+    """Delivery boundary: the shared-browser route picks the first CA proxy with credentials."""
+    _set_inventory(monkeypatch, [{"ip": h, "country": "ca"} for h, _ in _CA_HOSTS_PORTS])
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_POOL", [_ca_http(h, p) for h, p in _CA_HOSTS_PORTS], raising=False)
+    monkeypatch.setattr(cs, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(cs, "_bookmaker_shared_proxy_candidates", [], raising=False)
+    monkeypatch.setattr(cs, "_bookmaker_shared_proxy_index", 0, raising=False)
+    monkeypatch.setattr(cs, "_winline_parsing_halted", False, raising=False)
+    monkeypatch.setattr(cs, "_winline_dead_proxy_urls", set(), raising=False)
+
+    kwargs = cs._bookmaker_select_shared_camoufox_proxy_kwargs()
+    proxy = kwargs.get("proxy") or {}
+    assert proxy.get("server") == "http://88.218.187.219:64702"
+    assert proxy.get("username") == "dummyuser"

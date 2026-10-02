@@ -18659,7 +18659,7 @@ def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
     """Return proxy candidate dicts for bookmaker/Winline rotation. Does not mutate api_to_proxy."""
     out: List[Dict[str, Any]] = []
     seen = set()
-    _allowed_countries = frozenset({"DE", "US", "RU"})
+    _allowed_countries = frozenset({"DE", "US", "CA", "RU"})
 
     def _country_for(url: str) -> str:
         """Classify proxy host. Fail-closed: unknown/empty/malformed => empty (not DE)."""
@@ -18680,6 +18680,23 @@ def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
         # Current US residential inventory
         if host.startswith("172.121.") or ".us." in host or host.endswith(".us"):
             return "US"
+        # Provider inventory (keys.PROXY_INVENTORY: tuple of {"ip", "country"}) is the
+        # single source for pools that have no prefix rule above (e.g. the CA pool of
+        # 02.10.2026). Lazy import: older keys/tests may lack the attribute.
+        try:
+            import keys as _keys_mod
+
+            for entry in tuple(getattr(_keys_mod, "PROXY_INVENTORY", ()) or ()):
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("ip") or "").strip().lower() != host:
+                    continue
+                label = str(entry.get("country") or "").strip().upper()
+                if label in _allowed_countries:
+                    return label
+                break
+        except Exception:
+            pass
         # Unknown host: do not default to DE (fail closed for Winline).
         return ""
 
@@ -18729,19 +18746,20 @@ def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
 
 
 def _bookmaker_winline_proxy_candidates() -> List[Dict[str, Any]]:
-    """Winline: up to 5 DE then 5 US authenticated HTTP(S) proxies, URL-deduped.
+    """Winline: up to 5 DE, then 5 US, then 5 CA authenticated HTTP(S) proxies, URL-deduped.
 
     RU/unknown, SOCKS and malformed URLs are excluded; no direct fallback.
     """
     pool = _bookmaker_live_proxy_pool()
     de: List[Dict[str, Any]] = []
     us: List[Dict[str, Any]] = []
+    ca: List[Dict[str, Any]] = []
     seen = set()
     for p in pool:
         if not isinstance(p, dict):
             continue
         country = str(p.get("country") or "").strip().upper()
-        if country not in {"DE", "US"}:
+        if country not in {"DE", "US", "CA"}:
             continue
         url = str(p.get("url") or "").strip()
         try:
@@ -18756,7 +18774,9 @@ def _bookmaker_winline_proxy_candidates() -> List[Dict[str, Any]]:
             de.append(p)
         elif country == "US":
             us.append(p)
-    return de[:5] + us[:5]
+        elif country == "CA":
+            ca.append(p)
+    return de[:5] + us[:5] + ca[:5]
 
 
 def _bookmaker_proxy_safe_label(proxy_item: Any) -> str:
@@ -18802,7 +18822,7 @@ class WinlineParsingHalted(RuntimeError):
 
 
 def _bookmaker_shared_winline_routes() -> List[Dict[str, Any]]:
-    """Only configured, eligible DE/US proxies; never a direct route."""
+    """Only configured, eligible DE/US/CA proxies; never a direct route."""
     return list(_bookmaker_winline_proxy_candidates() or [])
 
 
@@ -19208,7 +19228,7 @@ def _camoufox_error_is_code_defect(exc: BaseException) -> bool:
 
 
 def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
-    """Advance DE/US candidate and force sequential close/cleanup before relaunch.
+    """Advance DE/US/CA candidate and force sequential close/cleanup before relaunch.
 
     Dead proxies (see ``_winline_proxy_health_check_async``) are skipped. While
     Winline parsing is halted this is a no-op. A rotation never blocks: the

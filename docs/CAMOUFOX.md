@@ -81,7 +81,7 @@ Live runtime использует Camoufox (anti-detect Firefox) для CyberSco
 - **GeoIP**: включён — timezone, geolocation, locale матчат proxy IP.
 - **WebRTC**: блокирован (`block_webrtc=True`).
 - **Cache**: отключён (`enable_cache=False`).
-- **Proxy**: обязателен; direct-запросы к CyberScore отключены. Winline odds proxy candidates: DE/US only (RU/unknown excluded).
+- **Proxy**: обязателен; direct-запросы к CyberScore отключены. Winline odds proxy candidates: DE/US/CA only (RU/unknown excluded; CA hosts are classified via `keys.PROXY_INVENTORY`).
 
 Env overrides (все опциональны):
 
