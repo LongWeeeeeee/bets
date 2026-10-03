@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import gzip
 from collections import Counter
 from pathlib import Path
 from typing import Callable
@@ -111,13 +112,16 @@ def load_matches(
 ) -> tuple[list[MatchRecord], dict[str, int]]:
     summary: Counter[str] = Counter()
     matches: list[MatchRecord] = []
-    for json_path in sorted(data_dir.glob("*.json")):
+    json_paths = sorted(list(data_dir.glob("*.json")) + list(data_dir.glob("*.json.gz")))
+    for json_path in json_paths:
         summary["files"] += 1
-        patch_match = _PATCH_FILE_RE.match(json_path.stem)
+        json_name = json_path.name[:-3] if json_path.name.endswith(".gz") else json_path.name
+        patch_match = _PATCH_FILE_RE.match(Path(json_name).stem)
         source_patch = patch_match.group(1) if patch_match else None
         # A 500MB archive expands to several GB with json.load. Keep only one
         # raw map in memory while retaining compact MatchRecords for sorting.
-        with json_path.open("rb") as fh:
+        opener = gzip.open if json_path.name.endswith(".gz") else open
+        with opener(json_path, "rb") as fh:
             for _, raw_match in ijson.kvitems(fh, "", use_float=True):
                 summary["raw_matches"] += 1
                 summary["seen_matches"] += 1

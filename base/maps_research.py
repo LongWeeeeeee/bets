@@ -3,6 +3,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 warnings.filterwarnings('ignore', message='.*urllib3.*')
 
 import json
+import gzip
 import re
 import shutil
 from urllib.parse import quote
@@ -165,15 +166,22 @@ def _normalize_map_id(value):
         return None
 
 
+def _corpus_json_paths(output_dir, pattern="*"):
+    directory = Path(output_dir)
+    return sorted(list(directory.glob(f"{pattern}.json")) +
+                  list(directory.glob(f"{pattern}.json.gz")))
+
+
 def _iter_json_object_keys(file_path):
+    opener = gzip.open if str(file_path).endswith(".gz") else open
     if ijson is not None:
-        with open(file_path, "rb") as f:
+        with opener(file_path, "rb") as f:
             for prefix, event, value in ijson.parse(f):
                 if prefix == "" and event == "map_key":
                     yield value
         return
 
-    with open(file_path, "rb") as f:
+    with opener(file_path, "rb") as f:
         data = orjson.loads(f.read())
     if isinstance(data, dict):
         yield from data.keys()
@@ -186,7 +194,7 @@ def _scan_output_dir_match_ids(output_dir) -> set:
     десятку гигабайт стоит минуты, а не десятков минут.
     """
     ids = set()
-    for path in sorted(Path(output_dir).glob("*_part*.json")):
+    for path in _corpus_json_paths(output_dir, "*_part*"):
         if path.stat().st_size < 10:
             continue
         try:
@@ -1275,7 +1283,8 @@ def _process_single_json_file(file_path, maps, output):
     result_dict = {} if output else None
     
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        opener = gzip.open if str(file_path).endswith(".gz") else open
+        with opener(file_path, 'rt', encoding='utf-8') as f:
             loaded_json_content = json.load(f)
 
             if isinstance(loaded_json_content, list):
@@ -1306,7 +1315,7 @@ def collect_all_maps(folder_path, maps=None, output=None):
         ids_to_exclude_from_json = {}
     
     if os.path.exists(folder_path):
-        json_files = [f for f in os.listdir(folder_path) if f.endswith('.json')]
+        json_files = [f for f in os.listdir(folder_path) if f.endswith(('.json', '.json.gz'))]
         print(f"Найдено {len(json_files)} JSON файлов для обработки.")
 
         if not json_files:
@@ -2470,10 +2479,21 @@ def merge_temp_files_by_patch(
         if not state["current_data"]:
             return
         filename = f"{patch_name}_part{state['part_number']:03d}.json"
+        compress = os.getenv("PRO_CORPUS_GZIP") == "1"
+        if compress:
+            filename += ".gz"
         output_path = os.path.join(output_dir, filename)
         payload = orjson.dumps(state["current_data"])
-        with open(output_path, 'wb') as f:
-            f.write(payload)
+        if compress:
+            tmp_path = output_path + ".tmp"
+            with gzip.open(tmp_path, "wb") as f:
+                f.write(payload)
+            with open(tmp_path, "rb") as f:
+                os.fsync(f.fileno())
+            os.replace(tmp_path, output_path)
+        else:
+            with open(output_path, 'wb') as f:
+                f.write(payload)
         file_size_mb = len(payload) / (1024 * 1024)
         print(f"  ✅ {output_path}: {len(state['current_data'])} матчей ({file_size_mb:.1f} МБ)")
         output_files.append(output_path)
@@ -2482,7 +2502,7 @@ def merge_temp_files_by_patch(
         state["current_size"] = 0
         state["part_number"] += 1
 
-    existing_json_files = list(Path(output_dir).glob("*.json"))
+    existing_json_files = _corpus_json_paths(output_dir)
     non_summary_json_files = [p for p in existing_json_files if p.name != "processed_ids.txt"]
     if clear_output_dir and non_summary_json_files:
         backup_dir = Path(output_dir).parent / f"{Path(output_dir).name}__backup_before_patch_merge_{int(time.time())}"
@@ -2525,10 +2545,10 @@ def merge_temp_files_by_patch(
         patch_names_all.append(OUTSIDE_PATCH_BUCKET)   # бакет «вне патчей»
     patch_part_numbers = {}
     for patch_name in patch_names_all:
-        existing_parts = sorted(Path(output_dir).glob(f"{patch_name}_part*.json"))
+        existing_parts = _corpus_json_paths(output_dir, f"{patch_name}_part*")
         max_part = 0
         for path in existing_parts:
-            m = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
+            m = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json(?:\.gz)?$", path.name)
             if not m:
                 continue
             try:
@@ -2787,8 +2807,8 @@ def _next_part_numbers(output_dir, patch_names, counters) -> dict:
     result = {}
     for patch_name in patch_names:
         max_part = 0
-        for path in output_dir.glob(f"{patch_name}_part*.json"):
-            match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
+        for path in _corpus_json_paths(output_dir, f"{patch_name}_part*"):
+            match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json(?:\.gz)?$", path.name)
             if match:
                 max_part = max(max_part, int(match.group(1)))
         counter_value = int(counters.get(str(patch_name), 0))
@@ -2915,7 +2935,7 @@ def merge_temp_files_by_patch_streaming(
     existing_part_files = sorted(
         path
         for patch_name, *_ in patch_specs
-        for path in output_dir.glob(f"{patch_name}_part*.json")
+        for path in _corpus_json_paths(output_dir, f"{patch_name}_part*")
         if path.is_file()
     )
     if existing_part_files:
@@ -2996,6 +3016,8 @@ def merge_temp_files_by_patch_streaming(
         for patch_name in patch_names_all
     }
 
+    compress_parts = os.getenv("PRO_CORPUS_GZIP") == "1"
+
     def _open_part(patch_name):
         # Rebuild-then-replace: пишем в "<name>.tmp", публикуем через
         # fsync + os.replace. Merge создаёт ТОЛЬКО новые part-файлы
@@ -3003,9 +3025,12 @@ def merge_temp_files_by_patch_streaming(
         # copy/extend не нужен. Формат идентичен чтению build_laning_corpus.
         state = states[patch_name]
         filename = f"{patch_name}_part{state['part_number']:03d}.json"
+        if compress_parts:
+            filename += ".gz"
         path = output_dir / filename
         tmp_path = path.with_name(path.name + ".tmp")
-        fh = open(tmp_path, "wb")
+        opener = gzip.open if compress_parts else open
+        fh = opener(tmp_path, "wb")
         fh.write(b"{")
         state["fh"] = fh
         state["path"] = path
@@ -3023,9 +3048,14 @@ def merge_temp_files_by_patch_streaming(
         try:
             fh.write(b"}")
             fh.flush()
-            os.fsync(fh.fileno())
+            if not compress_parts:
+                os.fsync(fh.fileno())
             fh.close()
             state["fh"] = None
+            if compress_parts:
+                # Closing writes the gzip footer; sync the complete archive.
+                with open(tmp_path, "rb") as completed:
+                    os.fsync(completed.fileno())
             if state["current_matches"] == 0:
                 tmp_path.unlink(missing_ok=True)
             else:
@@ -3659,10 +3689,12 @@ def _teams_from_corpus(output_dir):
     if not os.path.isdir(output_dir):
         return found
     for name in os.listdir(output_dir):
-        if not name.endswith(".json") or name in ("merge_patch_summary.json",):
+        json_name = name[:-3] if name.endswith(".gz") else name
+        if not name.endswith((".json", ".json.gz")) or json_name == "merge_patch_summary.json":
             continue
         try:
-            with open(os.path.join(output_dir, name), "rb") as fh:
+            opener = gzip.open if name.endswith(".gz") else open
+            with opener(os.path.join(output_dir, name), "rb") as fh:
                 data = orjson.loads(fh.read())
         except Exception:
             continue
@@ -4138,10 +4170,12 @@ def get_pros_playback(max_age_days=85, out_dir=None, limit=None):
     cutoff = time.time() - float(max_age_days) * 86400
     rows = []
     for name in sorted(os.listdir(corpus)):
-        if not name.endswith('.json') or name == 'merge_patch_summary.json':
+        json_name = name[:-3] if name.endswith(".gz") else name
+        if not name.endswith(('.json', '.json.gz')) or json_name == 'merge_patch_summary.json':
             continue
         try:
-            with open(os.path.join(corpus, name), 'rb') as fh:
+            opener = gzip.open if name.endswith(".gz") else open
+            with opener(os.path.join(corpus, name), 'rb') as fh:
                 for _key, match in ijson.kvitems(fh, '', use_float=True):
                     if not isinstance(match, dict):
                         continue
