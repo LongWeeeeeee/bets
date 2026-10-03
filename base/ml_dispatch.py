@@ -77,6 +77,27 @@ Rules implemented (owner decisions, 12.09.2026 — see
   ``ML_DISPATCH_FLOOR_CALIBRATION=0`` restores the raw floor exactly. Only the
   floor number changes: sides, thresholds and the price gate are untouched.
   Kills decisions keep the raw confidence (their floor is not a win-price gate).
+- Owner decision 03.10.2026 (``_win_against_elo``): a ``win`` decision whose
+  target side is the ELO underdog is not created — ML WIN bets against ELO lose
+  (E-347 part 4: |dELO| >= 50 won 17/55 = 30.9% against expected_wr ~0.71).
+  Applies when both ``ctx.elo_radiant`` and ``ctx.elo_dire`` are finite and the
+  target's ELO is lower than the opponent's by >= ``ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF``
+  (default 50; separate from ``ML_DISPATCH_UNDERDOG_MIN_DIFF``, which only drives
+  the kills underdog path). The result is ``Skipped("win", side,
+  "win_against_elo_blocked", <both ELOs and the diff>)``; the side is never
+  flipped. The gate sits at BOTH win construction sites, AFTER the side has been
+  chosen and after dedup/``early_solo_blocked`` (so it sees only sides that
+  would otherwise become a Decision): the regular ``win_single_model_confirm``
+  path and the late-conflict ``win_late_after_wait`` path (the wait itself is
+  unchanged: the ``late_conflict_wait`` skips are emitted before the deadline,
+  the gate acts at the deadline). It is independent of timing, so it also drops
+  a would-be ``wait_600`` decision, and of ``_lane_elo_release`` (that only
+  releases the wait for the ELO FAVORITE, so the two never overlap), veto and
+  conflict resolution (they decide the side first). Kills decisions are
+  untouched: the kills underdog path bets on the underdog by design.
+  Missing/nonfinite ELO or a smaller diff keeps the old behavior.
+  ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=0`` (also ``false``/``off``) disables the
+  gate. The dataclass default is off (hand-built ``Config()``); ``from_env`` is on.
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -245,6 +266,7 @@ REASON_LATE_CONFLICT_WAIT = "late_conflict_wait"
 REASON_KILLS30_MISSING = "kills30_missing"
 REASON_KILLS30_BELOW = "kills30_below_threshold"
 REASON_EARLY_SOLO_BLOCKED = "early_solo_blocked"
+REASON_WIN_AGAINST_ELO = "win_against_elo_blocked"
 
 RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
@@ -390,6 +412,10 @@ class Config:
     # default is off (hand-built ``Config()`` keeps the legacy raw floor);
     # production reads ``from_env`` where the default is on.
     floor_calibration: bool = False
+    # Owner decision 03.10.2026: no ``win`` decision on the ELO underdog. Dataclass
+    # default off (hand-built ``Config()`` keeps the old behavior); ``from_env`` on.
+    win_underdog_block: bool = False
+    win_underdog_block_min_diff: float = 50.0
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
@@ -453,6 +479,11 @@ class Config:
             floor_calibration=str(
                 env.get("ML_DISPATCH_FLOOR_CALIBRATION", "1")
             ).strip().lower() not in ("0", "false", "off"),
+            win_underdog_block=str(
+                env.get("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            win_underdog_block_min_diff=_win_underdog_min_diff(
+                _float("ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF", 50.0)),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
@@ -699,6 +730,40 @@ def _timing_for_win(ctx: Ctx, cfg: Config, target_side: str) -> str:
     return "wait_600"
 
 
+def _win_underdog_min_diff(value: float) -> float:
+    """Env threshold for the win underdog gate: a nonfinite or negative value
+    (``nan``/``inf``/``-5``) falls back to the default 50 instead of silently
+    blocking every side (nan) or disabling the gate (inf). Disable the gate with
+    ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=0``, not with the threshold."""
+    return float(value) if math.isfinite(value) and value >= 0 else 50.0
+
+
+def _win_against_elo(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
+    """Owner decision 03.10.2026: audit detail when ``target_side`` is the ELO
+    underdog of a ``win`` decision, else ``None``.
+
+    Blocks when both ratings are finite and the target's ELO is lower than the
+    opponent's by >= ``cfg.win_underdog_block_min_diff``. The sign is computed
+    here from ``elo_radiant``/``elo_dire`` (not from ``ctx.underdog_side``, whose
+    threshold is the kills knob). Missing/nonfinite ELO fails open (no block).
+    """
+    if not cfg.win_underdog_block or target_side not in SIDES:
+        return None
+    try:
+        elo_r, elo_d = float(ctx.elo_radiant), float(ctx.elo_dire)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(elo_r) and math.isfinite(elo_d)):
+        return None
+    deficit = (elo_d - elo_r) if target_side == "Radiant" else (elo_r - elo_d)
+    # Strictly lower ELO only: equal ratings are never an underdog, even at 0.
+    if deficit <= 0 or deficit < float(cfg.win_underdog_block_min_diff):
+        return None
+    return (f"target {target_side} is ELO underdog: elo_radiant={elo_r:.1f} "
+            f"elo_dire={elo_d:.1f} deficit={deficit:.1f} "
+            f">= {float(cfg.win_underdog_block_min_diff):.1f}")
+
+
 def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
     if ctx.elo_radiant is None or ctx.elo_dire is None:
         return None, 0.0
@@ -746,6 +811,9 @@ def _evaluate_win_late_conflict(
     key = _dedup_key(ctx, "win", side_b)
     if ctx.already_sent is not None and key in ctx.already_sent:
         skipped.append(Skipped("win", side_b, REASON_DEDUP, f"key={key} already sent"))
+    elif (against_elo := _win_against_elo(ctx, cfg, side_b)):
+        skipped.append(Skipped("win", side_b, REASON_WIN_AGAINST_ELO,
+                               f"{against_elo}; {detail}"))
     else:
         expected_wr, expected_wr_raw = _floor_expected_wr(ctx, cfg, late_conflict.models_for_b)
         decisions.append(Decision(
@@ -846,6 +914,14 @@ def _evaluate_win(
             skipped.append(Skipped(
                 "win", side, REASON_EARLY_SOLO_BLOCKED,
                 f"models_for={models_for}; need all/late support (E-291)",
+            ))
+            continue
+
+        against_elo = _win_against_elo(ctx, cfg, side)
+        if against_elo:
+            skipped.append(Skipped(
+                "win", side, REASON_WIN_AGAINST_ELO,
+                f"{against_elo}; models_for={models_for}",
             ))
             continue
 
