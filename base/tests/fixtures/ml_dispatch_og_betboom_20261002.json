@@ -1,0 +1,222 @@
+{
+ "_capture": {
+  "captured_at": "2026-10-03",
+  "command": "ssh serv1 'grep -a 9026301227 /root/main/runtime/ml_dispatch_decisions.jsonl'  # row with match_key dltv.org/matches/9026301227.1 (2nd of 5 rows)",
+  "about": "OG (Radiant) vs BETBOOM TEAM (Dire), dltv.org/matches/9026301227 map 2, tick 02.10.2026 (ts 1790964914.63); this tick delivered the win bet 'СТАВКА НА BETBOOM TEAM x1 / Ставить от кэфа 1.74' (decisions[0]: expected_wr 0.693331, min_odds 1.74, models_for late+early_nw). Row is verbatim from the serv1 journal; kills_windows_open was not journaled.",
+  "serv1_head": "58bc8a0400f35214ffedbc0594f8fcc90b824421; serv1 base/ml_dispatch.py md5 == local md5 b6b39ecf at capture"
+ },
+ "record": {
+  "ts": 1790964914.6296308,
+  "match_key": "dltv.org/matches/9026301227.1",
+  "base_url": "dltv.org/matches/9026301227",
+  "map_num": 2,
+  "game_time": -15.0,
+  "radiant_networth_lead": 471.0,
+  "lane_adv_dict": -17.0,
+  "teams": {
+   "radiant": "OG",
+   "dire": "BETBOOM TEAM"
+  },
+  "heroes": [
+   18,
+   74,
+   36,
+   14,
+   30,
+   80,
+   120,
+   78,
+   119,
+   100
+  ],
+  "draft_input": {
+   "schema_version": 1,
+   "captured_at": 1790964913.191848,
+   "source": "sourcetv",
+   "source_observed_at": null,
+   "slots": [
+    {
+     "side": "radiant",
+     "pos": 1,
+     "hero_id": 18,
+     "account_id": 355168766
+    },
+    {
+     "side": "radiant",
+     "pos": 2,
+     "hero_id": 74,
+     "account_id": 94054712
+    },
+    {
+     "side": "radiant",
+     "pos": 3,
+     "hero_id": 36,
+     "account_id": 402583877
+    },
+    {
+     "side": "radiant",
+     "pos": 4,
+     "hero_id": 14,
+     "account_id": 181267255
+    },
+    {
+     "side": "radiant",
+     "pos": 5,
+     "hero_id": 30,
+     "account_id": 100594231
+    },
+    {
+     "side": "dire",
+     "pos": 1,
+     "hero_id": 80,
+     "account_id": 172099728
+    },
+    {
+     "side": "dire",
+     "pos": 2,
+     "hero_id": 120,
+     "account_id": 317880638
+    },
+    {
+     "side": "dire",
+     "pos": 3,
+     "hero_id": 78,
+     "account_id": 165564598
+    },
+    {
+     "side": "dire",
+     "pos": 4,
+     "hero_id": 119,
+     "account_id": 175311897
+    },
+    {
+     "side": "dire",
+     "pos": 5,
+     "hero_id": 100,
+     "account_id": 196878136
+    }
+   ],
+   "resolution": {
+    "radiant": {
+     "method": "raw",
+     "conf": null,
+     "stats_conf": null,
+     "raw_known": 5,
+     "raw_matched": null
+    },
+    "dire": {
+     "method": "permutation",
+     "conf": 0.903,
+     "stats_conf": 0.53,
+     "raw_known": 5,
+     "raw_matched": 4
+    }
+   },
+   "position_check": "no_reported_hard_conflict",
+   "position_mismatch": [],
+   "refusal_reason": "prematch_ml_disabled",
+   "prematch": {
+    "match_id": null,
+    "map_key": null,
+    "branch": null,
+    "artifact_sha256": null,
+    "snapshot_ts": null
+   }
+  },
+  "elo_r": 2541.856683628793,
+  "elo_d": 2553.099821306775,
+  "elo_diff": -11.243137677982304,
+  "underdog_side": null,
+  "verdicts": {
+   "early_nw": {
+    "side": "Dire",
+    "confidence": 0.6933
+   },
+   "early_win": {
+    "side": "Radiant",
+    "confidence": 0.5287
+   },
+   "late": {
+    "side": "Dire",
+    "confidence": 0.64
+   },
+   "all": {
+    "side": "Dire",
+    "confidence": 0.5441
+   },
+   "lane": {
+    "side": "Dire",
+    "confidence": 0.6128
+   },
+   "prematch": null,
+   "kills30": {
+    "radiant": 0.3386874168815741,
+    "dire": 0.5480893998966775,
+    "total": 0.535612302925498
+   }
+  },
+  "prematch_index": null,
+  "decisions": [
+   {
+    "market": "win",
+    "target_side": "Dire",
+    "target_team": "BETBOOM TEAM",
+    "rule": "win_single_model_confirm",
+    "timing": "now",
+    "expected_wr": 0.6933309999999999,
+    "min_odds": 1.74,
+    "models_for": [
+     "late",
+     "early_nw"
+    ],
+    "reasons": [
+     "late>= 0.6 for Dire",
+     "early_nw>= 0.6 for Dire"
+    ]
+   }
+  ],
+  "skipped": [
+   {
+    "market": "win",
+    "side": "Radiant",
+    "reason": "below_threshold",
+    "detail": "no configured win model >= 0.6 for Radiant"
+   },
+   {
+    "market": "kills_window",
+    "side": null,
+    "reason": "no_underdog",
+    "detail": "no side is >= underdog diff"
+   },
+   {
+    "market": "kills_total",
+    "side": null,
+    "reason": "no_underdog",
+    "detail": "no side is >= underdog diff"
+   },
+   {
+    "market": "kills_total",
+    "side": "Dire",
+    "reason": "kills30_below_threshold",
+    "detail": "kills30 p=0.548 < t=0.6 (kills_early)"
+   },
+   {
+    "market": "kills_window",
+    "side": "Dire",
+    "reason": "dedup",
+    "detail": "key=('dltv.org/matches/9026301227', 2, 'kills_window', 'Dire') already sent"
+   }
+  ],
+  "delivered": [
+   {
+    "market": "win",
+    "target_side": "Dire",
+    "rule": "win_single_model_confirm",
+    "status": "delivered",
+    "attempt_started_at": 1790964913.192347,
+    "attempt_finished_at": 1790964914.6296253
+   }
+  ],
+  "mode": "ml"
+ }
+}

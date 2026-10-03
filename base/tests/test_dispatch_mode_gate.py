@@ -275,6 +275,16 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     logged: list = []
     ledger = _FakeLedger()
     _patch_ml_dispatch_tick_deps(monkeypatch, delivered_calls=delivered_calls, logged=logged, ledger=ledger)
+    from base import ml_dispatch as _md
+    evaluated: list = []
+    real_evaluate = _md.evaluate
+
+    def _recording_evaluate(ctx, cfg):
+        result = real_evaluate(ctx, cfg)
+        evaluated.extend(result.decisions)
+        return result
+
+    monkeypatch.setattr(_md, "evaluate", _recording_evaluate)
 
     _call_ml_dispatch_tick()
     _call_ml_dispatch_tick()  # same match/map -- ledger now carries the dedup key
@@ -282,7 +292,10 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     assert len(delivered_calls) == 1
     call_args, call_kwargs = delivered_calls[0]
     assert call_kwargs["stake_multiplier_context"]["origin"] == "ml_dispatch"
-    assert call_kwargs["stake_multiplier_context"]["calibration"]["expected_wr"] == 0.70
+    # E-350: the floor uses the pro-calibrated map-win probability (late 0.70 -> 0.684);
+    # the raw confidence stays on the Decision as expected_wr_raw.
+    assert call_kwargs["stake_multiplier_context"]["calibration"]["expected_wr"] == pytest.approx(0.68411, abs=1e-5)
+    assert [d.expected_wr_raw for d in evaluated] == [0.70]
     assert len(logged) == 2
     assert logged[0]["delivered"][0]["status"] == "delivered"
     assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision

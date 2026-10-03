@@ -67,6 +67,16 @@ Rules implemented (owner decisions, 12.09.2026 — see
   decision; ``min_odds = round(1 / (expected_wr - ML_DISPATCH_MIN_ODDS_MARGIN), 2)``
   (margin default 0.12; ``ML_DISPATCH_MIN_ODDS_MARGIN=0`` restores the
   previous zero-margin floor).
+  Owner decision 03.10.2026 (E-350, ``_floor_expected_wr``): for ``win``
+  decisions the floor is computed from the pro-calibrated MAP-WIN probability
+  of each voting draft-phase model (Platt, all-league, in Radiant-probability
+  space: ``FLOOR_PLATT``), not from the raw confidence — Early NW's raw 0.693
+  is ~0.60 as a pro map-win probability. ``Decision.expected_wr`` then holds
+  that calibrated value and ``Decision.expected_wr_raw`` the raw max
+  confidence. Models without a calibrator (prematch, ...) are identity.
+  ``ML_DISPATCH_FLOOR_CALIBRATION=0`` restores the raw floor exactly. Only the
+  floor number changes: sides, thresholds and the price gate are untouched.
+  Kills decisions keep the raw confidence (their floor is not a win-price gate).
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -251,6 +261,53 @@ def _other_side(side: str) -> str:
     return "Dire" if side == "Radiant" else "Radiant"
 
 
+# E-350 (03.10.2026): all-league Platt calibrators of the pub-trained draft-phase
+# models against the pro MAP-WIN outcome, fitted on 29,241 pro maps, in
+# Radiant-probability space: p_R_cal = sigmoid(a + b * logit(p_R_raw)).
+# Source: runtime/artifacts/draft-cp/pro_calibration_20261003/calibrators.json,
+# calibrators/<model>/all_league/platt. Models not listed here are identity.
+FLOOR_PLATT = {
+    "late": (0.0087, 0.9017),
+    "all": (-0.0071, 0.9383),
+    "early_win": (-0.0347, 0.8355),
+    "early_nw": (0.0602, 0.5848),
+}
+_FLOOR_PROB_CLIP = 1e-6
+
+
+def _calibrate_side_confidence(model: str, side: str, confidence: float) -> float:
+    """Pro map-win probability of ``side`` from a model's raw side confidence.
+
+    The conversion goes through Radiant probability (what the Platt fit was
+    trained on): Dire confidence c means p_R_raw = 1 - c, and the calibrated
+    side probability is 1 - p_R_cal. Identity for models without a calibrator.
+    """
+    params = FLOOR_PLATT.get(model)
+    if params is None:
+        return confidence
+    a, b = params
+    p_r = confidence if side == "Radiant" else 1.0 - confidence
+    p_r = min(max(p_r, _FLOOR_PROB_CLIP), 1.0 - _FLOOR_PROB_CLIP)
+    p_r_cal = 1.0 / (1.0 + math.exp(-(a + b * math.log(p_r / (1.0 - p_r)))))
+    return p_r_cal if side == "Radiant" else 1.0 - p_r_cal
+
+
+def _floor_expected_wr(ctx: "Ctx", cfg: "Config", models_for) -> Tuple[float, float]:
+    """``(expected_wr used for the win floor, raw max confidence)``.
+
+    The raw value is the pre-E-350 ``max(confidence)``. With
+    ``cfg.floor_calibration`` off both are equal (exact legacy behaviour).
+    """
+    raw = max(ctx.model(name).confidence for name in models_for)
+    if not cfg.floor_calibration:
+        return raw, raw
+    calibrated = max(
+        _calibrate_side_confidence(name, ctx.model(name).side, ctx.model(name).confidence)
+        for name in models_for
+    )
+    return calibrated, raw
+
+
 @dataclass(frozen=True)
 class ModelVerdict:
     """One model's current reading. ``side`` is strictly "Radiant"/"Dire"."""
@@ -329,6 +386,10 @@ class Config:
     kills_require_all: bool = False
     timing_seconds: float = 600.0
     min_odds_margin: float = 0.12
+    # E-350: floor from pro-calibrated map-win probability. The dataclass
+    # default is off (hand-built ``Config()`` keeps the legacy raw floor);
+    # production reads ``from_env`` where the default is on.
+    floor_calibration: bool = False
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
@@ -389,6 +450,9 @@ class Config:
             kills_require_all=str(env.get("ML_DISPATCH_KILLS_REQUIRE_ALL", "0")) == "1",
             timing_seconds=_float("ML_DISPATCH_TIMING_SECONDS", 600.0),
             min_odds_margin=_float("ML_DISPATCH_MIN_ODDS_MARGIN", 0.12),
+            floor_calibration=str(
+                env.get("ML_DISPATCH_FLOOR_CALIBRATION", "1")
+            ).strip().lower() not in ("0", "false", "off"),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
@@ -441,6 +505,9 @@ class Decision:
     expected_wr: float
     min_odds: float
     reasons: List[str]
+    # Raw max model confidence before the E-350 floor calibration; ``None``
+    # when not tracked (kills paths, hand-built decisions).
+    expected_wr_raw: Optional[float] = None
 
 
 @dataclass
@@ -680,7 +747,7 @@ def _evaluate_win_late_conflict(
     if ctx.already_sent is not None and key in ctx.already_sent:
         skipped.append(Skipped("win", side_b, REASON_DEDUP, f"key={key} already sent"))
     else:
-        expected_wr = max(ctx.model(name).confidence for name in late_conflict.models_for_b)
+        expected_wr, expected_wr_raw = _floor_expected_wr(ctx, cfg, late_conflict.models_for_b)
         decisions.append(Decision(
             market="win",
             target_side=side_b,
@@ -692,6 +759,7 @@ def _evaluate_win_late_conflict(
             expected_wr=expected_wr,
             min_odds=_min_odds(expected_wr, cfg),
             reasons=reasons,
+            expected_wr_raw=expected_wr_raw,
         ))
     skipped.append(Skipped("win", side_a, REASON_VETO, f"resolved for {side_b} after wait; {detail}"))
     return decisions, skipped
@@ -781,7 +849,7 @@ def _evaluate_win(
             ))
             continue
 
-        expected_wr = max(ctx.model(name).confidence for name in models_for)
+        expected_wr, expected_wr_raw = _floor_expected_wr(ctx, cfg, models_for)
         reasons = [f"{name}>= {cfg.min_conf} for {side}" for name in models_for]
         lane_hit = (ctx.lane is not None and ctx.lane.side == side
                     and ctx.lane.confidence >= cfg.min_conf)
@@ -803,6 +871,7 @@ def _evaluate_win(
             expected_wr=expected_wr,
             min_odds=_min_odds(expected_wr, cfg),
             reasons=reasons,
+            expected_wr_raw=expected_wr_raw,
         ))
 
     return decisions, skipped
