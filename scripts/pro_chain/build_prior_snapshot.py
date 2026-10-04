@@ -60,24 +60,27 @@ def say(s: str = "") -> None:
     OUT_MD.write_text("\n".join(_lines) + "\n", encoding="utf-8")
 
 
-def accumulate(keys: np.ndarray, V: np.ndarray, M: np.ndarray
+def accumulate(keys: np.ndarray, Vr: np.ndarray, Vd: np.ndarray, M: np.ndarray
                ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Суммы и счётчики по ключу: (уникальные ключи, суммы, счётчики).
 
-    `keys` — (n, 10) ключ каждого слота, `V` — (n, 10, m) величина слота,
+    `keys` — (n, 10) ключ каждого слота, `Vr/Vd` — (n, m) величины сторон,
     `M` — (n, m) маска валидности метрики на карте.
     """
     flat = keys.ravel()
     valid_key = flat > 0
     uniq, inv = np.unique(flat[valid_key], return_inverse=True)
-    m = V.shape[2]
+    m = Vr.shape[1]
     sums = np.zeros((len(uniq), m), dtype=np.float64)
     counts = np.zeros((len(uniq), m), dtype=np.float64)
-    mask10 = np.repeat(M[:, None, :], 10, axis=1).reshape(-1, m)[valid_key]
-    vals = V.reshape(-1, m)[valid_key]
     for j in range(m):
-        w = mask10[:, j]
-        sums[:, j] = np.bincount(inv[w], weights=vals[w, j].astype(np.float64),
+        # Expand one metric, preserving the old map/slot order for bincount.
+        w = np.repeat(M[:, j], 10)[valid_key]
+        slots = np.empty(keys.shape, dtype=np.float32)
+        slots[:, :TEAM_SLOTS] = Vr[:, j, None]
+        slots[:, TEAM_SLOTS:] = Vd[:, j, None]
+        vals = slots.ravel()[valid_key]
+        sums[:, j] = np.bincount(inv[w], weights=vals[w].astype(np.float64),
                                  minlength=len(uniq))
         counts[:, j] = np.bincount(inv[w], minlength=len(uniq))
     return uniq, sums, counts
@@ -96,6 +99,7 @@ def main() -> None:
     if CUTOFF_TS:
         keep_t = zc["ts"][ci].astype(np.int64) < CUTOFF_TS
         ci, ri = ci[keep_t], ri[keep_t]
+    del rpos, have
     heroes = zc["heroes"][ci].astype(np.int64)
     accounts = zc["accounts"][ci].astype(np.int64)
     ts = zc["ts"][ci].astype(np.int64)
@@ -109,18 +113,19 @@ def main() -> None:
     sub = {k: zr[k][ri] for k in ("pstats", "durations", "rk", "dk", "nw", "xp")}
     sub["wins"] = zc["wins"][ci]
     Vr, Vd, M = prior_values(sub)
+    del sub, ci, ri
+    zc.close()
+    zr.close()
     if Vr.shape[1] != len(PRIOR_NAMES):
         raise SystemExit(f"метрик {Vr.shape[1]}, а в PRIOR_NAMES "
                          f"{len(PRIOR_NAMES)} — порядок разошёлся")
     print(f"метрики посчитаны: {Vr.shape}, {time.time()-t0:.0f} c", flush=True)
 
-    V = np.empty((n, 10, Vr.shape[1]), dtype=np.float32)
-    V[:, :TEAM_SLOTS, :] = Vr[:, None, :]
-    V[:, TEAM_SLOTS:, :] = Vd[:, None, :]
-
-    hk, hs, hc = accumulate(heroes, V, M)
+    hk, hs, hc = accumulate(heroes, Vr, Vd, M)
+    del heroes
     print(f"герои: {len(hk)} ключей, {time.time()-t0:.0f} c", flush=True)
-    pk, ps, pc = accumulate(accounts, V, M)
+    pk, ps, pc = accumulate(accounts, Vr, Vd, M)
+    del accounts
     before = len(pk)
     if MIN_GAMES > 1:
         keep_p = pc.max(1) >= MIN_GAMES

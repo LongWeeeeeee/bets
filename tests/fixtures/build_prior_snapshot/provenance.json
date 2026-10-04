@@ -1,0 +1,38 @@
+{
+  "old_script_sha256": "f22b4e735b12ea322d59be95387875bf338f5f78603ca710f683847aa9f4408f",
+  "source_head": "3de5a5af",
+  "rows_compact": 4096,
+  "rows_rich": 4093,
+  "compact_indices": [
+    [
+      0,
+      1024
+    ],
+    [
+      630996,
+      632020
+    ],
+    [
+      1259944,
+      1261992
+    ]
+  ],
+  "cutoff_ts": 1786286040,
+  "cases": [
+    {
+      "name": "default",
+      "cutoff": 0,
+      "min_games": 3
+    },
+    {
+      "name": "cutoff",
+      "cutoff": 1786286040,
+      "min_games": 1
+    },
+    {
+      "name": "threshold",
+      "cutoff": 0,
+      "min_games": 7
+    }
+  ]
+}

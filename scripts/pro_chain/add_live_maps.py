@@ -18,8 +18,8 @@
 `HybridPlayerRosterEloModel` и зовёт `preview_team_strength` — разность двух
 `team_strength` делить на 400.)
 
-Накопители скопированы из `ideas_batch5.build` и `ideas_batch8.build` буква в
-букву — включая сырые (не поминутные) величины, безусловное обновление норм и
+Арифметика накопителей из `ideas_batch5.build` и `ideas_batch8.build` сохранена
+точно — включая сырые (не поминутные) величины, безусловное обновление норм и
 порядок «сначала читаем состояние, потом обновляем». Расхождение здесь стоит
 ровно того же, что стоило деление на 100 в E-166: −0.116 AUC.
 
@@ -52,21 +52,102 @@ HL = 45.0                       # период полураспада ячеек
 P_NW, P_HD = 5, 8               # нумерация из ideas_batch5
 
 
-def dump(res_pos, res_hero, vs_pos, vs_flat, syn_pos, syn_flat, path: Path) -> None:
-    """Снимок накопителей в плоские массивы."""
-    accs = sorted({a for (a, _st) in res_pos})
-    acc_arr = np.array(
-        [[a] + [(res_pos[(a, st)][0] / res_pos[(a, st)][1]) if res_pos.get((a, st), [0, 0])[1] else 0.0
-                for st in (P_HD, P_NW)] for a in accs], dtype=np.float64)
-    ah = sorted(res_hero)
-    ah_arr = np.array([[a, h, res_hero[(a, h, P_HD)][0] / res_hero[(a, h, P_HD)][1]]
-                       for (a, h, _st) in ah if res_hero[(a, h, P_HD)][1]], dtype=np.float64)
-    vp = np.array([[k[0], k[1], k[2], k[3], v[0], v[1], v[2]] for k, v in vs_pos.items()],
-                  dtype=np.float64)
-    vf = np.array([[k[0], k[1], v[0], v[1], v[2]] for k, v in vs_flat.items()], dtype=np.float64)
-    sp = np.array([[k[0][0], k[0][1], k[1][0], k[1][1], v[0], v[1], v[2]]
-                   for k, v in syn_pos.items()], dtype=np.float64)
-    sf = np.array([[k[0], k[1], v[0], v[1], v[2]] for k, v in syn_flat.items()], dtype=np.float64)
+def account_maps(pst, accounts, heroes, stop):
+    """Legacy sums, in player order, without per-account Python containers.
+
+    cumsum is sequential within each position/hero history. add.at performs
+    repeated-index additions in input order (ordinary indexed += does not).
+    Nonpositive accounts are excluded only from residuals, never from norms.
+    """
+    flat = pst.reshape(-1, 2)  # HD, NW; unused stat columns never interact.
+    acc = accounts.ravel()
+    hrs = heroes.ravel()
+    pos_res = np.zeros_like(flat)
+    pos_valid = np.ones(len(flat), dtype=bool)
+    for p in range(5):
+        values = flat[p::5]
+        history = np.cumsum(values, axis=0)
+        pos_res[p + 5::5] = values[1:] - history[:-1] / np.arange(1, len(values))[:, None]
+        pos_valid[p] = False
+
+    hero_res = np.zeros(len(flat), dtype=np.float64)
+    hero_valid = np.ones(len(flat), dtype=bool)
+    order = np.argsort(hrs, kind="stable")
+    sorted_heroes = hrs[order]
+    edges = np.r_[0, np.flatnonzero(sorted_heroes[1:] != sorted_heroes[:-1]) + 1, len(order)]
+    for begin, end in zip(edges[:-1], edges[1:]):
+        players = order[begin:end]
+        if not len(players):
+            continue
+        values = flat[players, 0]
+        history = np.cumsum(values)
+        hero_res[players[1:]] = values[1:] - history[:-1] / np.arange(1, len(players))
+        hero_valid[players[0]] = False
+    del order, sorted_heroes, history, values
+
+    acc_ids, acc_idx = np.unique(acc, return_inverse=True)
+    hero_ids = np.unique(hrs)
+    # Packing dense ranks, not raw IDs, avoids account-ID overflow. Sorted
+    # packed ranks have exactly the legacy sorted (account, hero) row order.
+    packed = acc_idx * len(hero_ids) + np.searchsorted(hero_ids, hrs)
+    pair_ids, pair_idx = np.unique(packed, return_inverse=True)
+    del packed
+    pos_sum = np.zeros((len(acc_ids), 2))
+    pos_count = np.zeros(len(acc_ids))
+    hero_sum = np.zeros(len(pair_ids))
+    hero_count = np.zeros(len(pair_ids))
+    pos_valid &= acc > 0
+    hero_valid &= acc > 0
+
+    def accumulate(begin, end):
+        valid = pos_valid[begin:end]
+        idx = acc_idx[begin:end][valid]
+        for stat in range(2):
+            np.add.at(pos_sum[:, stat], idx, pos_res[begin:end, stat][valid])
+        np.add.at(pos_count, idx, 1.0)
+        valid = hero_valid[begin:end]
+        idx = pair_idx[begin:end][valid]
+        np.add.at(hero_sum, idx, hero_res[begin:end][valid])
+        np.add.at(hero_count, idx, 1.0)
+
+    def snapshot():
+        used = pos_count > 0
+        acc_arr = np.column_stack((acc_ids[used], pos_sum[used] / pos_count[used, None]))
+        used = hero_count > 0
+        pairs = pair_ids[used]
+        ah_arr = np.column_stack((acc_ids[pairs // len(hero_ids)],
+                                  hero_ids[pairs % len(hero_ids)],
+                                  hero_sum[used] / hero_count[used]))
+        # np.array([]) in the legacy dump has shape (0,), not (0, width).
+        return (acc_arr if len(acc_arr) else np.empty(0),
+                ah_arr if len(ah_arr) else np.empty(0))
+
+    if stop is None:
+        accumulate(0, len(acc))
+        return snapshot(), None
+    split = stop * 10
+    accumulate(0, split)
+    at_test = snapshot()
+    accumulate(split, len(acc))
+    return snapshot(), at_test
+
+
+def dump(acc_arr, ah_arr, vs_pos, vs_flat, syn_pos, syn_flat, path: Path) -> None:
+    """Flat arrays retain insertion order; avoid transient lists of rows."""
+    def rows(store, width, nested=False):
+        if not store:
+            return np.empty(0, dtype=np.float64)
+        result = np.empty((len(store), width), dtype=np.float64)
+        for i, (key, cell) in enumerate(store.items()):
+            if nested:
+                result[i, :4] = key[0] + key[1]
+            else:
+                result[i, :len(key)] = key
+            result[i, -3:] = cell
+        return result
+
+    vp, vf = rows(vs_pos, 7), rows(vs_flat, 5)
+    sp, sf = rows(syn_pos, 7, nested=True), rows(syn_flat, 5)
     np.savez_compressed(path, acc_hdmg_nw=acc_arr, acc_hero_hdmg=ah_arr,
                         vs_pos=vp, vs_flat=vf, syn_pos=sp, syn_flat=sf)
     print(f"  -> {path.name}: аккаунтов {len(acc_arr):,}, ячеек (acc,hero) {len(ah_arr):,}, "
@@ -81,17 +162,17 @@ def main() -> None:
     idx_r = np.array([pos_[int(m)] for m in zc["mids"][keep].tolist()])
     ts, wins = zc["ts"][keep], zc["wins"][keep].astype(int)
     heroes, accounts = zc["heroes"][keep], zc["accounts"][keep]
-    pst = zr["pstats"][idx_r][:, :, :12].astype(np.float64)
-    del zr
+    pst = zr["pstats"][:, :, (P_HD, P_NW)][idx_r].astype(np.float64)
+    zc.close()
+    zr.close()
+    del zc, zr, pos_, keep, idx_r
     n = len(ts)
     print(f"карт: {n:,}; тестовая граница {TEST_FROM}", flush=True)
 
-    # ---- накопители ideas_batch5 (только те статистики, что нужны)
-    pos_norm = np.zeros((6, 12)); pos_cnt = np.zeros(6)
-    hero_norm: dict[int, np.ndarray] = defaultdict(lambda: np.zeros(12))
-    hero_cnt: dict[int, float] = defaultdict(float)
-    res_pos: dict[tuple, list] = defaultdict(lambda: [0.0, 0.0])
-    res_hero: dict[tuple, list] = defaultdict(lambda: [0.0, 0.0])
+    boundary = np.flatnonzero(ts >= TEST_FROM)
+    stop = int(boundary[0]) if len(boundary) else None
+    full_accounts, test_accounts = account_maps(pst, accounts, heroes, stop)
+    del pst, accounts, boundary
     # ---- накопители ideas_batch8
     lam = math.log(2) / (HL * 86400.0)
     vs_pos: dict[tuple, list] = defaultdict(lambda: [0.0, 0.0, 0])
@@ -109,34 +190,10 @@ def main() -> None:
         now = int(ts[i])
         if not dumped_test and now >= TEST_FROM:
             print(f"[{i:,}] граница теста, снимок at_test", flush=True)
-            dump(res_pos, res_hero, vs_pos, vs_flat, syn_pos, syn_flat, OUT_TEST)
+            dump(*test_accounts, vs_pos, vs_flat, syn_pos, syn_flat, OUT_TEST)
             dumped_test = True
 
         won_r = bool(wins[i])
-        # --- обновление ячеек аккаунтов (ideas_batch5)
-        for s in range(2):
-            accs = [int(a) for a in accounts[i, s * 5:(s + 1) * 5]]
-            hrs = [int(h) for h in heroes[i, s * 5:(s + 1) * 5]]
-            for p in range(5):
-                a, h = accs[p], hrs[p]
-                st = pst[i, s * 5 + p]
-                posn = p + 1
-                if a > 0:
-                    if pos_cnt[posn] > 0:
-                        pn = pos_norm[posn] / pos_cnt[posn]
-                        for k2 in (P_HD, P_NW):
-                            c = res_pos[(a, k2)]
-                            c[0] += float(st[k2]) - pn[k2]
-                            c[1] += 1
-                    if hero_cnt[h] > 0:
-                        hn = hero_norm[h] / hero_cnt[h]
-                        c = res_hero[(a, h, P_HD)]
-                        c[0] += float(st[P_HD]) - hn[P_HD]
-                        c[1] += 1
-                pos_norm[posn] += st
-                pos_cnt[posn] += 1
-                hero_norm[h] += st
-                hero_cnt[h] += 1
         # --- обновление ячеек драфта (ideas_batch8)
         rh = [(int(heroes[i, p]), p + 1) for p in range(5)]
         dh = [(int(heroes[i, 5 + p]), p + 1) for p in range(5)]
@@ -158,7 +215,7 @@ def main() -> None:
             print(f"  {i+1:,}/{n:,}", flush=True)
 
     print("снимок full", flush=True)
-    dump(res_pos, res_hero, vs_pos, vs_flat, syn_pos, syn_flat, OUT_FULL)
+    dump(*full_accounts, vs_pos, vs_flat, syn_pos, syn_flat, OUT_FULL)
     print("готово", flush=True)
 
 
