@@ -511,3 +511,109 @@ def test_shadow_stage_reports_missing_source_and_unwritable_summary(tmp_path):
     blocked.write_text("a file, not a dir")
     unwritable = _stage_in_shadow(tmp_path, good, blocked / "s.tsv")
     assert "rc=1" in unwritable.stdout and "не записан в сводку" in unwritable.stdout
+
+
+# ------------------------------------------------------- library safety boundaries
+
+def _run_library(e: Env, script: str, *args: str, extra: dict | None = None):
+    env = e.env()
+    if extra:
+        env.update(extra)
+    return subprocess.run(
+        [BASH, "-c", 'source "$1"; shift\n' + script,
+         "library", str(e.build / LIB_REL), *args],
+        cwd=e.build, env=env, capture_output=True, text=True, timeout=5,
+    )
+
+
+def test_library_exports_canonical_draft_root_to_child(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    link = e.base / "build_link"
+    link.symlink_to(e.build, target_is_directory=True)
+    r = _run_library(e, "/usr/bin/env", extra={"PRO_CHAIN_ROOT": str(link)})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert f"DRAFT_ROOT={e.build}" in r.stdout.splitlines()
+
+
+def test_local_stage_rejects_failed_copy_with_matching_stale_tmp(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    rel = "data/prematch_model_artifact_v3.npz"
+    src = e.build / rel
+    staged = e.prod / (rel + ".tmp")
+    _write(src, BUILT["artifact"])
+    _write(staged, BUILT["artifact"])
+    before = e.prod_tree()
+    before.pop(f"prod/{rel}.tmp")
+    # A stale, byte-identical .tmp would pass the digest checks if cp's rc were ignored.
+    _write(e.stubs / "cp", '#!/bin/bash\necho "CP $*" >> "$STUB_EVENTS"\nexit 1\n', exe=True)
+    r = _run_library(e, 'if prod_stage "$1" "$2"; then exit 0; else exit $?; fi',
+                     str(src), rel)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    assert "не скопирован на прод (rc=1)" in r.stdout
+    assert e.ops(("CP ",)) == [f"CP {src} {staged}"]
+    assert not staged.exists()
+    assert e.prod_tree() == before
+
+
+def test_local_stage_rejects_empty_prod_sha1(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    rel = "data/prematch_model_artifact_v3.npz"
+    src = e.build / rel
+    _write(src, BUILT["artifact"])
+    before = e.prod_tree()
+    # Override only the prod digest: cp succeeds and sha1_of still hashes the real source.
+    # The empty-digest warning distinguishes this failure from a nonempty digest mismatch.
+    r = _run_library(e, '''
+prod_sha1() { :; }
+if prod_stage "$1" "$2"; then exit 0; else exit $?; fi
+''', str(src), rel)
+    assert r.returncode == 1, (r.stdout, r.stderr)
+    digest = hashlib.sha1(BUILT["artifact"]).hexdigest()
+    assert f"пустой sha1 (локально '{digest}', на проде '')" in r.stdout
+    assert not (e.prod / (rel + ".tmp")).exists()
+    assert e.prod_tree() == before
+
+
+def test_guard_refuses_build_root_in_remote_mode(make_env):
+    e = make_env(kv3=False, target="new", mode="remote")
+    before = e.prod_tree()
+    r = _run_library(e, "pro_chain_guard", extra={
+        "PROD_ROOT": str(e.build), "PRO_CHAIN_ALLOW_FAKE_PROD": "1",
+    })
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "совпадает с боевым" in r.stderr
+    assert e.prod_tree() == before
+    assert e.events_lines() == []
+
+
+def test_guard_requires_existing_prod_root_in_local_mode(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    missing = e.base / "missing_prod"
+    before = e.prod_tree()
+    r = _run_library(e, "pro_chain_guard", extra={"PROD_ROOT": str(missing)})
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert f"боевой checkout {missing} недоступен" in r.stderr
+    assert not missing.exists()
+    assert e.prod_tree() == before
+
+
+def test_library_exits_when_build_root_is_unreachable(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    missing = e.base / "missing_build"
+    # No set -e: sourcing must exit the caller itself, rather than relying on errexit.
+    r = _run_library(e, "echo reached", extra={"PRO_CHAIN_ROOT": str(missing)})
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "reached" not in r.stdout
+    assert f"дерево сборки {missing} недоступно" in r.stderr
+    assert not missing.exists()
+
+
+def test_guard_refuses_symlinked_prod_root_pointing_at_build(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    link = e.base / "prod_link"
+    link.symlink_to(e.build, target_is_directory=True)
+    before = e.prod_tree()
+    r = _run_library(e, "pro_chain_guard", extra={"PROD_ROOT": str(link)})
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert "совпадает с боевым" in r.stderr
+    assert e.prod_tree() == before
