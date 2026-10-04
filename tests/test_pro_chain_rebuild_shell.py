@@ -889,11 +889,16 @@ def test_chain_gate_caps_fractional_poll_at_remaining_wait(make_env):
 echo "GATE-SLEEP $1" >> "$STUB_EVENTS"
 printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
 ''', exe=True)
-    r = _run_library(e, 'set -e; wait_no_live_map 1 capped-poll', extra={
+    # A 3 s bound: SECONDS ticks on whole wall-clock seconds, so with a 1 s bound a
+    # tick during the first live-state read (~4% of runs) exhausted the wait before
+    # any sleep. The poll must still be capped at the remaining wait, never 100.5.
+    r = _run_library(e, 'set -e; wait_no_live_map 3 capped-poll', extra={
         "PRO_CHAIN_LIVE_POLL_SECONDS": "100.5",
     })
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert e.ops(("GATE-SLEEP",)) == ["GATE-SLEEP 1"]
+    sleeps = e.ops(("GATE-SLEEP",))
+    assert len(sleeps) == 1, sleeps
+    assert 1 <= float(sleeps[0].split()[1]) <= 3, sleeps
 
 
 def test_chain_gate_parent_signal_waits_for_shadow_rebuild(make_env):
