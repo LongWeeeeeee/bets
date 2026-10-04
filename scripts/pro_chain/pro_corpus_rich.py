@@ -26,6 +26,9 @@ import glob
 import gzip
 import json
 import os
+import tempfile
+import zipfile
+from contextlib import ExitStack
 from pathlib import Path
 
 import numpy as np
@@ -63,11 +66,33 @@ def pad(arr, n, cum=False):
     return out
 
 
+# Output order, dtype and trailing dimensions are the legacy NPZ contract.
+FIELDS = {
+    "mids": (np.int64, ()), "ts": (np.int64, ()),
+    "wins": (np.int8, ()), "teams": (np.int64, (2,)),
+    "leagues": (np.int64, ()), "regions": (np.int16, ()),
+    "sids": (np.int64, ()), "stypes": (np.int8, ()),
+    "durations": (np.int32, ()), "first_blood": (np.int32, ()),
+    "lanes": (np.int8, (3,)), "nw": (np.int32, (MIN,)),
+    "xp": (np.int32, (MIN,)), "rk": (np.int16, (MIN,)),
+    "dk": (np.int16, (MIN,)), "winrates": (np.float32, (WR_LEN,)),
+    "towers": (np.int32, (10,)), "heroes": (np.int32, (10,)),
+    "accounts": (np.int64, (10,)), "pstats": (np.float32, (10, len(PSTAT))),
+}
+
+
 def main() -> None:
-    mids, ts, wins, teams, leagues, regions = [], [], [], [], [], []
-    sids, stypes, durs, fbs, lanes = [], [], [], [], []
-    nw, xp, rk, dk, wrs = [], [], [], [], []
-    towers, pstats, heroes, accounts = [], [], [], []
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    # Keep only one parsed file in RAM. Raw field spools also avoid holding all
+    # unsorted and sorted arrays at once. Same filesystem for atomic publication.
+    with tempfile.TemporaryDirectory(prefix=".pro_corpus_rich-", dir=OUT.parent) as tmp:
+        with ExitStack() as stack:
+            _build(Path(tmp), stack)
+
+
+def _build(tmp, stack) -> None:
+    spools = {name: stack.enter_context(open(tmp / name, "w+b")) for name in FIELDS}
+    total = 0
     seen: set[str] = set()
     files = sorted(glob.glob(str(CORPUS / "*_part*.json")) +
                    glob.glob(str(CORPUS / "*_part*.json.gz")),
@@ -78,6 +103,9 @@ def main() -> None:
                 data = json.load(fh)
         except Exception:
             continue
+        rows = {name: np.empty((len(data),) + shape, dtype=dtype)
+                for name, (dtype, shape) in FIELDS.items()}
+        count = 0
         for key, m in data.items():
             if not isinstance(m, dict):
                 continue
@@ -100,24 +128,24 @@ def main() -> None:
             if not ok or len(side_h[True]) != 5 or len(side_h[False]) != 5:
                 continue
             seen.add(mid)
-            mids.append(int(mid))
-            ts.append(int(start))
-            wins.append(int(won))
-            teams.append([int((m.get("radiantTeam") or {}).get("id") or 0),
-                          int((m.get("direTeam") or {}).get("id") or 0)])
-            leagues.append(int(m.get("leagueId") or (m.get("league") or {}).get("id") or 0))
-            regions.append(int(m.get("regionId") or 0))
+            rows["mids"][count] = int(mid)
+            rows["ts"][count] = int(start)
+            rows["wins"][count] = int(won)
+            rows["teams"][count] = [int((m.get("radiantTeam") or {}).get("id") or 0),
+                          int((m.get("direTeam") or {}).get("id") or 0)]
+            rows["leagues"][count] = int(m.get("leagueId") or (m.get("league") or {}).get("id") or 0)
+            rows["regions"][count] = int(m.get("regionId") or 0)
             ser = m.get("series") or {}
-            sids.append(int(ser.get("id") or 0))
-            stypes.append(STYPE.get(str(ser.get("type")), 0))
-            durs.append(int(m.get("durationSeconds") or 0))
-            fbs.append(int(m.get("firstBloodTime") or 0))
-            lanes.append([lane_code(m.get("topLaneOutcome")), lane_code(m.get("midLaneOutcome")),
-                          lane_code(m.get("bottomLaneOutcome"))])
-            nw.append(pad(m.get("radiantNetworthLeads"), MIN))
-            xp.append(pad(m.get("radiantExperienceLeads"), MIN))
-            rk.append(pad(m.get("radiantKills"), MIN, cum=True))
-            dk.append(pad(m.get("direKills"), MIN, cum=True))
+            rows["sids"][count] = int(ser.get("id") or 0)
+            rows["stypes"][count] = STYPE.get(str(ser.get("type")), 0)
+            rows["durations"][count] = int(m.get("durationSeconds") or 0)
+            rows["first_blood"][count] = int(m.get("firstBloodTime") or 0)
+            rows["lanes"][count] = [lane_code(m.get("topLaneOutcome")), lane_code(m.get("midLaneOutcome")),
+                          lane_code(m.get("bottomLaneOutcome"))]
+            rows["nw"][count] = pad(m.get("radiantNetworthLeads"), MIN)
+            rows["xp"][count] = pad(m.get("radiantExperienceLeads"), MIN)
+            rows["rk"][count] = pad(m.get("radiantKills"), MIN, cum=True)
+            rows["dk"][count] = pad(m.get("direKills"), MIN, cum=True)
             w = np.zeros(WR_LEN, dtype=np.float32)
             wv = m.get("winRates") or []
             for i2 in range(min(len(wv), WR_LEN)):
@@ -125,7 +153,7 @@ def main() -> None:
                     w[i2] = float(wv[i2])
                 except (TypeError, ValueError):
                     pass
-            wrs.append(w)
+            rows["winrates"][count] = w
             td = m.get("towerDeaths") or []
             first_t, first_s = 0, 0
             cnt = np.zeros(2 * len(TOWER_MARKS), dtype=np.int16)   # [rad@15,20,25,30, dire@...]
@@ -139,41 +167,40 @@ def main() -> None:
                 for j, mark in enumerate(TOWER_MARKS):
                     if t <= mark * 60:
                         cnt[(0 if is_r else len(TOWER_MARKS)) + j] += 1
-            towers.append(np.concatenate([[first_t, first_s], cnt]).astype(np.int32))
-            heroes.append([side_h[True][i] for i in range(1, 6)] + [side_h[False][i] for i in range(1, 6)])
-            accounts.append([side_a[True][i] for i in range(1, 6)] + [side_a[False][i] for i in range(1, 6)])
-            pstats.append([side_p[True][i] for i in range(1, 6)] + [side_p[False][i] for i in range(1, 6)])
-        del data
+            rows["towers"][count] = np.concatenate([[first_t, first_s], cnt]).astype(np.int32)
+            rows["heroes"][count] = [side_h[True][i] for i in range(1, 6)] + [side_h[False][i] for i in range(1, 6)]
+            rows["accounts"][count] = [side_a[True][i] for i in range(1, 6)] + [side_a[False][i] for i in range(1, 6)]
+            rows["pstats"][count] = [side_p[True][i] for i in range(1, 6)] + [side_p[False][i] for i in range(1, 6)]
+            count += 1
+        for name in FIELDS:
+            rows[name][:count].tofile(spools[name])
+        total += count
+        del rows, data
         if n % 20 == 0 or n == len(files):
-            print(f"  {n}/{len(files)} файлов, матчей {len(mids):,}", flush=True)
+            print(f"  {n}/{len(files)} файлов, матчей {total:,}", flush=True)
 
-    order = np.argsort(np.asarray(ts), kind="stable")
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        OUT,
-        mids=np.asarray(mids, dtype=np.int64)[order],
-        ts=np.asarray(ts, dtype=np.int64)[order],
-        wins=np.asarray(wins, dtype=np.int8)[order],
-        teams=np.asarray(teams, dtype=np.int64)[order],
-        leagues=np.asarray(leagues, dtype=np.int64)[order],
-        regions=np.asarray(regions, dtype=np.int16)[order],
-        sids=np.asarray(sids, dtype=np.int64)[order],
-        stypes=np.asarray(stypes, dtype=np.int8)[order],
-        durations=np.asarray(durs, dtype=np.int32)[order],
-        first_blood=np.asarray(fbs, dtype=np.int32)[order],
-        lanes=np.asarray(lanes, dtype=np.int8)[order],
-        nw=np.asarray(nw, dtype=np.int32)[order],
-        xp=np.asarray(xp, dtype=np.int32)[order],
-        rk=np.asarray(rk, dtype=np.int16)[order],
-        dk=np.asarray(dk, dtype=np.int16)[order],
-        winrates=np.asarray(wrs, dtype=np.float32)[order],
-        towers=np.asarray(towers, dtype=np.int32)[order],
-        heroes=np.asarray(heroes, dtype=np.int32)[order],
-        accounts=np.asarray(accounts, dtype=np.int64)[order],
-        pstats=np.asarray(pstats, dtype=np.float32)[order],
-        pstat_names=np.asarray(PSTAT),
-    )
-    print(f"готово: {OUT} ({len(mids):,} матчей)", flush=True)
+    del seen
+    spools["ts"].seek(0)
+    timestamps = np.fromfile(spools["ts"], dtype=np.int64)
+    order = np.argsort(timestamps, kind="stable")
+    del timestamps
+    output = tmp / "output.npz"
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, (dtype, shape) in FIELDS.items():
+            spools[name].seek(0)
+            values = np.fromfile(spools[name], dtype=dtype)
+            # Legacy np.asarray([]) yields (0,), even for normally matrix fields.
+            if total:
+                values = values.reshape((total,) + shape)
+            ordered = values[order]
+            del values
+            with archive.open(name + ".npy", "w", force_zip64=True) as fh:
+                np.lib.format.write_array(fh, ordered, allow_pickle=False)
+            del ordered
+        with archive.open("pstat_names.npy", "w", force_zip64=True) as fh:
+            np.lib.format.write_array(fh, np.asarray(PSTAT), allow_pickle=False)
+    os.replace(output, OUT)
+    print(f"готово: {OUT} ({total:,} матчей)", flush=True)
 
 
 if __name__ == "__main__":

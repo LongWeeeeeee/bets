@@ -80,7 +80,6 @@ file pro_heroes_data/json_parts_split_from_object/processed_ids.txt
 file pro_heroes_data/json_parts_split_from_object/scan_manifest.json
 file pro_heroes_data/json_parts_split_from_object/part_counters.json
 file pro_heroes_data/json_parts_split_from_object/merge_patch_summary.json
-file pro_heroes_data/json_parts_split_from_object/visited_teams.json
 file runtime/artifacts/misc/pro_corpus_compact.npz
 file runtime/artifacts/misc/pro_corpus_rich.npz
 file runtime/artifacts/misc/pro_features_ext.npz
@@ -101,6 +100,7 @@ file runtime/artifacts/misc/prematch_model_artifact_v2_nohybrid.npz
 file runtime/artifacts/misc/h2h_as_served.npz
 file runtime/artifacts/misc/map_winner_hybrid_quality_forward/hybrid_features.npz
 file pro_heroes_data/visited_teams.json
+file pro_heroes_data/trash_maps.txt
 file runtime/kv3_state_deliver.on
 file ml-models/prematch_panel_kv3/manifest.json
 EOF

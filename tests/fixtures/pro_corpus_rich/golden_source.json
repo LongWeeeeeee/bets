@@ -1,0 +1,11 @@
+{
+  "revision": "81f12016a14635f4a8aaab167ebf9eada45b087a",
+  "script": "scripts/pro_chain/pro_corpus_rich.py",
+  "source": "/Users/alex/Documents/ingame/pro_heroes_data/json_parts_split_from_object/7.41e_part063.json",
+  "parts": [
+    "7.41e_part062.json",
+    "7.41e_part063.json",
+    "7.41e_part064.json.gz"
+  ],
+  "edges": "part062 derives real rows: tied timestamps, invalid/valid duplicates, reversed players, int64 accounts, padding/truncation/cumsum int16 wrap, malformed winRates, tower sentinel"
+}
