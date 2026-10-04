@@ -1,6 +1,13 @@
 #!/bin/bash
 # Ночная пересборка снимка предматчевой модели и доставка на serv1.
 #
+# Одна цепочка, две машины (scripts/run/lib_pro_chain.sh):
+#   remote (Мак)  — сборка в этом checkout, прод = serv1:/root/main по ssh/scp;
+#   local  (serv1) — сборка в ОТДЕЛЬНОМ checkout (/root/pro_chain), прод =
+#                    /root/main на той же машине по cp/bash.
+# PRO_CHAIN_SHADOW=1 — собрать всё и ничего не доставить (ни записей под
+# $PROD_ROOT, ни перебазировки, ни systemctl); что уехало бы — в $PRO_CHAIN_SUMMARY.
+#
 # Зачем каждую ночь. Два признака в снимке привязаны ко времени и молча
 # протухают: `wr30` — окно 30 дней, `vs_wr` — распад с полураспадом 45 дней.
 # Снимок недельной давности означает «винрейт за 30 дней, закончившихся неделю
@@ -11,9 +18,11 @@
 # 0.6883 на снимке старше месяца. Это дороже всех расхождений определений вместе
 # взятых, поэтому свежесть снимка — не гигиена, а деньги.
 #
-# Почему локально. Про-корпус живёт только на этой машине (10 ГБ против 206 МБ
-# на serv1), синхронизации нет: `pro_heroes_data/` закрыт .gitignore, rsync кода
-# между машинами мы не используем. Снимок собирается здесь и уезжает готовым.
+# Почему не в боевом checkout. Снимок собирается в отдельном дереве (Мак — его
+# checkout, serv1 — /root/pro_chain) и уезжает на прод готовым, с проверкой sha1:
+# сборка внутри /root/main подменила бы боевые файлы недособранными. Про-корпус
+# живёт в дереве сборки (`pro_heroes_data/` закрыт .gitignore), rsync кода между
+# машинами мы не используем.
 #
 # ВЕСА НЕ ПЕРЕОБУЧАЮТСЯ. Пересобирается только снимок; коэффициенты, нормировки
 # и набор признаков берутся из предыдущего артефакта через `finalize_artifact`.
@@ -29,10 +38,16 @@
 # Рестарт обязателен: `prematch_scorer.get_model()` держит модель в модульном
 # синглтоне `_MODEL`, поэтому новый файл без перезапуска процесса не читается.
 set -e
-cd /Users/alex/Documents/ingame
-PY=venv_catboost/bin/python3
+# Общая обвязка: ROOT (дерево сборки), PROD_ROOT, SERV1 (ssh-алиас, IP не писать:
+# зашитый IP устарел при переезде serv1 22.09.2026 и доставка молча падала 4 ночи),
+# PY, PRO_CHAIN_MODE, PRO_CHAIN_SHADOW и prod_*-помощники.
+source "$(dirname "${BASH_SOURCE[0]}")/lib_pro_chain.sh"
+cd "$ROOT"
 LOG="${LOG:-runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log}"
-SERV1=serv1  # ssh-алиас из ~/.ssh/config. Зашитый IP устарел при переезде serv1 22.09.2026, и доставка молча падала 4 ночи
+pro_chain_guard || exit 2
+# Дочерние скрипты (добор, kv3) и дочерний `bash "$0" --run-chain` видят то же.
+export PRO_CHAIN_MODE PROD_ROOT PRO_CHAIN_SHADOW PRO_CHAIN_SUMMARY
+mkdir -p runtime runtime/artifacts/misc ELO/output
 
 run_chain() {
   ELO_SNAPSHOT_STAGED=0
@@ -44,8 +59,7 @@ run_chain() {
   # некритичен: падение оставляет локальный overlay как есть (или отсутствующим)
   # — `_seed_team_ids()` тогда отдаёт только статические сиды, без падения.
   TIER2_OVERLAY_LOCAL="base/id_to_names_dynamic_tier2.json"
-  scp -q -o ConnectTimeout=15 "$SERV1:/root/main/base/id_to_names_dynamic_tier2.json" \
-      "$TIER2_OVERLAY_LOCAL.tmp" \
+  prod_fetch base/id_to_names_dynamic_tier2.json "$TIER2_OVERLAY_LOCAL.tmp" \
     && mv "$TIER2_OVERLAY_LOCAL.tmp" "$TIER2_OVERLAY_LOCAL" \
     || echo "ВНИМАНИЕ: overlay tier2 с serv1 не получен; сиды только статические"
   # Страховка от молчащего добора: 25.08–01.09.2026 launchd не запускал 04:30-джобу
@@ -56,20 +70,20 @@ run_chain() {
     bash scripts/run/topup_pro_corpus.sh || echo "добор упал (rc=$?), пересобираю на текущем корпусе"
   fi
   # 1. выжимки корпуса (компактная и богатая)
-  $PY runtime/experiments/misc/pro_corpus_extract.py
-  $PY runtime/experiments/misc/pro_corpus_rich.py
+  $PY scripts/pro_chain/pro_corpus_extract.py
+  $PY scripts/pro_chain/pro_corpus_rich.py
   # 2. снимок: v1 -> добавки v2. Оба шага обязаны видеть один и тот же корпус.
   #    v2 идёт в режиме ТОЛЬКО СНИМОК: матрица признаков и переобучение весов
   #    требуют кэшей (`ideas_batch*.npz`, EXT, драфт-логит), а они привязаны к
   #    длине корпуса — как только корпус подрос, склейка падает по форме. Веса
   #    устаревают куда медленнее снимка и обновляются отдельно, с замером.
-  PREMATCH_SNAPSHOT_ONLY=1 $PY runtime/experiments/misc/build_prematch_artifact.py
-  PREMATCH_SNAPSHOT_ONLY=1 $PY runtime/experiments/misc/build_prematch_artifact_v2.py
+  PREMATCH_SNAPSHOT_ONLY=1 $PY scripts/pro_chain/build_prematch_artifact.py
+  PREMATCH_SNAPSHOT_ONLY=1 $PY scripts/pro_chain/build_prematch_artifact_v2.py
   # 3. состояние под шесть колонок E-168: отклонения урона и нетворса по
   #    аккаунту и позиционные ячейки контрпика/синергии
-  $PY runtime/experiments/misc/add_live_maps.py
+  $PY scripts/pro_chain/add_live_maps.py
   # 4. опознание организаций по составу + история личных встреч
-  $PY runtime/experiments/misc/add_org_identity.py
+  $PY scripts/pro_chain/add_org_identity.py
   # 5. сборка боевого артефакта: снимок + веса из отдельного файла весов.
   #    ИМЯ ВЫХОДА ЗАДАЁТСЯ ЯВНО. До 15.08 шаг молча писал в
   #    `prematch_model_artifact_v3_nohybrid.npz` (умолчание finalize_artifact),
@@ -80,15 +94,15 @@ run_chain() {
   #    половина составов ей неизвестна, и она отказывается считать.
   PREMATCH_SRC=runtime/artifacts/misc/prematch_model_artifact_v2_snapshot.npz \
   PREMATCH_OUT=runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz \
-    $PY runtime/experiments/misc/finalize_artifact.py
+    $PY scripts/pro_chain/finalize_artifact.py
   # 5b. справочник написаний из цепочек ПЕРЕИМЕНОВАНИЙ (для поиска карточки у
   #     букмекера). Имена берём с прода: записи вида `tier_two_teams['ironwing']`
   #     дописывает рантайм на serv1, и локальная копия про новые теги не знает.
   #     С 02.09.2026 рантайм пишет их в JSON-overlay рядом со справочником —
   #     забираем оба файла (overlay на свежем проде может ещё отсутствовать).
   NAMES_DIR="$(mktemp -d)"
-  scp -q "$SERV1:/root/main/base/id_to_names.py" "$NAMES_DIR/id_to_names.py"
-  scp -q "$SERV1:/root/main/base/id_to_names_dynamic_tier2.json" "$NAMES_DIR/" || true
+  prod_fetch base/id_to_names.py "$NAMES_DIR/id_to_names.py"
+  prod_fetch base/id_to_names_dynamic_tier2.json "$NAMES_DIR/" || true
   TEAM_NAMES_DIR="$NAMES_DIR" $PY base/tools/build_team_org_aliases.py
   rm -rf "$NAMES_DIR"
 
@@ -100,16 +114,14 @@ run_chain() {
   #     ~11 мин; отказ НЕ рвёт цепочку (доставка предматчевого артефакта важнее),
   #     а молчаливое протухание ловит freshness-watchdog.
   if $PY ELO/live_team_strength.py --snapshot-path ELO/output/live_team_elo_snapshot.json; then
-    scp -q ELO/output/live_team_elo_snapshot.json \
-        "$SERV1:/root/main/ELO/output/live_team_elo_snapshot.json.tmp"
-    L=$(shasum -a 1 ELO/output/live_team_elo_snapshot.json | cut -d' ' -f1)
-    R=$(ssh "$SERV1" "sha1sum /root/main/ELO/output/live_team_elo_snapshot.json.tmp | cut -d' ' -f1")
-    if [ "$L" = "$R" ]; then
+    # prod_stage кладёт файл в `<прод>/…json.tmp` и сверяет sha1; при расхождении
+    # сам удаляет .tmp и возвращает 1. В тени только пишет строку в summary.
+    L=$(sha1_of ELO/output/live_team_elo_snapshot.json)
+    if prod_stage ELO/output/live_team_elo_snapshot.json ELO/output/live_team_elo_snapshot.json; then
       ELO_SNAPSHOT_STAGED=1
       echo "ELO-снимок подготовлен: sha1 $L; замена после сохранения живых результатов"
     else
-      ssh "$SERV1" "rm -f /root/main/ELO/output/live_team_elo_snapshot.json.tmp"
-      echo "ВНИМАНИЕ: ELO-снимок доехал битым ($R против $L) — на проде остался прежний"
+      echo "ВНИМАНИЕ: ELO-снимок доехал битым (против $L) — на проде остался прежний"
     fi
   else
     echo "ВНИМАНИЕ: ELO-снимок не пересобрался — на проде останется прежний"
@@ -120,7 +132,7 @@ run_chain() {
   $PY - <<'CHECK'
 import sys, time, numpy as np
 from pathlib import Path
-R = Path("/Users/alex/Documents/ingame")
+R = Path.cwd()  # дерево сборки: скрипт сделал cd "$ROOT"
 sys.path.insert(0, str(R / "base"))
 import prematch_scorer as ps
 new = R / "runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz"
@@ -148,24 +160,27 @@ CHECK
 
   # 7. доставка. Атомарно: пишем .tmp и переименовываем поверх, чтобы прод
   #    никогда не увидел недокачанный файл.
-  scp -q runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz \
-      "$SERV1:/root/main/data/prematch_model_artifact_v3.npz.tmp"
-  ssh "$SERV1" "mv /root/main/data/prematch_model_artifact_v3.npz.tmp \
-                   /root/main/data/prematch_model_artifact_v3.npz"
+  prod_stage runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz \
+      data/prematch_model_artifact_v3.npz \
+    || { echo "ОШИБКА: артефакт не доставлен (.tmp не совпал по sha1), рестарт не делаю"; exit 1; }
+  prod_commit data/prematch_model_artifact_v3.npz
   # Сверка ПОСЛЕ доставки: единственная проверка, которая поймала бы E-193.
   # Совпадение sha1 локального и боевого файла — доказательство, что уехало
   # именно то, что собрано, а не одноимённый файл прошлой недели.
-  LOCAL_SHA=$(shasum -a 1 runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz | cut -d' ' -f1)
-  REMOTE_SHA=$(ssh "$SERV1" "sha1sum /root/main/data/prematch_model_artifact_v3.npz | cut -d' ' -f1")
-  if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
-    echo "ОШИБКА: на сервере другой файл ($REMOTE_SHA против $LOCAL_SHA), рестарт не делаю"
-    exit 1
+  LOCAL_SHA=$(sha1_of runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz)
+  if shadow_on; then
+    # В тени на проде ничего не меняется — сверять боевой файл не с чем.
+    echo "[тень] сверку боевого артефакта пропускаю: sha1 собранного $LOCAL_SHA"
+  else
+    REMOTE_SHA=$(prod_sha1 data/prematch_model_artifact_v3.npz)
+    if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+      echo "ОШИБКА: на сервере другой файл ($REMOTE_SHA против $LOCAL_SHA), рестарт не делаю"
+      exit 1
+    fi
+    echo "доставка подтверждена: sha1 $LOCAL_SHA"
   fi
-  echo "доставка подтверждена: sha1 $LOCAL_SHA"
-  scp -q data/team_org_aliases.json \
-      "$SERV1:/root/main/data/team_org_aliases.json.tmp"
-  ssh "$SERV1" "mv /root/main/data/team_org_aliases.json.tmp \
-                   /root/main/data/team_org_aliases.json"
+  prod_stage data/team_org_aliases.json data/team_org_aliases.json || exit 1
+  prod_commit data/team_org_aliases.json
 
   # --- снимки предматчевой панели -----------------------------------------
   # Панель на serv1 читает три снимка накопленного состояния, а пересобрать их
@@ -178,20 +193,21 @@ CHECK
   # деньги; панель только показывает числа. Поэтому каждый шаг обёрнут и в
   # худшем случае оставляет вчерашний снимок, а не срывает доставку модели.
   panel_snapshots() {
-    $PY runtime/experiments/misc/build_prior_snapshot.py
-    $PY runtime/experiments/misc/build_rating_snapshot.py
-    $PY runtime/experiments/misc/build_pair_snapshot.py
+    $PY scripts/pro_chain/build_prior_snapshot.py
+    $PY scripts/pro_chain/build_rating_snapshot.py
+    $PY scripts/pro_chain/build_pair_snapshot.py
     for f in prior_snapshot.npz rating_snapshot.npz pair_prior_snapshot.npz; do
-      scp -q "data/$f" "$SERV1:/root/main/data/$f.tmp"
-      L=$(shasum -a 1 "data/$f" | cut -d' ' -f1)
-      R=$(ssh "$SERV1" "sha1sum /root/main/data/$f.tmp | cut -d' ' -f1")
-      if [ "$L" != "$R" ]; then
-        ssh "$SERV1" "rm -f /root/main/data/$f.tmp"
-        echo "снимок $f доехал битым ($R против $L) — оставляю прежний"
+      L=$(sha1_of "data/$f")
+      if ! prod_stage "data/$f" "data/$f"; then
+        echo "снимок $f доехал битым (против $L) — оставляю прежний"
         return 1
       fi
-      ssh "$SERV1" "mv /root/main/data/$f.tmp /root/main/data/$f"
-      echo "снимок $f доставлен: sha1 $L"
+      prod_commit "data/$f"
+      if shadow_on; then
+        echo "[тень] снимок $f не доставлен: sha1 $L"
+      else
+        echo "снимок $f доставлен: sha1 $L"
+      fi
     done
   }
   if panel_snapshots; then
@@ -217,7 +233,7 @@ CHECK
   # невозможным («архив несоединим», E-103) — на деле не совпадал ключ: в
   # архиве нет `match_id`, join идёт по (имена команд, номер карты).
   # Разовое число тут бессмысленно, выборка мала; смысл в накоплении.
-  if $PY runtime/experiments/misc/prematch_bet_roi.py > /dev/null 2>&1; then
+  if $PY scripts/pro_chain/prematch_bet_roi.py > /dev/null 2>&1; then
     echo "доходность пересчитана: runtime/artifacts/misc/prematch_bet_roi.md"
   else
     echo "ВНИМАНИЕ: отчёт о доходности не собрался (не критично, читает только)"
@@ -228,7 +244,9 @@ CHECK
   #    Живые результаты после среза должны пережить замену базы. Новый снимок
   #    остаётся .tmp, пока перебазировка не проверит и не сохранит их. При
   #    отказе прод возвращается на прежний снимок, а цепочка сообщает ошибку.
-  ssh "$SERV1" bash -s -- "$ELO_SNAPSHOT_STAGED" <<'ELO_REBASE_REMOTE'
+  #    Скрипт идёт как есть и на Маке (ssh), и на serv1 (локальный bash -s): путь
+  #    /root/main в нём — боевой checkout на обеих машинах, дерево сборки он не трогает.
+  prod_script "$ELO_SNAPSHOT_STAGED" <<'ELO_REBASE_REMOTE'
 set -e
 cd /root/main
 snapshot=ELO/output/live_team_elo_snapshot.json
@@ -292,13 +310,14 @@ if [ "${1:-}" = "--run-chain" ]; then
 fi
 
 notify_chain() {
-  local rc="$1"
+  local rc="$1" pfx=""
+  shadow_on && pfx="[тень] "
   if [ "$rc" -ne 0 ] || grep -qE 'ОШИБКА|ВНИМАНИЕ|Traceback|AssertionError|Connection closed|scp:' "$LOG"; then
-    { echo "⚠️ пересборка снимка: rc=$rc ($(date '+%F %T'))";
+    { echo "${pfx}⚠️ пересборка снимка: rc=$rc ($(date '+%F %T'))";
       grep -E 'ОШИБКА|ВНИМАНИЕ|Traceback|AssertionError|Connection closed|scp:|снимку|доставка' "$LOG" | tail -8; } \
       | $PY scripts/ops/notify_admin.py
   else
-    { echo "✅ пересборка снимка ($(date '+%F %T'))";
+    { echo "${pfx}✅ пересборка снимка ($(date '+%F %T'))";
       grep -E 'проверка пройдена|доставка подтверждена|снимок .* доставлен|^active' "$LOG" | tail -5; } \
       | $PY scripts/ops/notify_admin.py
   fi

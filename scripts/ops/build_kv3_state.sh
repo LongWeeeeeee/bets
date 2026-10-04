@@ -4,10 +4,18 @@
 # What: replays the kills-v3 history (base/kills_v3_serving.py build-state) up to
 # "now" with the SAME history_start and visibility_delay the deployed model was
 # trained with (read from ml-models/prematch_panel_kv3/manifest.json), checks the
-# file loads, and optionally delivers it to serv1 atomically.
+# file loads, and optionally delivers it to the production checkout atomically.
 #
-# Why local: build-state peaks at 3.33 GB RSS (measured 2026-09-24, E-329); serv1
-# has ~2.7 GB free next to the 3.65 GB prod process. The state file is ~220 MB.
+# Two hosts, one script (scripts/run/lib_pro_chain.sh): on the Mac the production
+# checkout is serv1:/root/main (ssh/scp); on serv1 the build runs in a SEPARATE
+# checkout (/root/pro_chain) and delivers into /root/main on the same host by cp.
+# PRO_CHAIN_SHADOW=1 builds the state and delivers nothing (only a line in
+# $PRO_CHAIN_SUMMARY).
+#
+# Why a separate build tree: build-state peaks at 3.33 GB RSS (measured 2026-09-24,
+# E-329); serv1 has ~2.7 GB free next to the 3.65 GB prod process, so the build
+# must be scheduled when the prod process is not squeezed, and it must never write
+# into the production checkout. The state file is ~220 MB.
 #
 # Sources: runtime/artifacts/misc/pro_corpus_rich.npz (rebuilt by the nightly
 # prematch chain) + the OpenDota timeline DBs. Run AFTER the rich rebuild.
@@ -18,11 +26,12 @@
 # mtime/size changes (base/kv3_panel_serving.py); no restart is needed.
 #
 # Usage: scripts/ops/build_kv3_state.sh [--deliver]
-# Output: data/kills_v3_state/state.npz (local), serv1:/root/main/data/kills_v3_state/state.npz
+# Output: data/kills_v3_state/state.npz (build tree), $PROD_ROOT/data/kills_v3_state/state.npz
 set -euo pipefail
-cd /Users/alex/Documents/ingame
-PY=/Users/alex/Documents/ingame/venv_catboost/bin/python3
-SERV1=serv1
+source "$(dirname "${BASH_SOURCE[0]}")/../run/lib_pro_chain.sh"
+cd "$ROOT"
+pro_chain_guard || exit 2
+export PRO_CHAIN_MODE PROD_ROOT PRO_CHAIN_SHADOW PRO_CHAIN_SUMMARY
 MODEL_DIR=${KV3_SHADOW_DIR:-ml-models/prematch_panel_kv3}
 OUT_DIR=data/kills_v3_state
 DELIVER=0
@@ -47,8 +56,8 @@ nice -n 10 $PY -m base.kills_v3_serving build-state --cutoff "$CUTOFF" --history
 # Freshness: the newest replayed or pending event must be recent, otherwise the
 # source chain (corpus top-up / rich rebuild) has stalled and the state is stale.
 $PY - "$TMP" "$CUTOFF" <<'PY'
-import sys
-sys.path.insert(0, "/Users/alex/Documents/ingame")
+import os, sys
+sys.path.insert(0, os.getcwd())  # build tree: the script did cd "$ROOT"
 from base import kills_v3_serving as sv
 import numpy as np
 st = sv.load_state(sys.argv[1])
@@ -63,17 +72,18 @@ if not newest or age_h > 36:
     print("ВНИМАНИЕ: свежесть kv3 state: newest event older than 36 h - source chain stalled?")
 PY
 mv "$TMP" "$OUT_DIR/state.npz"
-L=$(shasum -a 1 "$OUT_DIR/state.npz" | cut -d' ' -f1)
+L=$(sha1_of "$OUT_DIR/state.npz")
 echo "kv3 state: local ready sha1 $L $(du -h "$OUT_DIR/state.npz" | cut -f1)"
 
 [ "$DELIVER" = 1 ] || exit 0
-ssh -o BatchMode=yes "$SERV1" "mkdir -p /root/main/$OUT_DIR"
-scp -q "$OUT_DIR/state.npz" "$SERV1:/root/main/$OUT_DIR/state.npz.tmp"
-R=$(ssh -o BatchMode=yes "$SERV1" "sha1sum /root/main/$OUT_DIR/state.npz.tmp | cut -d' ' -f1")
-if [ "$L" != "$R" ]; then
-  ssh -o BatchMode=yes "$SERV1" "rm -f /root/main/$OUT_DIR/state.npz.tmp"
-  echo "ВНИМАНИЕ: kv3 state доехал битым ($R против $L) — на serv1 остался прежний"
+prod_run "mkdir -p $PROD_ROOT/$OUT_DIR"
+if ! prod_stage "$OUT_DIR/state.npz" "$OUT_DIR/state.npz"; then
+  echo "ВНИМАНИЕ: kv3 state доехал битым (против $L) — на проде остался прежний"
   exit 1
 fi
-ssh -o BatchMode=yes "$SERV1" "mv /root/main/$OUT_DIR/state.npz.tmp /root/main/$OUT_DIR/state.npz"
-echo "kv3 state доставлен: sha1 $L"
+prod_commit "$OUT_DIR/state.npz"
+if shadow_on; then
+  echo "kv3 state: [тень] не доставлен, sha1 $L"
+else
+  echo "kv3 state доставлен: sha1 $L"
+fi

@@ -162,12 +162,20 @@ print(json.dumps(out))
 
 
 def _remote_rows() -> dict:
-    """Один ssh-ход: возраст продовых источников."""
+    """Один ssh-ход: возраст продовых источников.
+
+    На serv1 цепочка идёт в режиме PRO_CHAIN_MODE=local (дерево сборки
+    /root/pro_chain рядом с боевым /root/main), а ssh-алиаса `serv1` на самой
+    машине нет — тот же фрагмент запускается локально тем же интерпретатором.
+    """
+    if os.getenv("PRO_CHAIN_MODE") == "local":
+        argv = ["/root/main/venv/bin/python3", "-"]
+    else:
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", SERV1,
+                "/root/main/venv/bin/python3 -"]
     try:
         proc = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", SERV1,
-             "/root/main/venv/bin/python3 -"],
-            input=_REMOTE_SNIPPET, capture_output=True, text=True, timeout=180,
+            argv, input=_REMOTE_SNIPPET, capture_output=True, text=True, timeout=180,
         )
     except Exception as exc:
         return {"_error": {"age_days": None, "detail": f"ssh не выполнился: {exc}"}}

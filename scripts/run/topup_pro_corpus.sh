@@ -17,21 +17,40 @@
 # что есть, и предупредить о его возрасте своей проверкой. Сцепив их, мы бы
 # теряли и снимок тоже.
 set -e
-cd /Users/alex/Documents/ingame
-PY=venv_catboost/bin/python3
+# Одна цепочка, две машины (см. scripts/run/lib_pro_chain.sh):
+#   remote (Мак, launchd 04:30) — поведение прежнее: обычный JSON, ключи/ssh как раньше;
+#   local  (serv1, из pro_nightly_chain.sh) — корпус там gzip: PRO_CORPUS_GZIP=1
+#     включает запись .json.gz-частей в base/maps_research.py. Переменная задаётся
+#     ТОЛЬКО процессу добора и нигде не экспортируется: попади она в обход пабов на
+#     serv1, читатели пабов молча не нашли бы свежих частей.
+source "$(dirname "${BASH_SOURCE[0]}")/lib_pro_chain.sh"
+cd "$ROOT"
+pro_chain_guard || exit 2
 LOG="runtime/pro_topup_$(date +%Y%m%d_%H%M).log"
+if [ "$PRO_CHAIN_MODE" = local ]; then NP="serv1: "; else NP=""; fi
+mkdir -p runtime
 
 run_topup() {
   local rc=0
-  $PY runtime/experiments/misc/topup_pro_corpus.py || rc=$?
+  # Тень: квота OpenDota 3000/сутки общая с ещё работающим добором на Маке —
+  # второй добор в ту же ночь съел бы её. PRO_CHAIN_SHADOW_TOPUP=1 — всё же идти.
+  if shadow_on && [ "${PRO_CHAIN_SHADOW_TOPUP:-0}" != 1 ]; then
+    echo "[тень] добор про-корпуса пропущен: квота OpenDota общая с добором на Маке (PRO_CHAIN_SHADOW_TOPUP=1 — запустить)"
+    return 0
+  fi
+  if [ "$PRO_CHAIN_MODE" = local ]; then
+    PRO_CORPUS_GZIP=1 "$PY" scripts/pro_chain/topup_pro_corpus.py || rc=$?
+  else
+    "$PY" scripts/pro_chain/topup_pro_corpus.py || rc=$?
+  fi
   # Тишина ≠ успех: 25.08–01.09.2026 добор не шёл 8 ночей, и узнали об этом
   # по возрасту снимка на проде. Одна строка в админ-чат в любом исходе.
   if [ "$rc" -ne 0 ] || grep -qE 'ВНИМАНИЕ|Traceback|Unexpected error|Все [0-9]+ прокси' "$LOG"; then
-    { echo "⚠️ добор про-корпуса: rc=$rc ($(date '+%F %T'))";
+    { echo "${NP}⚠️ добор про-корпуса: rc=$rc ($(date '+%F %T'))";
       grep -E 'ВНИМАНИЕ|Traceback|Unexpected error|прокси|свежайшая карта|файлов в корпусе' "$LOG" | tail -6; } \
-      | $PY scripts/ops/notify_admin.py
+      | "$PY" scripts/ops/notify_admin.py
   else
-    grep -E 'файлов в корпусе|свежайшая карта' "$LOG" | sed 's/^/✅ добор: /' | $PY scripts/ops/notify_admin.py
+    grep -E 'файлов в корпусе|свежайшая карта' "$LOG" | sed "s/^/${NP}✅ добор: /" | "$PY" scripts/ops/notify_admin.py
   fi
   return "$rc"
 }

@@ -825,6 +825,14 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 **Артефакт: `data/prematch_model_artifact_v3.npz`** (env `PREMATCH_ARTIFACT`). Именно v3, а не v2: цепочка сборки `build_prematch_artifact.py` → `_v2.py` → `add_org_identity.py`, и последний шаг добавляет опознание организации по составу. Раннер — `scripts/run/rebuild_prematch_snapshot.sh` (собирает локально, доставляет на serv1 атомарным переименованием).
 
+**Ночная цепочка про-корпуса на двух машинах** (с 03.10.2026, board ingame-loel). Одни и те же скрипты работают в двух режимах через общую обвязку `scripts/run/lib_pro_chain.sh` (подключается `source`):
+- `PRO_CHAIN_MODE=remote` (Мак, автоопределение: нет `/root/main/.git`) — дерево сборки = этот checkout, прод = `serv1:/root/main` по ssh/scp; поведение как до переноса (тест `tests/test_pro_chain_rebuild_shell.py` сверяет шаги и доставки с исходным скриптом).
+- `PRO_CHAIN_MODE=local` (serv1) — дерево сборки `/root/pro_chain` (git worktree), прод `PROD_ROOT=/root/main` на той же машине; доставка `prod_stage`/`prod_commit` = cp в `.tmp` + сверка sha1 + mv. `pro_chain_guard` выходит с кодом 2, если дерево сборки совпадает с боевым.
+- `PRO_CHAIN_SHADOW=1` — собрать всё, не доставить ничего (ни записи под `PROD_ROOT`, ни перебазировки ELO, ни systemctl); несостоявшиеся доставки пишутся в `PRO_CHAIN_SUMMARY` (TSV путь/sha1/байт). Добор в тени пропускается (квота OpenDota), если не задан `PRO_CHAIN_SHADOW_TOPUP=1`.
+- Python-шаги цепочки лежат в отслеживаемом `scripts/pro_chain/` (17 копий из gitignored `runtime/experiments/misc/`, исходные sha1 — `SOURCES.sha1`; правки только переносимые пути и чтение `.json.gz`).
+- Вход на serv1 — `scripts/run/pro_nightly_chain.sh` из БОЕВОГО checkout'а: flock, сброс отслеживаемого выхода `data/team_org_aliases.json` в дереве сборки, `checkout --detach` дерева сборки на HEAD прода, затем `nice/ionice/timeout` добор (`PRO_CORPUS_GZIP=1` только для процесса добора) и пересборка. Разовая подготовка — `scripts/ops/setup_pro_chain_serv1.sh` (идемпотентно, печатает чек-лист входов).
+- `scripts/ops/feature_freshness.py` в local-режиме читает продовые источники без ssh.
+
 `get_model(path=ARTIFACT_PATH) -> PrematchModel` (кэш процесса).
 
 `PrematchModel.score(*, radiant_accounts, dire_accounts, radiant_heroes, dire_heroes, radiant_team_id, dire_team_id, draft_logit=None, strictness="teams", now_ts=None, max_age_days=3.0) -> ScoreResult`. **Дефолты не подставляются**: при нехватке данных бросает `MissingData` с перечнем недостающего. Уровни строгости: `accounts` / `teams` / `cells` / `full`. Три отдельные причины отказа — неизвестные игроки, протухший снимок (`wr30` — окно 30 дней, `vs_wr` — полураспад 45 дней), разметка позиций против истории (≥3 конфликтных слота).

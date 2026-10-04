@@ -8,6 +8,7 @@
 | Путь | Что это |
 |---|---|
 | `main/` | ingame — live-пайплайн Dota 2 (см. ниже) |
+| `pro_chain/` | ingame — ОТДЕЛЬНОЕ дерево сборки ночной цепочки про-корпуса (git worktree от `main/`, создаёт `scripts/ops/setup_pro_chain_serv1.sh`): корпус `pro_heroes_data/json_parts_split_from_object/*.json.gz`, кэши `runtime/artifacts/misc/`, `base/keys.py` — симлинк на боевой. Сборка внутри `main/` запрещена (`pro_chain_guard`): её выходы — это файлы, которые читает прод |
 | `diary_bot/` | Telegram-дневник (`diary-bot.service`) |
 | `camoufox/` | сборка антидетект-браузера (runtime-профиль — в `~/.cache/camoufox`) |
 | `the-ai-counsel/`, `speech-awareness/`, `research/`, `android-sdk/` | сторонние/исследовательские проекты |

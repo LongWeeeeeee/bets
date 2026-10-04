@@ -1,0 +1,19 @@
+# Copied 2026-10-02 from the gitignored runtime/experiments/misc/ of the main checkout (HEAD f5353230).
+# sha1  size  name   -- of the ORIGINAL files, before the path/gz edits (README.md lists the edits).
+4c7ad40939f4a8c659d92019f83193ab045551af  8979  add_live_maps.py
+6c54ddffc2b660b3719abe0ce6eebeb386aa6f0d  3231  add_org_identity.py
+43a199f148030b656809567b437059ddcef4a82f  5704  build_pair_snapshot.py
+db23f968aa846f0c977d17c31bd1b25e362c62ab  15711  build_prematch_artifact.py
+81860998e05ad4a337bb074c6d5944400a34923d  20576  build_prematch_artifact_v2.py
+33162b88d470fb2695f7fd1091ab77fff7529d1e  8380  build_prior_snapshot.py
+6b22374a711523843df5236493fb9792011f271a  4898  build_rating_snapshot.py
+306470e424210230ba13873d816806d257d1f1ce  26070  catalog_features.py
+b45935ddea5dd96042465dd2cede90743dd0d7e4  10484  finalize_artifact.py
+1628dbdd3fc538295074ae60f27d3171724b31c0  19592  ideas_batch2.py
+c6baa0e78016919e0628da76bad00c60c0310021  16284  ideas_batch5.py
+042ede48da0eda9539c0427e48a21c4f8cbd6f3c  9605  ideas_batch5b.py
+e5469f267bd55d3369971d5b35ae9d90d04c1e12  8079  prematch_bet_roi.py
+705bd74d30f4003bba10fe18b077734c217b02c7  4195  pro_corpus_extract.py
+6ccaec23e64be0fa0669d610451d422df81d9cf2  8739  pro_corpus_rich.py
+36fcf05b79051b146e48b9723a689eb5a6b6a83f  9598  pro_features_wide.py
+2d5e498a168b2124894c7348c72a1bd17e9b1af0  9527  topup_pro_corpus.py
