@@ -34,6 +34,10 @@ REBUILD_TIMEOUT="${PRO_CHAIN_REBUILD_TIMEOUT:-}"
 
 die() { echo "ОШИБКА: $*" >&2; exit 2; }
 
+# A rebuild timeout could leave prod stopped, or kill only the notifier while
+# the isolated rebuild group keeps running and delivering after flock unlocks.
+[ -z "$REBUILD_TIMEOUT" ] || die "PRO_CHAIN_REBUILD_TIMEOUT недопустим: таймаут пересборки опасен для перебазировки и блокировки"
+
 [ -e "$PROD_ROOT/.git" ] || die "боевой checkout $PROD_ROOT не git-репозиторий"
 [ -d "$BUILD_ROOT" ] || die "дерево сборки $BUILD_ROOT не существует (scripts/ops/setup_pro_chain_serv1.sh)"
 PROD_REAL="$(cd "$PROD_ROOT" && pwd -P)"
@@ -139,6 +143,7 @@ run_step "добор про-корпуса" "$TOPUP_TIMEOUT" "$BUILD_ROOT/script
 [ "$topup_rc" -eq 0 ] || echo "добор упал (rc=$topup_rc), пересобираю на текущем корпусе"
 
 rebuild_rc=0
+wait_no_live_map "${PRO_CHAIN_HEAVY_WAIT_SECONDS:-2700}" "пересборка снимка"
 run_step "пересборка снимка" "$REBUILD_TIMEOUT" "$BUILD_ROOT/scripts/run/rebuild_prematch_snapshot.sh" || rebuild_rc=$?
 
 echo "=== $(date '+%F %T') цепочка завершена: добор rc=$topup_rc, пересборка rc=$rebuild_rc ==="

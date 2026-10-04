@@ -1,0 +1,16 @@
+[Unit]
+Description=Nightly pro-corpus rebuild and delivery
+
+[Service]
+Type=oneshot
+ExecStart=/root/main/scripts/run/pro_nightly_chain.sh
+Environment=HOME=/root
+Environment=TZ=Europe/Moscow
+Nice=10
+IOSchedulingClass=idle
+MemoryHigh=7.5G
+MemoryMax=8.5G
+MemorySwapMax=0
+OOMScoreAdjust=900
+# The rebuild must not be timed out while cyberscore is stopped for ELO rebase.
+TimeoutStartSec=infinity

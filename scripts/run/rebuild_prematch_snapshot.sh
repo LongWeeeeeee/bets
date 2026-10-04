@@ -49,9 +49,50 @@ pro_chain_guard || exit 2
 export PRO_CHAIN_MODE PROD_ROOT PRO_CHAIN_SHADOW PRO_CHAIN_SUMMARY
 mkdir -p runtime runtime/artifacts/misc ELO/output
 
+# The rebuild child is a process-group leader (run_with_notify below). The
+# watchdog has its own group, so it can kill all build descendants and exit,
+# leaving the notifying parent and cyberscore untouched. No watchdog on the Mac.
+WATCHDOG_PID=""
+stop_memory_watchdog() {
+  if [ -n "$WATCHDOG_PID" ]; then
+    kill -TERM -- "-$WATCHDOG_PID" 2>/dev/null || :
+    wait "$WATCHDOG_PID" 2>/dev/null || :
+    WATCHDOG_PID=""
+  fi
+}
+
+memory_watchdog() {
+  set +m
+  local chain_pid="$1" available
+  while kill -0 "$chain_pid" 2>/dev/null; do
+    sleep "${PRO_CHAIN_WATCHDOG_INTERVAL_SECONDS:-20}"
+    kill -0 "$chain_pid" 2>/dev/null || return 0
+    if live_map_active; then
+      available="$(awk '/^MemAvailable:/ {print $2; found=1; exit} END {if (!found) exit 1}' \
+        "${PRO_CHAIN_MEMINFO_PATH:-/proc/meminfo}")" || {
+        echo "ВНИМАНИЕ: watchdog памяти — MemAvailable недоступен"; continue; }
+      if [ "$available" -lt "${PRO_CHAIN_MIN_AVAILABLE_KB:-2097152}" ]; then
+        echo "ОШИБКА: watchdog памяти — карта живая или состояние неизвестно, MemAvailable=${available} kB; завершаю группу пересборки $chain_pid"
+        kill -KILL -- "-$chain_pid"
+        return 0
+      fi
+    fi
+  done
+}
+
 run_chain() {
   ELO_SNAPSHOT_STAGED=0
   echo "=== $(date '+%F %T') пересборка снимка предматчевой модели ==="
+  if [ "$PRO_CHAIN_MODE" = local ] && [ -r "${PRO_CHAIN_MEMINFO_PATH:-/proc/meminfo}" ]; then
+    set -m
+    memory_watchdog "$$" &
+    WATCHDOG_PID=$!
+    set +m
+    trap 'stop_memory_watchdog' EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    echo "watchdog памяти: PID=$WATCHDOG_PID"
+  fi
   # Overlay динамического tier2-onboarding'а (см. base/tier_dynamic_overlay.py)
   # пишется рантаймом ТОЛЬКО на serv1: локальный добор без него не видит
   # команды, онбордженные после 02.09.2026 (Uralan, клубы WINLINE Star Series),
@@ -113,6 +154,7 @@ run_chain() {
   #     считались на ростер-истории трёхнедельной давности (E-249). Пересборка
   #     ~11 мин; отказ НЕ рвёт цепочку (доставка предматчевого артефакта важнее),
   #     а молчаливое протухание ловит freshness-watchdog.
+  wait_no_live_map "${PRO_CHAIN_HEAVY_WAIT_SECONDS:-2700}" "ELO-снимок"
   if $PY ELO/live_team_strength.py --snapshot-path ELO/output/live_team_elo_snapshot.json; then
     # prod_stage кладёт файл в `<прод>/…json.tmp` и сверяет sha1; при расхождении
     # сам удаляет .tmp и возвращает 1. В тени только пишет строку в summary.
@@ -246,6 +288,14 @@ CHECK
   #    отказе прод возвращается на прежний снимок, а цепочка сообщает ошибку.
   #    Скрипт идёт как есть и на Маке (ssh), и на serv1 (локальный bash -s): путь
   #    /root/main в нём — боевой checkout на обеих машинах, дерево сборки он не трогает.
+  # Disarm and reap before anything can stop prod: a group kill during rebase
+  # could otherwise leave cyberscore stopped. Wait on the CHAIN host before
+  # opening the prod transaction session; shadow mode never restarts prod.
+  stop_memory_watchdog
+  echo "watchdog памяти остановлен перед рестартом"
+  if ! shadow_on; then
+    wait_no_live_map "${PRO_CHAIN_RESTART_WAIT_SECONDS:-5400}" "рестарт cyberscore"
+  fi
   prod_script "$ELO_SNAPSHOT_STAGED" <<'ELO_REBASE_REMOTE'
 set -e
 cd /root/main
@@ -324,8 +374,19 @@ notify_chain() {
 }
 
 run_with_notify() {
-  local rc=0
-  if LOG="$LOG" bash "$0" --run-chain; then rc=0; else rc=$?; fi
+  local rc=0 chain_pid
+  # Bash job control gives the child a separate process group on both 3.2 and
+  # 5.2, without depending on Linux-only setsid or using wait -n.
+  set -m
+  LOG="$LOG" bash "$0" --run-chain &
+  chain_pid=$!
+  set +m
+  # A signal to the notifying parent must not orphan a delivering child or
+  # cancel the critical rebase. Keep waiting until the child has finished.
+  trap 'wait "$chain_pid" || :; exit 143' TERM
+  trap 'wait "$chain_pid" || :; exit 130' INT
+  wait "$chain_pid" || rc=$?
+  trap - TERM INT
   notify_chain "$rc"
   return "$rc"
 }

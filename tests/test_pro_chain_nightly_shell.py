@@ -121,6 +121,8 @@ class Chain:
         git(self.prod, "init", "-q")
         self.commit(ver="1")
         git(self.prod, "worktree", "add", "-q", "--detach", str(self.build), "HEAD")
+        write(self.prod / "runtime/sourcetv_matches.json", "{}", 0o644)
+        write(self.prod / "venv/bin/python3", f'#!/bin/bash\nexec {sys.executable} "$@"\n')
 
     def commit(self, ver: str) -> str:
         run = self.prod / "scripts" / "run"
@@ -558,3 +560,62 @@ def test_setup_failed_actions_exit_1(setup_env, tmp_path: Path):
 def test_bash_n_under_system_bash(script: Path):
     r = subprocess.run([BASH, "-n", str(script)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_chain_gate_after_topup_before_rebuild(chain: Chain):
+    write(chain.prod / "runtime/sourcetv_matches.json", '{"map": 1}', 0o644)
+    write(chain.stubbin / "sleep", '''#!/bin/bash
+echo "live-gate" >> "$STUB_LOG"
+printf '{}' > "$PROD_ROOT/runtime/sourcetv_matches.json"
+''')
+    r = chain.run(PRO_CHAIN_HEAVY_WAIT_SECONDS="2", PRO_CHAIN_LIVE_POLL_SECONDS="0.01")
+    assert r.returncode == 0, chain.chain_log()
+    assert [s.split()[0] for s in chain.steps()] == ["topup", "live-gate", "rebuild"]
+    assert "жду окончания живой карты" in chain.chain_log()
+
+
+def test_chain_gate_heavy_bound_warns_and_still_rebuilds(chain: Chain):
+    write(chain.prod / "runtime/sourcetv_matches.json", "unparsable", 0o644)
+    r = chain.run(PRO_CHAIN_HEAVY_WAIT_SECONDS="0")
+    assert r.returncode == 0, chain.chain_log()
+    assert [s.split()[0] for s in chain.steps()] == ["topup", "rebuild"]
+    assert "ВНИМАНИЕ: пересборка снимка" in chain.chain_log()
+
+
+def test_chain_gate_refuses_rebuild_timeout_before_any_step(chain: Chain):
+    r = chain.run(PRO_CHAIN_REBUILD_TIMEOUT="1s")
+    assert r.returncode == 2, (r.stdout, r.stderr, chain.chain_log())
+    assert "ОШИБКА" in r.stderr and "PRO_CHAIN_REBUILD_TIMEOUT" in r.stderr
+    assert chain.steps() == []
+
+
+def test_chain_gate_systemd_units_are_bounded_and_use_moscow_time():
+    # Parse directives without requiring systemd on the Mac.
+    service = (OPS_DIR / "systemd/pro-chain-nightly.service").read_text()
+    timer = (OPS_DIR / "systemd/pro-chain-nightly.timer").read_text()
+    required = [
+        "Type=oneshot", "ExecStart=/root/main/scripts/run/pro_nightly_chain.sh",
+        "Nice=10", "IOSchedulingClass=idle", "MemoryHigh=7.5G", "MemoryMax=8.5G",
+        "MemorySwapMax=0", "OOMScoreAdjust=900", "Environment=HOME=/root",
+        "TimeoutStartSec=infinity",
+    ]
+    assert all(line in service.splitlines() for line in required)
+    assert "OnCalendar=*-*-* 01:30:00 Europe/Moscow" in timer.splitlines()
+    assert "Persistent=false" in timer.splitlines()
+    assert "Unit=pro-chain-nightly.service" in timer.splitlines()
+    assert "WantedBy=timers.target" in timer.splitlines()
+
+
+def test_chain_gate_setup_prints_install_commands_only(setup_env, tmp_path):
+    prod, build, run = setup_env
+    stubs = tmp_path / "install-stubs"
+    calls = tmp_path / "install-calls"
+    for name in ("install", "systemctl"):
+        write(stubs / name, f'#!/bin/bash\necho "{name} $*" >> "{calls}"\nexit 99\n')
+    r = run(PATH=f"{stubs}:{os.environ['PATH']}")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "install -m 0644" in r.stdout and "pro-chain-nightly.timer" in r.stdout
+    assert "systemctl daemon-reload" in r.stdout
+    assert "systemctl enable --now pro-chain-nightly.timer" in r.stdout
+    assert "shadow" in r.stdout and "launchd" in r.stdout
+    assert not calls.exists(), "setup executed installation/enable commands"

@@ -106,4 +106,15 @@ file ml-models/prematch_panel_kv3/manifest.json
 EOF
 
 echo "== итог: отсутствует входов — $n_missing (чек-лист, код выхода 0)"
+# Print only: installation and cutover need separate owner approval.
+# Mac launchd jobs stay on until one serv1 shadow night matches.
+cat <<EOF
+== systemd: команды ниже только напечатаны, НЕ выполнены
+# Сначала сверить shadow-ночь serv1; задания Mac launchd остаются включёнными.
+install -m 0644 $PROD_ROOT/scripts/ops/systemd/pro-chain-nightly.service /etc/systemd/system/pro-chain-nightly.service
+install -m 0644 $PROD_ROOT/scripts/ops/systemd/pro-chain-nightly.timer /etc/systemd/system/pro-chain-nightly.timer
+systemctl daemon-reload
+# ТОЛЬКО после совпадения shadow-ночи и отдельного одобрения владельца на cutover:
+systemctl enable --now pro-chain-nightly.timer
+EOF
 exit 0

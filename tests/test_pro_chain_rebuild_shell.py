@@ -20,9 +20,12 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import signal
 import shutil
 import stat
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -62,6 +65,7 @@ DELIVERIES = {
 PY_STUB = r'''#!/bin/bash
 # Stub python for the build tree: logs argv, writes the output each step owes.
 EV="$STUB_EVENTS"
+if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi
 if [ "${1:-}" = "-" ]; then
   cat >/dev/null
   case "${2:-}" in *manifest.json) echo "1 2 3 4 5 6";; esac
@@ -98,6 +102,7 @@ exit 0
 '''
 
 PRODPY_STUB = r'''#!/bin/bash
+if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi
 echo "PRODPY $*" >> "$STUB_EVENTS"
 exit 0
 '''
@@ -256,6 +261,7 @@ class Env:
         for rel in DELIVERIES:
             _write(prod / rel, OLD_ARTIFACT)
         _write(prod / "runtime/prematch_model_bet_sent.jsonl", "")
+        _write(prod / "runtime/sourcetv_matches.json", "{}")
         _write(self.state / "ingame/map_id_check.txt", "old-map\n")
         if self.prod_is_build:
             (build / ".git").mkdir(exist_ok=True)
@@ -271,6 +277,7 @@ class Env:
             "FAKE_PROD": str(self.prod),
             "FAKE_STATE": str(self.state),
             "PRO_CHAIN_PY": str(self.stubs / "python3"),
+            "STUB_REAL_PY": sys.executable,
             "LOG": str(self.log),
             "PRO_CHAIN_SUMMARY": str(self.summary),
         }
@@ -320,6 +327,12 @@ def _normalize_ops(lines: list[str]) -> list[str]:
         l = re.sub(r"(--cutoff |state\.npz\.tmp )\d+", r"\1N", l)
         if l.startswith("SSH sha1sum "):          # read-only verification, shape differs by design
             continue
+        if l.startswith("SSH ") and "sourcetv_matches.json" in l:
+            continue  # read-only live-map gate
+        if l.startswith("BASH-S"):
+            l = "BASH-S " + l.split()[2]  # compare the original staged-snapshot argument
+        if l.startswith("SSH bash -s --"):
+            l = " ".join(l.split()[:5])
         out.append(l.replace(" 2>/dev/null", ""))
     return out
 
@@ -617,3 +630,291 @@ def test_guard_refuses_symlinked_prod_root_pointing_at_build(make_env):
     assert r.returncode == 2, (r.stdout, r.stderr)
     assert "совпадает с боевым" in r.stderr
     assert e.prod_tree() == before
+
+
+# ------------------------------------------------------- live-map gate / memory watchdog
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+def test_chain_gate_waits_for_empty_live_state(make_env, mode):
+    e = make_env(kv3=False, target="new", mode=mode)
+    _write(e.prod / "runtime/sourcetv_matches.json", '{"map": {}}')
+    _write(e.stubs / "sleep", '''#!/bin/bash
+echo GATE-SLEEP >> "$STUB_EVENTS"
+printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
+''', exe=True)
+    r = _run_library(e, 'wait_no_live_map 2 test-gate; echo PROCEEDED',
+                     extra={"PRO_CHAIN_LIVE_POLL_SECONDS": "0.01"})
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "жду окончания живой карты" in r.stdout and "PROCEEDED" in r.stdout
+    assert e.ops(("GATE-SLEEP",)) == ["GATE-SLEEP"]
+    assert "ВНИМАНИЕ" not in r.stdout
+    assert (e.prod / "runtime/sourcetv_matches.json").read_text() == "{}"
+
+
+@pytest.mark.parametrize("state", ['{"map": 1}', "bad json", None, "[]"])
+def test_chain_gate_bound_warns_and_proceeds(make_env, state):
+    e = make_env(kv3=False, target="new", mode="local")
+    live = e.prod / "runtime/sourcetv_matches.json"
+    if state is None:
+        live.unlink()
+    else:
+        live.write_text(state)
+    r = _run_library(e, 'set -e; wait_no_live_map 0 bounded-gate; echo PROCEEDED')
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert "ВНИМАНИЕ" in r.stdout and "bounded-gate" in r.stdout
+    assert "PROCEEDED" in r.stdout
+
+
+def test_chain_gate_before_elo_snapshot(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    text = (e.stubs / "python3").read_text().replace(
+        'printf \'{"aliases": 1}\\n\' > data/team_org_aliases.json;',
+        'printf \'{"aliases": 1}\\n\' > data/team_org_aliases.json; '
+        'printf \'{"map": 1}\' > "$FAKE_PROD/runtime/sourcetv_matches.json";',
+    )
+    _write(e.stubs / "python3", text, exe=True)
+    _write(e.stubs / "sleep", '''#!/bin/bash
+[ "$1" = 3 ] && exit 0
+echo ELO-GATE-SLEEP >> "$STUB_EVENTS"
+printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
+''', exe=True)
+    r = e.run(REBUILD_REL, extra={"PRO_CHAIN_LIVE_POLL_SECONDS": "0.01"})
+    assert r.returncode == 0, e.log.read_text()
+    events = e.events_lines()
+    gate = events.index("ELO-GATE-SLEEP")
+    assert gate < next(i for i, line in enumerate(events) if "PY ELO/live_team_strength.py" in line)
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("clears", [True, False])
+@pytest.mark.parametrize("shadow", [False, True])
+def test_chain_gate_restart_wait_or_bound_under_errexit(make_env, mode, clears, shadow):
+    e = make_env(kv3=False, target="new", mode=mode, shadow=shadow)
+    # Turn live only after the heavy steps, immediately before the rebase.
+    text = (e.stubs / "python3").read_text().replace(
+        'echo "PY $* |$note |@$here" >> "$EV"',
+        'echo "PY $* |$note |@$here" >> "$EV"\n'
+        '[ "$1" != scripts/pro_chain/prematch_bet_roi.py ] || '
+        'printf \'{"map": 1}\' > "$FAKE_PROD/runtime/sourcetv_matches.json"',
+    )
+    _write(e.stubs / "python3", text, exe=True)
+    # Observe the CHAIN/prod boundary before bash -s executes any transaction text.
+    _write(e.prod / "venv/bin/python3", PRODPY_STUB.replace(
+        'then exec "$STUB_REAL_PY" "$@"; fi',
+        'then echo LIVE-READ >> "$STUB_EVENTS"; '
+        'exec "$STUB_REAL_PY" "$@"; fi',
+    ), exe=True)
+    transaction_stdin = e.base / "transaction.stdin"
+    _write(e.stubs / "bash", BASH_STUB.replace(
+        'cat > "$tmp.orig"',
+        'cat > "$tmp.orig"\n'
+        'cp "$tmp.orig" "$D1_TRANSACTION_STDIN"\n'
+        'echo "TRANSACTION-LIVE $(cat "$FAKE_PROD/runtime/sourcetv_matches.json")" >> "$STUB_EVENTS"\n'
+        'if /usr/bin/grep -q "ВНИМАНИЕ: рестарт cyberscore" "$LOG"; then\n'
+        '  echo BOUND-WARNING >> "$STUB_EVENTS"\n'
+        'fi\n'
+        'if /usr/bin/grep -q "watchdog памяти остановлен перед рестартом" "$LOG"; then\n'
+        '  echo WATCHDOG-DISARMED >> "$STUB_EVENTS"\n'
+        'fi',
+    ), exe=True)
+    _write(e.stubs / "sleep", '''#!/bin/bash
+[ "$1" = 3 ] && exit 0
+echo RESTART-GATE-SLEEP >> "$STUB_EVENTS"
+printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
+''', exe=True)
+    r = e.run(REBUILD_REL, extra={
+        "PRO_CHAIN_RESTART_WAIT_SECONDS": "2" if clears else "0",
+        "PRO_CHAIN_LIVE_POLL_SECONDS": "0.01",
+        "D1_TRANSACTION_STDIN": str(transaction_stdin),
+    })
+    log = e.log.read_text()
+    assert r.returncode == 0, log
+    events = e.events_lines()
+    roi = next(i for i, line in enumerate(events) if "PY scripts/pro_chain/prematch_bet_roi.py" in line)
+    reads = [i for i, line in enumerate(events) if i > roi and line == "LIVE-READ"]
+    if shadow:
+        assert not reads and "RESTART-GATE-SLEEP" not in events
+        assert "рестарт cyberscore — жду" not in log
+        assert "ВНИМАНИЕ: рестарт cyberscore" not in log
+        assert not transaction_stdin.exists()
+        assert not e.ops(("BASH-S", "SYSTEMCTL"))
+        return
+    transaction = next(i for i, line in enumerate(events) if line.startswith("BASH-S"))
+    assert reads and max(reads) < transaction, "restart reads must precede the transaction session"
+    assert events.index("WATCHDOG-DISARMED") < transaction
+    if mode == "remote":
+        ssh_transaction = events.index("SSH bash -s -- 1")
+        ssh_reads = [i for i, line in enumerate(events)
+                     if i > roi and line.startswith("SSH ") and "sourcetv_matches.json" in line]
+        assert ssh_reads and max(ssh_reads) < ssh_transaction < transaction
+    else:
+        assert not e.ops(("SSH ",))
+    base = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"3de5a5af:{REBUILD_REL}"],
+        capture_output=True, check=True,
+    ).stdout
+    base_stdin = base.split(b"<<'ELO_REBASE_REMOTE'\n", 1)[1].split(b"ELO_REBASE_REMOTE\n", 1)[0]
+    assert transaction_stdin.read_bytes() == base_stdin
+    assert e.ops(("BASH-S",)) == [f"BASH-S -- 1 {hashlib.sha1(base_stdin).hexdigest()}"]
+    stop = events.index("SYSTEMCTL stop cyberscore.service")
+    if clears:
+        assert events.index("RESTART-GATE-SLEEP") < transaction < stop
+        assert "TRANSACTION-LIVE {}" in events
+        assert "BOUND-WARNING" not in events
+        assert "жду окончания живой карты" in log
+    else:
+        assert events.index("BOUND-WARNING") < transaction < stop
+        assert 'TRANSACTION-LIVE {"map": 1}' in events
+        assert "ВНИМАНИЕ: рестарт cyberscore" in log
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+
+
+def _memory_probe(e, *, live=True, available=1):
+    _write(e.prod / "runtime/sourcetv_matches.json", '{"map": 1}' if live else "{}")
+    meminfo = e.base / "meminfo"
+    _write(meminfo, f"MemAvailable: {available} kB\n")
+    _write(e.stubs / "sleep", '''#!/bin/bash
+[ "$1" = 3 ] && exit 0
+exec /bin/sleep "$@"
+''', exe=True)
+    text = (e.stubs / "python3").read_text().replace(
+        'echo "PY $* |$note |@$here" >> "$EV"',
+        'echo "PY $* |$note |@$here" >> "$EV"\n'
+        'if [ "$1" = scripts/pro_chain/pro_corpus_extract.py ]; then\n'
+        '  echo PROBE-BEGIN >> "$EV"\n'
+        '  (/bin/sleep 0.6; echo PROBE-DESCENDANT-FINISHED >> "$EV") &\n'
+        '  echo "PROBE-CHILD $!" >> "$EV"\n'
+        '  wait $!\n'
+        '  echo PROBE-FINISHED >> "$EV"\n'
+        'fi',
+    )
+    _write(e.stubs / "python3", text, exe=True)
+    return {
+        "PRO_CHAIN_MEMINFO_PATH": str(meminfo),
+        "PRO_CHAIN_MIN_AVAILABLE_KB": "100",
+        "PRO_CHAIN_WATCHDOG_INTERVAL_SECONDS": "0.05",
+        "PRO_CHAIN_HEAVY_WAIT_SECONDS": "0",
+        "PRO_CHAIN_RESTART_WAIT_SECONDS": "0",
+    }
+
+
+@pytest.mark.parametrize("shadow", [False, True])
+def test_chain_gate_watchdog_kills_group_and_prevents_delivery(make_env, shadow):
+    e = make_env(kv3=False, target="new", mode="local", shadow=shadow)
+    extra = _memory_probe(e)
+    before = e.prod_tree()
+    r = e.run(REBUILD_REL, extra=extra)
+    log = e.log.read_text()
+    assert r.returncode != 0, log
+    assert "ОШИБКА: watchdog памяти" in log
+    # Wait beyond the stub's sleep: killing only the shell PID would leave the
+    # background descendant alive to append its marker. No ps dependency.
+    time.sleep(0.65)
+    assert "PROBE-BEGIN" in e.events_lines() and "PROBE-FINISHED" not in e.events_lines()
+    assert "PROBE-DESCENDANT-FINISHED" not in e.events_lines()
+    assert e.prod_tree() == before
+    assert e.ops(("SYSTEMCTL", "PRODPY", "BASH-S")) == []
+    assert not e.summary.exists()
+
+
+@pytest.mark.parametrize("mode,live,available", [
+    ("local", False, 1), ("local", True, 100), ("remote", True, 1),
+])
+def test_chain_gate_watchdog_requires_local_live_and_low_memory(make_env, mode, live, available):
+    e = make_env(kv3=False, target="new", mode=mode)
+    r = e.run(REBUILD_REL, extra=_memory_probe(e, live=live, available=available))
+    log = e.log.read_text()
+    assert r.returncode == 0, log
+    assert "PROBE-FINISHED" in e.events_lines()
+    assert "ОШИБКА: watchdog памяти" not in log
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+
+
+def test_chain_gate_watchdog_disarmed_before_rebase(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    extra = _memory_probe(e, live=False, available=100)
+    _write(e.prod / "venv/bin/python3", PRODPY_STUB.replace(
+        'echo "PRODPY $*" >> "$STUB_EVENTS"',
+        'echo "PRODPY $*" >> "$STUB_EVENTS"\n'
+        'if [ "$1" = ELO/rebase_runtime_model_state.py ]; then\n'
+        '  printf \'{"map": 1}\' > runtime/sourcetv_matches.json\n'
+        '  printf \'MemAvailable: 1 kB\\n\' > "$PRO_CHAIN_MEMINFO_PATH"\n'
+        '  /bin/sleep 0.3\n'
+        'fi',
+    ), exe=True)
+    r = e.run(REBUILD_REL, extra=extra)
+    log = e.log.read_text()
+    assert r.returncode == 0, log
+    assert "watchdog памяти остановлен перед рестартом" in log
+    assert "ОШИБКА: watchdog памяти" not in log
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+    assert (e.state / "ingame/map_id_check.txt").read_bytes() == b""
+
+
+def test_chain_gate_watchdog_cleaned_on_build_failure(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    extra = _memory_probe(e, live=False, available=100)
+    _write(e.stubs / "python3", PY_STUB.replace(
+        'echo "PY $* |$note |@$here" >> "$EV"',
+        'echo "PY $* |$note |@$here" >> "$EV"\n'
+        '[ "$1" != scripts/pro_chain/pro_corpus_extract.py ] || exit 7',
+    ), exe=True)
+    r = e.run(REBUILD_REL, extra=extra)
+    assert r.returncode == 7, e.log.read_text()
+    match = re.search(r"watchdog памяти: PID=(\d+)", e.log.read_text())
+    assert match, e.log.read_text()
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(match.group(1)), 0)
+
+
+@pytest.mark.parametrize("read_timeout", ["0", "1"])
+def test_chain_gate_bounds_a_blocked_live_state_read(make_env, read_timeout):
+    e = make_env(kv3=False, target="new", mode="local")
+    live = e.prod / "runtime/sourcetv_matches.json"
+    live.rename(live.with_suffix(".saved"))
+    os.mkfifo(live)
+    start = time.monotonic()
+    r = _run_library(e, 'set -e; wait_no_live_map 1 blocked-read; echo PROCEEDED', extra={
+        "PRO_CHAIN_READ_TIMEOUT_SECONDS": read_timeout, "PRO_CHAIN_LIVE_POLL_SECONDS": "0.01",
+    })
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert 0.8 <= time.monotonic() - start < 3
+    assert "ВНИМАНИЕ: blocked-read" in r.stdout and "PROCEEDED" in r.stdout
+
+
+def test_chain_gate_caps_fractional_poll_at_remaining_wait(make_env):
+    e = make_env(kv3=False, target="new", mode="local")
+    _write(e.prod / "runtime/sourcetv_matches.json", '{"map": 1}')
+    _write(e.stubs / "sleep", '''#!/bin/bash
+echo "GATE-SLEEP $1" >> "$STUB_EVENTS"
+printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
+''', exe=True)
+    r = _run_library(e, 'set -e; wait_no_live_map 1 capped-poll', extra={
+        "PRO_CHAIN_LIVE_POLL_SECONDS": "100.5",
+    })
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert e.ops(("GATE-SLEEP",)) == ["GATE-SLEEP 1"]
+
+
+def test_chain_gate_parent_signal_waits_for_shadow_rebuild(make_env):
+    e = make_env(kv3=False, target="new", mode="local", shadow=True)
+    extra = _memory_probe(e, live=False, available=100)
+    before = e.prod_tree()
+    env = dict(e.env(), **extra)
+    process = subprocess.Popen([BASH, str(e.build / REBUILD_REL)], cwd=e.build, env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 3
+        while "PROBE-BEGIN" not in e.events_lines() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert "PROBE-BEGIN" in e.events_lines()
+        process.send_signal(signal.SIGTERM)
+        out, err = process.communicate(timeout=5)
+        assert process.returncode == 143, (out, err)
+        assert "PROBE-FINISHED" in e.events_lines(), "parent exited before rebuild finished"
+        assert e.prod_tree() == before
+        assert e.ops(("SYSTEMCTL", "PRODPY", "BASH-S")) == []
+    finally:
+        # Let the bounded stub finish even when running against an old script.
+        process.wait(timeout=5)
+        time.sleep(0.8)
