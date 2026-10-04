@@ -63,6 +63,19 @@ def team_mean_rating(rating: dict, account_ids) -> float:
     return float(np.mean(vals)) if vals else 1500.0
 
 
+def _cell_index(slots, categories):
+    """Sorted (dense account, category) cells and per-occurrence indices."""
+    low, high = int(categories.min()), int(categories.max())
+    span = high - low + 1
+    valid = slots >= 0
+    packed = slots[valid].astype(np.int64) * span + categories[valid] - low
+    keys, inverse = np.unique(packed, return_inverse=True)
+    indices = np.full(slots.shape, -1, dtype=np.int32)
+    indices[valid] = inverse
+    cells = np.column_stack((keys // span, keys % span + low))
+    return cells, indices
+
+
 def main() -> None:
     zc, zr = np.load(COMPACT), np.load(RICH)
     pos_ = {int(m): i for i, m in enumerate(zr["mids"].tolist())}
@@ -71,6 +84,7 @@ def main() -> None:
     ts, wins = zc["ts"][keep], zc["wins"][keep].astype(int)
     heroes, accounts, teams = zc["heroes"][keep], zc["accounts"][keep], zc["teams"][keep]
     pst = zr["pstats"][idx_r]
+    del pos_, idx_r
     if CUTOFF:
         msk = ts < CUTOFF
         ts, wins, heroes, accounts, teams, pst = (ts[msk], wins[msk], heroes[msk],
@@ -78,26 +92,31 @@ def main() -> None:
     n = len(ts)
     print(f"карт: {n:,}" + (f" (обрезка по ts < {CUTOFF})" if CUTOFF else ""), flush=True)
 
-    rating: dict[int, float] = {}
-    games: dict[int, int] = defaultdict(int)
-    hero_g: dict[tuple, int] = defaultdict(int)
-    pos_g: dict[tuple, int] = defaultdict(int)
-    opp_sum: dict[int, float] = defaultdict(float)
-    pool: dict[int, set] = defaultdict(set)
-    recent: dict[int, deque] = defaultdict(lambda: deque(maxlen=20))
-    imp_q: dict[int, deque] = defaultdict(lambda: deque(maxlen=50))
-    gpm_hero: dict[tuple, list] = defaultdict(lambda: [0.0, 0])
+    # Sorted dense indices replace millions of Python dictionaries/deques.
+    # Pair keys are lexicographic (account, category), just like sorted(tuple).
+    acc_ids = np.unique(accounts[accounts > 0])
+    slots = np.searchsorted(acc_ids, accounts).astype(np.int32)
+    slots[accounts <= 0] = -1
+    ah, hero_slots = _cell_index(slots, heroes)
+    positions = np.broadcast_to(np.tile(np.arange(1, 6), 2), accounts.shape)
+    ap, pos_slots = _cell_index(slots, positions)
+    count = len(acc_ids)
+    rating = np.full(count, 1500.0)
+    games = np.zeros(count, dtype=np.int64)
+    opp_sum = np.zeros(count)
+    # gpm/imp residual sums, count, EWMA sum/weight/timestamp.
+    residual = np.zeros((count, 6))
+    hero_g = np.zeros(len(ah), dtype=np.int64)
+    pos_g = np.zeros(len(ap), dtype=np.int64)
+    gpm_hero = np.zeros(len(ah))
+    res_hero_lh = np.zeros((len(ah), 2))
     hero_all_gpm: dict[int, list] = defaultdict(lambda: [0.0, 0])
-    res_pos: dict[tuple, list] = defaultdict(lambda: [0.0, 0.0])       # (acc,stat)
-    res_hero_lh: dict[tuple, list] = defaultdict(lambda: [0.0, 0.0])   # (acc,hero) добивания
-    ew_gpm: dict[int, list] = defaultdict(lambda: [0.0, 0.0, 0])
-    lh_q: dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
-    # E-177: три величины, которых снимку не хватало, из-за чего скорер считал
-    # НЕ ТО, чему училась модель. Определения взяты один в один из обучающих
-    # источников: окно 10 матчей у `ideas_batch1.imp_h`, остаток против нормы
-    # позиции у `ideas_batch5b` (`r = st[k] - pn[k]`, окно 30).
-    res30_imp: dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
-    res30_lh: dict[int, deque] = defaultdict(lambda: deque(maxlen=30))
+    # One linked occurrence per player slot; bounded tails are reconstructed
+    # only at output. No per-account empty deque or stored Python float.
+    previous = np.full(accounts.size, -1, dtype=np.int32)
+    latest = np.full(count, -1, dtype=np.int32)
+    res30 = np.zeros((accounts.size, 2))
+    has_residual = np.zeros(accounts.size, dtype=bool)
     pos_sum = np.zeros((6, 12)); pos_cnt = np.zeros(6)
     hero_norm: dict[int, np.ndarray] = defaultdict(lambda: np.zeros(12))
     hero_cnt: dict[int, float] = defaultdict(float)
@@ -113,7 +132,11 @@ def main() -> None:
         while ev30 and ev30[0][0] < now - 30 * 86400:
             _t, h, o = ev30.popleft(); g30[h] -= 1; w30[h] -= o
         won_r = bool(wins[i])
-        mr = [team_mean_rating(rating, accounts[i, s*5:(s+1)*5]) for s in range(2)]
+        mr = []
+        for side in range(2):
+            known = slots[i, side*5:(side+1)*5]
+            known = known[known >= 0]
+            mr.append(float(np.mean(rating[known])) if len(known) else 1500.0)
         exp_r = 1.0 / (1.0 + 10 ** ((mr[1] - mr[0]) / 400.0))
         rt, dt = int(teams[i, 0]), int(teams[i, 1])
         for s in range(2):
@@ -125,28 +148,35 @@ def main() -> None:
                 a, h = int(accounts[i, s*5+p]), hs[p]
                 st = pst[i, s*5+p]
                 if a > 0:
-                    rating[a] = rating.get(a, 1500.0) + K * (float(won) - expected)
-                    games[a] += 1
-                    hero_g[(a, h)] += 1
-                    pos_g[(a, p+1)] += 1
-                    opp_sum[a] += opp_elo
-                    pool[a].add(h)
-                    recent[a].append(int(won))
-                    imp_q[a].append(float(st[P_IMP]))
-                    lh_q[a].append(float(st[P_LH]))
-                    c = gpm_hero[(a, h)]; c[0] += float(st[P_GPM]); c[1] += 1
+                    j = int(slots[i, s*5+p])
+                    hj = int(hero_slots[i, s*5+p])
+                    pj = int(pos_slots[i, s*5+p])
+                    event = i*10 + s*5+p
+                    rating[j] += K * (float(won) - expected)
+                    games[j] += 1
+                    hero_g[hj] += 1
+                    pos_g[pj] += 1
+                    opp_sum[j] += opp_elo
+                    previous[event] = latest[j]
+                    latest[j] = event
+                    gpm_hero[hj] += float(st[P_GPM])
                     if pos_cnt[p+1] > 0:
                         pn = pos_sum[p+1] / pos_cnt[p+1]
-                        for k2 in (P_GPM, P_IMP):
-                            cc = res_pos[(a, k2)]; cc[0] += float(st[k2]) - pn[k2]; cc[1] += 1
-                        res30_imp[a].append(float(st[P_IMP]) - pn[P_IMP])
-                        res30_lh[a].append(float(st[P_LH]) - pn[P_LH])
-                        sm, wt, when = ew_gpm[a]
+                        r_gpm = float(st[P_GPM]) - pn[P_GPM]
+                        r_imp = float(st[P_IMP]) - pn[P_IMP]
+                        residual[j, 0] += r_gpm
+                        residual[j, 1] += r_imp
+                        residual[j, 2] += 1
+                        res30[event, 0] = r_imp
+                        res30[event, 1] = float(st[P_LH]) - pn[P_LH]
+                        has_residual[event] = True
+                        sm, wt, when = residual[j, 3:6]
                         f = math.exp(-lam_e * (now - when)) if wt > 0 else 0.0
-                        ew_gpm[a] = [sm*f + (float(st[P_GPM]) - pn[P_GPM]), wt*f + 1.0, now]
+                        residual[j, 3:6] = (sm*f + r_gpm, wt*f + 1.0, now)
                     if hero_cnt[h] > 0:
                         hn = hero_norm[h] / hero_cnt[h]
-                        cc = res_hero_lh[(a, h)]; cc[0] += float(st[P_LH]) - hn[P_LH]; cc[1] += 1
+                        res_hero_lh[hj, 0] += float(st[P_LH]) - hn[P_LH]
+                        res_hero_lh[hj, 1] += 1
                 ca = hero_all_gpm[h]; ca[0] += float(st[P_GPM]); ca[1] += 1
                 pos_sum[p+1] += st[:12]; pos_cnt[p+1] += 1
                 hero_norm[h] += st[:12]; hero_cnt[h] += 1
@@ -165,23 +195,51 @@ def main() -> None:
             rating_team[dt] = rating_team.get(dt,1500.0) + K*((0.0 if won_r else 1.0) - (1-er))
         if (i+1) % 100_000 == 0: print(f"  {i+1:,}/{n:,}", flush=True)
 
-    m = lambda q: float(np.mean(q)) if len(q) else 0.0
-    acc_ids = sorted(games)
-    acc_arr = np.array([[a, rating.get(a,1500.0), games[a], opp_sum[a]/max(games[a],1),
-                         len(pool[a]), m(recent[a]), m(imp_q[a]), m(list(imp_q[a])[-30:]),
-                         res_pos[(a,P_GPM)][0]/max(res_pos[(a,P_GPM)][1],1),
-                         res_pos[(a,P_IMP)][0]/max(res_pos[(a,P_IMP)][1],1),
-                         (ew_gpm[a][0]/ew_gpm[a][1] if ew_gpm[a][1] > 0 else 0.0),
-                         m(lh_q[a])] for a in acc_ids], dtype=np.float64)
-    extra_arr = np.array([[a, m(list(imp_q[a])[-10:]), m(res30_imp[a]), m(res30_lh[a])]
-                          for a in acc_ids], dtype=np.float64)
-    ah = sorted(hero_g)
-    ah_arr = np.array([[k[0], k[1], hero_g[k],
-                        (gpm_hero[k][0]/gpm_hero[k][1] - hero_all_gpm[k[1]][0]/max(hero_all_gpm[k[1]][1],1))
-                        if gpm_hero[k][1] and hero_all_gpm[k[1]][1] else 0.0,
-                        res_hero_lh[k][0]/max(res_hero_lh[k][1],1)] for k in ah], dtype=np.float64)
-    ap = sorted(pos_g)
-    ap_arr = np.array([[k[0], k[1], pos_g[k]] for k in ap], dtype=np.float64)
+    # Fill outputs directly; never materialise millions of Python row lists.
+    acc_arr = np.empty((count, 12), dtype=np.float64)
+    extra_arr = np.empty((count, 4), dtype=np.float64)
+    pool_size = np.bincount(ah[:, 0], minlength=count)
+    flat_stats = pst.reshape(-1, pst.shape[-1])
+    for j, a in enumerate(acc_ids):
+        tail = []
+        event = int(latest[j])
+        while event >= 0 and len(tail) < 50:
+            tail.append(event)
+            event = int(previous[event])
+        tail = np.array(tail[::-1], dtype=np.int64)
+        # np.mean sees exactly the legacy deque ordered float64 values.
+        imp = flat_stats[tail, P_IMP].astype(np.float64)
+        lh = flat_stats[tail[-30:], P_LH].astype(np.float64)
+        form_tail = tail[-20:]
+        outcomes = (wins[form_tail // 10] != 0).astype(np.int64)
+        outcomes[form_tail % 10 >= 5] = 1 - outcomes[form_tail % 10 >= 5]
+        # At most the first five position observations lack a residual;
+        # a 50-appearance tail contains the last 30 valid residuals.
+        valid_tail = tail[has_residual[tail]][-30:]
+        r = residual[j]
+        acc_arr[j] = (a, rating[j], games[j], opp_sum[j]/max(games[j], 1),
+                      pool_size[j], float(np.mean(outcomes)), float(np.mean(imp)),
+                      float(np.mean(imp[-30:])), r[0]/max(r[2], 1),
+                      r[1]/max(r[2], 1), r[3]/r[4] if r[4] > 0 else 0.0,
+                      float(np.mean(lh)))
+        extra_arr[j] = (a, float(np.mean(imp[-10:])),
+                        float(np.mean(res30[valid_tail, 0])) if len(valid_tail) else 0.0,
+                        float(np.mean(res30[valid_tail, 1])) if len(valid_tail) else 0.0)
+    ah_arr = np.empty((len(ah), 5), dtype=np.float64)
+    for j, (a, h) in enumerate(ah):
+        h = int(h)
+        ca = hero_all_gpm[h]
+        ah_arr[j] = (acc_ids[a], h, hero_g[j],
+                      gpm_hero[j]/hero_g[j] - ca[0]/max(ca[1], 1)
+                      if hero_g[j] and ca[1] else 0.0,
+                      res_hero_lh[j, 0]/max(res_hero_lh[j, 1], 1))
+    ap_arr = np.empty((len(ap), 3), dtype=np.float64)
+    ap_arr[:, 0] = acc_ids[ap[:, 0]]
+    ap_arr[:, 1] = ap[:, 1]
+    ap_arr[:, 2] = pos_g
+    if not count:
+        # Legacy list-to-array conversion yields shape (0,), not (0, width).
+        acc_arr = extra_arr = ah_arr = ap_arr = np.empty(0, dtype=np.float64)
     hw = np.array([[h, (w30[h]+5.0)/(g30[h]+10.0)] for h in sorted(g30)], dtype=np.float64)
     tnow = int(ts.max())
     vs_arr = np.array([[k[0], k[1], v[0]*math.exp(-lam_p*(tnow-v[2])), v[1]*math.exp(-lam_p*(tnow-v[2]))]

@@ -1,0 +1,19 @@
+{
+  "source_commit": "6ac173b3",
+  "source": "first 24 full-input maps, repeated with controlled identities/timestamps and finite rounding stress",
+  "maps": 180,
+  "cutoff": 1609504000,
+  "golden": "unmodified git show HEAD:scripts/pro_chain/build_prematch_artifact.py",
+  "cases": [
+    ">50 games before cutoff",
+    "a=0 and a<0",
+    "first position norm missing",
+    "repeated and reversed team pairs",
+    "position changes",
+    "30-day expiry",
+    "rich rows in reverse order"
+  ],
+  "legacy_script_sha256": "e5a485a9ceabb5a528c390dc415c846e5e4b527021292b6042d5acf1f51de658",
+  "rounding_stress": "P_IMP float32: 1e12, -1e12, 0.03125 at rows i%7=0,1,2",
+  "golden_no_accounts": "same compact/rich fixture with all account IDs replaced by 0"
+}

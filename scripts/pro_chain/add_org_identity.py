@@ -9,13 +9,12 @@ id, что уже были в корпусе. У Iron Wing id новый и в �
 и достаёт её историю личных встреч, даже если тег видит впервые.
 """
 from __future__ import annotations
-import os, sys
+import os
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
 ROOT = Path(os.getenv("DRAFT_ROOT") or Path(__file__).resolve().parents[2])
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ideas_batch2 import COMPACT
+COMPACT = ROOT / "runtime/artifacts/misc/pro_corpus_compact.npz"
 SRC = ROOT / "runtime/artifacts/misc/prematch_model_artifact_v2.npz"
 OUT = ROOT / "runtime/artifacts/misc/prematch_model_artifact_v3.npz"
 K = 24.0
@@ -24,17 +23,38 @@ zc = np.load(COMPACT)
 ts, acc, tm, wins = zc["ts"], zc["accounts"], zc["teams"], zc["wins"].astype(int)
 merged: dict[int, int] = {}
 org_roster: dict[int, set] = {}
+org_order: dict[int, int] = {}
+account_orgs: dict[int, set] = defaultdict(set)
 h2h = defaultdict(lambda: [0.0, 0]); rat = {}
+
+def replace_roster(org: int, members: set) -> None:
+    previous = org_roster.get(org, set())
+    # Only changed memberships need work, even on repeated known-team calls.
+    for account in previous - members:
+        account_orgs[account].remove(org)
+        if not account_orgs[account]:
+            del account_orgs[account]
+    for account in members - previous:
+        account_orgs[account].add(org)
+    org_roster[org] = members
 
 def org_of(tid: int, members: set) -> int:
     if tid <= 0 or len(members) < 5:
         return -1
     if tid in merged:
-        cur = merged[tid]; org_roster[cur] = members; return cur
-    for other, ros in org_roster.items():
-        if len(ros & members) >= 4:
-            merged[tid] = other; org_roster[other] = members; return other
-    merged[tid] = tid; org_roster[tid] = members; return tid
+        cur = merged[tid]; replace_roster(cur, members); return cur
+    overlaps = {}
+    for account in members:
+        for org in account_orgs.get(account, ()):
+            overlaps[org] = overlaps.get(org, 0) + 1
+    # Posting-set order is arbitrary; the legacy scan chose the first dict key.
+    candidates = [org for org, count in overlaps.items() if count >= 4]
+    if candidates:
+        cur = min(candidates, key=org_order.__getitem__)
+    else:
+        cur = tid
+        org_order[cur] = len(org_order)
+    merged[tid] = cur; replace_roster(cur, members); return cur
 
 for i in range(len(ts)):
     r = {int(x) for x in acc[i, :5] if x > 0}
