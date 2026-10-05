@@ -3889,6 +3889,30 @@ def _winline_record_quote_observation(key: str, payload: Dict[str, Any], *, term
         state = _winline_odds_orientation_state.setdefault(key, {})
         if valid:
             state.update(p1=p1, p2=p2, status="open", last_quote_mono=time.monotonic())
+            # A confirmed quote clears the "kept after a skeleton error" marker.
+            state.pop("kept_after_error_mono", None)
+        elif (
+            status == "error"
+            and not terminal
+            and payload.get("page_valid") is False
+            and payload.get("match_found") is False
+            and payload.get("odds_bettable") is not False
+            and state.get("status") == "open"
+            and os.getenv("WINLINE_ERROR_KEEPS_FRESH_PRICE", "1").strip().lower()
+            not in {"0", "false", "no", "off"}
+        ):
+            # Pure skeleton acquisition failure: the page was invalid AND the
+            # pair card was explicitly not found (match_found is False, not
+            # None/missing), so the attempt carried no market evidence at all
+            # (captured: miss_fingerprint feed_blocks=0). Keep the last open
+            # quote; its age alone bounds staleness (_ml_dispatch_fresh_winline_price
+            # TTL, last_quote_mono is not refreshed). An "error" that carries market
+            # evidence (match_found True/None, odds_bettable False, page_valid not
+            # False), closed, missing and terminal all evict below.
+            # The marker makes _ml_dispatch_fresh_winline_price treat this price as
+            # unconfirmed: it only stands in when no confirmed fresh quote exists
+            # for the same map+pair (another key's valid quote always wins).
+            state["kept_after_error_mono"] = time.monotonic()
         else:
             # Retain p1/p2 for orientation history, but never gate on an
             # earlier quote after a closed, stopped, frozen or missing market.
@@ -14068,7 +14092,8 @@ def _ml_dispatch_fresh_winline_price(
             second = _winline_normalized_team_identity(team2)
             if quote_map == wanted_map and {first, second} == {radiant, dire}:
                 matches.append((dict(state), first, second))
-    prices = []
+    confirmed: List[float] = []
+    kept: List[float] = []
     for state, first, second in matches:
         if state.get("status") != "open":
             continue
@@ -14078,8 +14103,14 @@ def _ml_dispatch_fresh_winline_price(
         except (KeyError, TypeError, ValueError):
             continue
         if 0.0 <= age <= ttl and math.isfinite(price) and price > 1.0:
-            prices.append(price)
-    return max(prices) if prices else None
+            # A price kept across a skeleton acquisition error (marker set by
+            # _winline_record_quote_observation) is unconfirmed: it is used only
+            # when no confirmed fresh quote exists, so the result is identical to
+            # WINLINE_ERROR_KEEPS_FRESH_PRICE=0 whenever one does.
+            (kept if state.get("kept_after_error_mono") is not None else confirmed).append(price)
+    if confirmed:
+        return max(confirmed)
+    return max(kept) if kept else None
 
 
 def _ml_dispatch_min_odds_reject_for_delivery(

@@ -1,0 +1,19 @@
+{
+  "fixture": "base/tests/fixtures/winline_error_flap_20261005.jsonl",
+  "captured_at": "2026-10-05",
+  "source_host": "serv1 (read-only copy)",
+  "capture_command": "scp serv1:/root/main/runtime/winline_odds_history.jsonl /Users/alex/Documents/ingame/runtime/artifacts/cyberscore-prod/winline_error_flap_20261005/ && sed -n '43873p;43876p;43877p;43880p;56968p;56969p' winline_odds_history.jsonl > winline_error_flap_20261005.jsonl",
+  "source_file_sha256": "d50f97d0f951da9a35f03e1395b1582f0571f1b601f36a12128f6f0c32830860",
+  "source_file_lines": 87511,
+  "fixture_sha256": "baf1a92960bc78e1bb65854d3fcce41940c772faff0ad56f607ac79cf14e723f",
+  "canonical_key": "winline:league:european pro league|kalmychata|two move|map1|KALMYCHATA|TWO MOVE",
+  "rows_verbatim": {
+    "43873": "2026-09-15 open (2.85/1.33), accepted",
+    "43876": "2026-09-15 closed (page_valid true)",
+    "43877": "2026-09-15 error, source winline_map_market_missing, feed_blocks=0 body_len=8063, acquisition_error Page.wait_for_function Timeout 1500ms",
+    "43880": "2026-09-15 missing (page_valid true, match_found true)",
+    "56968": "2026-09-20 open (3.0/1.3), accepted",
+    "56969": "2026-09-20 error 129.5 s after line 56968, source winline_map_market_missing, feed_blocks=0 body_len=7293, same acquisition_error"
+  },
+  "note": "Rows are verbatim from the history journal (one real map, two real sessions of the same key); the closed/missing rows come from the 2026-09-15 session, the open->error flap from 2026-09-20."
+}

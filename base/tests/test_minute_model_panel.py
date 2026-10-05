@@ -81,7 +81,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("WINLINE_ODDS_TELEGRAM_SENT_PATH", "0")
     monkeypatch.setenv("DISPATCH_MODE", "shadow")
     monkeypatch.setenv("PREMATCH_ML_ENABLED", "0")
-    for name in ("MINUTE_MODEL_ENABLED", "MINUTE_MODEL_TG", "MINUTE_MODEL_PATH"):
+    for name in ("MINUTE_MODEL_ENABLED", "MINUTE_MODEL_TG", "MINUTE_MODEL_PATH", "MINUTE_MODEL_WINDOW_SECONDS"):
         monkeypatch.delenv(name, raising=False)
     M.reset()
     _wait()
