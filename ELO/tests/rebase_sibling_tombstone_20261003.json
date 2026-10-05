@@ -1,0 +1,852 @@
+{
+ "_provenance": {
+  "ledger_rows": "full records copied verbatim from runtime/artifacts/draft-cp/minute_model_eval/serv1_20261002/live_elo_progress.json (copy of serv1 /root/main/runtime/live_elo_progress.json captured 2026-10-02, base_reference_timestamp 1790370293, pre-03.10-rebase, 370 rows, 3 pending). Cases 9026864179 and 9027573316 have no pre-rebase full record and are not included.",
+  "snapshot_keys": "[match_id, radiant_team_id, dire_team_id, start_timestamp] tuples copied verbatim from meta.recent_completed_match_keys of serv1 /root/main/ELO/output/live_team_elo_snapshot.json (reference 1791159114 = 2026-10-05T00:11:54Z, 604 keys, read-only ssh 2026-10-05; the 03.10 snapshot itself was not preserved). EXCEPTION: key 9008635677 is outside that snapshot's 14-day window (starts 21.09); its team ids are the ledger row's and its start 2026-09-20T18:03Z is minute-precision from the OpenDota check by peer session claude:973c9f63 on board ingame-kizf.",
+  "reference_timestamp": "1790991536 = snapshot_covered_reference written by the 03.10 rebase into the serv1_20261004 ledger tombstones; coverage_since is reference - 14 d as in the builder.",
+  "verified_premise": "2026-10-05 against Mac pro corpus processed_ids (1,710,202 ids): every ledger_id is absent and every proof_id of a sibling/next-map case is present; ledger_id and proof_id are different real Valve maps of one series (board ingame-kizf).",
+  "extraction_command": "venv_catboost/bin/python3 <scratchpad>/make_fixture.py ELO/tests/rebase_sibling_tombstone_20261003.json"
+ },
+ "snapshot": {
+  "reference_timestamp": 1790991536,
+  "tolerance_seconds": 10800,
+  "keys": [
+   [
+    9017156662,
+    10271316,
+    10271241,
+    1790433011
+   ],
+   [
+    9019438969,
+    10271296,
+    10271316,
+    1790538144
+   ],
+   [
+    9021556632,
+    9691969,
+    7119388,
+    1790684804
+   ],
+   [
+    9022554353,
+    9546449,
+    9894442,
+    1790743346
+   ],
+   [
+    9022828432,
+    9338413,
+    9823272,
+    1790766251
+   ],
+   [
+    9024098225,
+    10232572,
+    9894442,
+    1790842304
+   ],
+   [
+    9010278932,
+    10271251,
+    10271296,
+    1790020628
+   ],
+   [
+    9008635677,
+    10208608,
+    9338413,
+    1789927380
+   ],
+   [
+    9017300074,
+    9980912,
+    10271251,
+    1790437828
+   ],
+   [
+    9017491507,
+    10271251,
+    9980912,
+    1790444506
+   ]
+  ]
+ },
+ "cases": [
+  {
+   "name": "sibling_9016945136",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9016945136,
+   "proof_id": 9017156662,
+   "ledger_map_key": "dltv.org/matches/9016945136.0",
+   "ledger_row": {
+    "series_key": "9016945136",
+    "series_url": "dltv.org/matches/9016945136",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790431848,
+    "result_timestamp": 1790431848,
+    "match_id": 9016945136,
+    "match_record": {
+     "match_id": 9016945136,
+     "timestamp": 1790425654,
+     "radiant_team_id": 10271316,
+     "radiant_team_name": "TEAM YBN",
+     "dire_team_id": 10271241,
+     "dire_team_name": "Team Daxak",
+     "radiant_player_ids": [
+      164506534,
+      1253472325,
+      312542697,
+      1057776020,
+      188741680
+     ],
+     "dire_player_ids": [
+      970130166,
+      216733371,
+      177411785,
+      154921394,
+      212037295
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20176,
+     "league_name": "BETBOOM Streamers Battle Dota 15",
+     "source_league_tier": "TIER2",
+     "series_id": 9016945136,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": null
+   },
+   "sibling_map_key": "dltv.org/matches/9017156662.0",
+   "sibling_row": {
+    "series_key": "9017156662",
+    "series_url": "dltv.org/matches/9017156662",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790435376,
+    "result_timestamp": 1790435376,
+    "match_id": 9017156662,
+    "match_record": {
+     "match_id": 9017156662,
+     "timestamp": 1790433117,
+     "radiant_team_id": 10271316,
+     "radiant_team_name": "TEAM YBN",
+     "dire_team_id": 10271241,
+     "dire_team_name": "Team Daxak",
+     "radiant_player_ids": [
+      164506534,
+      1253472325,
+      312542697,
+      1057776020,
+      188741680
+     ],
+     "dire_player_ids": [
+      970130166,
+      216733371,
+      177411785,
+      154921394,
+      212037295
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20176,
+     "league_name": "BETBOOM Streamers Battle Dota 15",
+     "source_league_tier": "TIER2",
+     "series_id": 9017156662,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": null
+   }
+  },
+  {
+   "name": "sibling_9019333057",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9019333057,
+   "proof_id": 9019438969,
+   "ledger_map_key": "dltv.org/matches/9019333057.0",
+   "ledger_row": {
+    "series_key": "9019333057",
+    "series_url": "dltv.org/matches/9019333057",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790545329,
+    "result_timestamp": 1790545329,
+    "match_id": 9019333057,
+    "match_record": {
+     "match_id": 9019333057,
+     "timestamp": 1790533876,
+     "radiant_team_id": 10271296,
+     "radiant_team_name": "Team Cake",
+     "dire_team_id": 10271316,
+     "dire_team_name": "TEAM YBN",
+     "radiant_player_ids": [
+      155162307,
+      91535476,
+      1675023758,
+      190100004,
+      194740288
+     ],
+     "dire_player_ids": [
+      1657135701,
+      1253472325,
+      312542697,
+      1057776020,
+      188741680
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20176,
+     "league_name": "BETBOOM Streamers Battle Dota 15",
+     "source_league_tier": "TIER2",
+     "series_id": 9019333057,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 2295,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": 2295
+   },
+   "sibling_map_key": "dltv.org/matches/9019438969.0",
+   "sibling_row": {
+    "series_key": "9019438969",
+    "series_url": "dltv.org/matches/9019438969",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790549835,
+    "result_timestamp": 1790549835,
+    "match_id": 9019438969,
+    "match_record": {
+     "match_id": 9019438969,
+     "timestamp": 1790538255,
+     "radiant_team_id": 10271296,
+     "radiant_team_name": "Team Cake",
+     "dire_team_id": 10271316,
+     "dire_team_name": "TEAM YBN",
+     "radiant_player_ids": [
+      155162307,
+      91535476,
+      1675023758,
+      190100004,
+      194740288
+     ],
+     "dire_player_ids": [
+      1657135701,
+      1253472325,
+      312542697,
+      1057776020,
+      188741680
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20176,
+     "league_name": "BETBOOM Streamers Battle Dota 15",
+     "source_league_tier": "TIER2",
+     "series_id": 9019438969,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 2414,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": 2414
+   }
+  },
+  {
+   "name": "sibling_9021397355",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9021397355,
+   "proof_id": 9021556632,
+   "ledger_map_key": "dltv.org/matches/9021397355.0",
+   "ledger_row": {
+    "series_key": "9021397355",
+    "series_url": "dltv.org/matches/9021397355",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790679826,
+    "result_timestamp": 1790679826,
+    "match_id": 9021397355,
+    "match_record": {
+     "match_id": 9021397355,
+     "timestamp": 1790676488,
+     "radiant_team_id": 9691969,
+     "radiant_team_name": "Team Nemesis",
+     "dire_team_id": 7119388,
+     "dire_team_name": "Team Spirit",
+     "radiant_player_ids": [
+      392565237,
+      218367241,
+      100471531,
+      152859296,
+      343084576
+     ],
+     "dire_player_ids": [
+      321580662,
+      106305042,
+      140835095,
+      218231587,
+      847565596
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 19102,
+     "league_name": "BLAST SLAM VIII",
+     "source_league_tier": "TIER2",
+     "series_id": 9021397355,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": null
+   },
+   "sibling_map_key": "dltv.org/matches/9021556632.0",
+   "sibling_row": {
+    "series_key": "9021556632",
+    "series_url": "dltv.org/matches/9021556632",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790688494,
+    "result_timestamp": 1790688494,
+    "match_id": 9021556632,
+    "match_record": {
+     "match_id": 9021556632,
+     "timestamp": 1790685618,
+     "radiant_team_id": 9691969,
+     "radiant_team_name": "Team Nemesis",
+     "dire_team_id": 7119388,
+     "dire_team_name": "Team Spirit",
+     "radiant_player_ids": [
+      392565237,
+      218367241,
+      100471531,
+      152859296,
+      343084576
+     ],
+     "dire_player_ids": [
+      321580662,
+      106305042,
+      140835095,
+      218231587,
+      847565596
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 19102,
+     "league_name": "BLAST SLAM VIII",
+     "source_league_tier": "TIER2",
+     "series_id": 9021556632,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 2491,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": 2491
+   }
+  },
+  {
+   "name": "sibling_9022502946",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9022502946,
+   "proof_id": 9022554353,
+   "ledger_map_key": "dltv.org/matches/9022502946.0",
+   "ledger_row": {
+    "series_key": "9022502946",
+    "series_url": "dltv.org/matches/9022502946",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790742849,
+    "result_timestamp": 1790742849,
+    "match_id": 9022502946,
+    "match_record": {
+     "match_id": 9022502946,
+     "timestamp": 1790738645,
+     "radiant_team_id": 9546449,
+     "radiant_team_name": "Yangon Galacticos",
+     "dire_team_id": 9894442,
+     "dire_team_name": "Cloud Dawning",
+     "radiant_player_ids": [
+      1125296112,
+      360648679,
+      1129118044,
+      318371533,
+      160708663
+     ],
+     "dire_player_ids": [
+      863282361,
+      489696354,
+      1061229178,
+      361748943,
+      859505832
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 18865,
+     "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+     "source_league_tier": "TIER2",
+     "series_id": 9022502946,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": null
+   },
+   "sibling_map_key": "dltv.org/matches/9022554353.0",
+   "sibling_row": {
+    "series_key": "9022554353",
+    "series_url": "dltv.org/matches/9022554353",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790745701,
+    "result_timestamp": 1790745701,
+    "match_id": 9022554353,
+    "match_record": {
+     "match_id": 9022554353,
+     "timestamp": 1790744114,
+     "radiant_team_id": 9546449,
+     "radiant_team_name": "Yangon Galacticos",
+     "dire_team_id": 9894442,
+     "dire_team_name": "Cloud Dawning",
+     "radiant_player_ids": [
+      1125296112,
+      360648679,
+      1129118044,
+      318371533,
+      160708663
+     ],
+     "dire_player_ids": [
+      863282361,
+      489696354,
+      1061229178,
+      361748943,
+      859505832
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 18865,
+     "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+     "source_league_tier": "TIER2",
+     "series_id": 9022554353,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 1238,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": 1238
+   }
+  },
+  {
+   "name": "sibling_9022768633",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9022768633,
+   "proof_id": 9022828432,
+   "ledger_map_key": "dltv.org/matches/9022768633.0",
+   "ledger_row": {
+    "series_key": "9022768633",
+    "series_url": "dltv.org/matches/9022768633",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790765480,
+    "result_timestamp": 1790765480,
+    "match_id": 9022768633,
+    "match_record": {
+     "match_id": 9022768633,
+     "timestamp": 1790763221,
+     "radiant_team_id": 9338413,
+     "radiant_team_name": "MOUZ",
+     "dire_team_id": 9823272,
+     "dire_team_name": "Team Yandex",
+     "radiant_player_ids": [
+      458287006,
+      58513047,
+      190826739,
+      333351042,
+      349310876
+     ],
+     "dire_player_ids": [
+      171262902,
+      312436974,
+      183719386,
+      103735745,
+      93817671
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 19102,
+     "league_name": "BLAST SLAM VIII",
+     "source_league_tier": "TIER1",
+     "series_id": 9022768633,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER1"
+    },
+    "duration_seconds": null
+   },
+   "sibling_map_key": "dltv.org/matches/9022828432.0",
+   "sibling_row": {
+    "series_key": "9022828432",
+    "series_url": "dltv.org/matches/9022828432",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790769811,
+    "result_timestamp": 1790769811,
+    "match_id": 9022828432,
+    "match_record": {
+     "match_id": 9022828432,
+     "timestamp": 1790767043,
+     "radiant_team_id": 9338413,
+     "radiant_team_name": "MOUZ",
+     "dire_team_id": 9823272,
+     "dire_team_name": "Team Yandex",
+     "radiant_player_ids": [
+      458287006,
+      58513047,
+      190826739,
+      333351042,
+      349310876
+     ],
+     "dire_player_ids": [
+      171262902,
+      312436974,
+      183719386,
+      103735745,
+      93817671
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 19102,
+     "league_name": "BLAST SLAM VIII",
+     "source_league_tier": "TIER1",
+     "series_id": 9022828432,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 2518,
+     "derived_league_tier": "TIER1"
+    },
+    "duration_seconds": 2518
+   }
+  },
+  {
+   "name": "sibling_9024056927",
+   "kind": "sibling_with_own_row",
+   "ledger_id": 9024056927,
+   "proof_id": 9024098225,
+   "ledger_map_key": "dltv.org/matches/9024056927.0",
+   "ledger_row": {
+    "series_key": "9024056927",
+    "series_url": "dltv.org/matches/9024056927",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790841600,
+    "result_timestamp": 1790841600,
+    "match_id": 9024056927,
+    "match_record": {
+     "match_id": 9024056927,
+     "timestamp": 1790839985,
+     "radiant_team_id": 10232572,
+     "radiant_team_name": "Team Kinetix",
+     "dire_team_id": 9894442,
+     "dire_team_name": "Cloud Dawning",
+     "radiant_player_ids": [
+      286985748,
+      176616331,
+      145331311,
+      162274034,
+      110759067
+     ],
+     "dire_player_ids": [
+      863282361,
+      489696354,
+      1061229178,
+      361748943,
+      859505832
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 18865,
+     "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+     "source_league_tier": "TIER2",
+     "series_id": 9024056927,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": null
+   },
+   "sibling_map_key": "dltv.org/matches/9024098225.0",
+   "sibling_row": {
+    "series_key": "9024098225",
+    "series_url": "dltv.org/matches/9024098225",
+    "winner_slot": "first",
+    "radiant_win": true,
+    "applied_at": 1790845614,
+    "result_timestamp": 1790845614,
+    "match_id": 9024098225,
+    "match_record": {
+     "match_id": 9024098225,
+     "timestamp": 1790842956,
+     "radiant_team_id": 10232572,
+     "radiant_team_name": "Team Kinetix",
+     "dire_team_id": 9894442,
+     "dire_team_name": "Cloud Dawning",
+     "radiant_player_ids": [
+      286985748,
+      176616331,
+      145331311,
+      162274034,
+      110759067
+     ],
+     "dire_player_ids": [
+      863282361,
+      489696354,
+      1061229178,
+      361748943,
+      859505832
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 18865,
+     "league_name": "EPL World Series: Southeast Asia 2025-2026 Season",
+     "source_league_tier": "TIER2",
+     "series_id": 9024098225,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": 2105,
+     "derived_league_tier": "TIER2"
+    },
+    "duration_seconds": 2105
+   }
+  },
+  {
+   "name": "next_map_9010162791",
+   "kind": "next_map_without_own_row",
+   "ledger_id": 9010162791,
+   "proof_id": 9010278932,
+   "ledger_map_key": "dltv.org/matches/9010162791.0",
+   "ledger_row": {
+    "series_key": "9010162791",
+    "series_url": "dltv.org/matches/9010162791",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1790018759,
+    "result_timestamp": 1790018759,
+    "match_id": 9010162791,
+    "match_record": {
+     "match_id": 9010162791,
+     "timestamp": 1790015701,
+     "radiant_team_id": 10271251,
+     "radiant_team_name": "Team avice",
+     "dire_team_id": 10271296,
+     "dire_team_name": "Team Cake",
+     "radiant_player_ids": [
+      165671428,
+      191734430,
+      300504856,
+      1296693692,
+      1302032342
+     ],
+     "dire_player_ids": [
+      155162307,
+      91535476,
+      1675023758,
+      190100004,
+      194740288
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20176,
+     "league_name": "BETBOOM Streamers Battle Dota 15",
+     "source_league_tier": "TIER2",
+     "series_id": 9010162791,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    }
+   }
+  },
+  {
+   "name": "previous_map_9008730653",
+   "kind": "previous_map_without_own_row",
+   "ledger_id": 9008730653,
+   "proof_id": 9008635677,
+   "ledger_map_key": "dltv.org/matches/9008730653.0",
+   "ledger_row": {
+    "series_key": "9008730653",
+    "series_url": "dltv.org/matches/9008730653",
+    "winner_slot": "second",
+    "radiant_win": false,
+    "applied_at": 1789933516,
+    "result_timestamp": 1789933516,
+    "match_id": 9008730653,
+    "match_record": {
+     "match_id": 9008730653,
+     "timestamp": 1789931785,
+     "radiant_team_id": 10208608,
+     "radiant_team_name": "Pibbles Corp.",
+     "dire_team_id": 9338413,
+     "dire_team_name": "MOUZ",
+     "radiant_player_ids": [
+      191290281,
+      914221413,
+      421515107,
+      186837494,
+      100758751
+     ],
+     "dire_player_ids": [
+      458287006,
+      58513047,
+      190826739,
+      333351042,
+      349310876
+     ],
+     "radiant_player_positions": [],
+     "dire_player_positions": [],
+     "radiant_kills": null,
+     "dire_kills": null,
+     "league_id": 20279,
+     "league_name": "PGL Wallachia 2026 Season 9",
+     "source_league_tier": "TIER2",
+     "series_id": 9008730653,
+     "series_type": "3",
+     "source_patch": null,
+     "duration_seconds": null,
+     "derived_league_tier": "TIER2"
+    }
+   }
+  },
+  {
+   "name": "pending_9017598786",
+   "kind": "pending_non_public_lobby",
+   "ledger_id": 9017598786,
+   "pending_series_key": "9017598786",
+   "pending_series": {
+    "series_key": "9017598786",
+    "series_url": "dltv.org/matches/9017598786",
+    "last_scores": {
+     "first": 0,
+     "second": 0
+    },
+    "pending_maps": [
+     {
+      "map_key": "dltv.org/matches/9017598786.0",
+      "match_record": {
+       "match_id": 9017598786,
+       "timestamp": 1790448518,
+       "radiant_team_id": 9980912,
+       "radiant_team_name": "Rostik Team",
+       "dire_team_id": 10271251,
+       "dire_team_name": "Team avice",
+       "radiant_player_ids": [
+        96183976,
+        1473280545,
+        390015464,
+        145638195,
+        437492432
+       ],
+       "dire_player_ids": [
+        165671428,
+        191734430,
+        300504856,
+        1296693692,
+        1302032342
+       ],
+       "radiant_player_positions": [],
+       "dire_player_positions": [],
+       "radiant_kills": null,
+       "dire_kills": null,
+       "league_id": 20176,
+       "league_name": "BETBOOM Streamers Battle Dota 15",
+       "source_league_tier": "TIER2",
+       "series_id": 9017598786,
+       "series_type": "3",
+       "source_patch": null,
+       "duration_seconds": null,
+       "derived_league_tier": "TIER2"
+      },
+      "first_team_is_radiant": true,
+      "registered_at": 1790448518
+     }
+    ],
+    "pending_map": {
+     "map_key": "dltv.org/matches/9017598786.0",
+     "match_record": {
+      "match_id": 9017598786,
+      "timestamp": 1790448518,
+      "radiant_team_id": 9980912,
+      "radiant_team_name": "Rostik Team",
+      "dire_team_id": 10271251,
+      "dire_team_name": "Team avice",
+      "radiant_player_ids": [
+       96183976,
+       1473280545,
+       390015464,
+       145638195,
+       437492432
+      ],
+      "dire_player_ids": [
+       165671428,
+       191734430,
+       300504856,
+       1296693692,
+       1302032342
+      ],
+      "radiant_player_positions": [],
+      "dire_player_positions": [],
+      "radiant_kills": null,
+      "dire_kills": null,
+      "league_id": 20176,
+      "league_name": "BETBOOM Streamers Battle Dota 15",
+      "source_league_tier": "TIER2",
+      "series_id": 9017598786,
+      "series_type": "3",
+      "source_patch": null,
+      "duration_seconds": null,
+      "derived_league_tier": "TIER2"
+     },
+     "first_team_is_radiant": true,
+     "registered_at": 1790448518
+    },
+    "updated_at": 1790497832
+   },
+   "pair_keys": [
+    9017300074,
+    9017491507
+   ]
+  }
+ ]
+}

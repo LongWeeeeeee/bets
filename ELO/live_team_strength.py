@@ -85,6 +85,34 @@ SNAPSHOT_RESULT_INDEX_COVERAGE_SECONDS = 14 * SECONDS_PER_DAY
 #: slack between a DLTV series registration time and the Valve match start
 #: (builder and guard must agree, hence the shared default below).
 SNAPSHOT_RECENT_COMPLETED_MATCH_KEYS_TOLERANCE_SECONDS = 3 * 60 * 60
+#: Smallest ledger `match_id` treated as a REAL Valve match id (live ledger
+#: rows are recent maps: ~9.0e9 in Oct 2026, Valve ids only grow).  Everything
+#: below is a DLTV series id (6-7 digits) or a placeholder, including the
+#: 10-digit timestamp-shaped `1700000000` (E-294), which a plain "9+ digit"
+#: test would misread as real.  For an APPLIED row with a real id that was
+#: observed well inside the snapshot's exact-id window, absence from the id
+#: set means "not in the snapshot": the team-pair fallback can only hit a
+#: SIBLING map of the same series (board ingame-kizf: 10 of 10 pair-proven
+#: tombstones on the 03.10.2026 rebase were siblings).  Scope is deliberately
+#: narrow (r3 review): small-id rows, rows near/below the window and PENDING
+#: rows keep the original pair fallback and its ordering.  Residual: a pending
+#: real-id map can still be covered via a sibling's key.
+REAL_DOTA_MATCH_ID_MIN = 5_000_000_000
+#: Safety margin above the exact-id window start (`coverage_since`, an
+#: END-time bound: max corpus result_ts - 14 d).  The ledger row timestamp is
+#: the live OBSERVATION time, not the map start; observation lag is measured
+#: <= ~20 min (106-1044 s).  A map observed >= 24 h after the bound therefore
+#: cannot have ended before it, so it would be in the id list if the base had
+#: it.  Closer to the bound the rule stays off (original fallback).
+#: Invariant: a live row's `timestamp` is data['now'] taken at live registration
+#: from a LIVE SourceTV/GC observation (base/cyberscore_try.py:29381-29386,
+#: caller :42329), so timestamp <= map end + ~20 min (GC hold).  Measured on 102
+#: matched rows: ledger timestamp - corpus start in [106, 1044] s; the margin is
+#: 24 h.  RESIDUAL (accepted, lead decision r4): the only writer outside this
+#: invariant is ELO/recover_live_results.py (operator-supplied timestamps); a
+#: map in the base that ended before the window start but whose row was first
+#: observed > 24 h later would be replayed instead of covered.
+REAL_ID_WINDOW_MARGIN_SECONDS = 24 * 60 * 60
 #: Живые обновления как ДЕЛЬТА поверх базовых массивов снимка (E-255).
 #: Прежнее полное состояние (`live_elo_model_state.json`, 519 МБ) перезаписывалось
 #: целиком после каждой карты ради ~70-100 изменившихся значений и требовало
@@ -1033,6 +1061,38 @@ def _snapshot_covered_tombstone(
     return tombstone
 
 
+def _applied_pair_fallback_applies(
+    match_id: int | None,
+    observed_timestamp: int | None,
+    recent_completed_ids: tuple[int, set[int]] | None,
+    snapshot_reference: int,
+) -> bool:
+    """Whether an APPLIED row may use the team-pair fallback (original: always).
+
+    Forbidden only when ALL hold: the id is a real Valve id
+    (`REAL_DOTA_MATCH_ID_MIN`+), the snapshot carries the exact-id window, and
+    `coverage_since + REAL_ID_WINDOW_MARGIN_SECONDS <= row timestamp <=
+    snapshot_reference`.  The row timestamp is the live OBSERVATION time while
+    `coverage_since` bounds map END time, so the 24 h margin makes "absent from
+    the id list" mean "not in the snapshot" (observation lag <= ~20 min).  Then
+    a same-pair key within the 3 h tolerance is a SIBLING map, not this one.
+    Everything else (small ids, rows near/below the window, no window) keeps the
+    original fallback.  Pending rows never call this.  The caller still runs the
+    pair search and consumes the key when this is False (only the cover is
+    withheld), so key consumption equals the original's.
+    """
+    if recent_completed_ids is None or match_id is None or observed_timestamp is None:
+        return True
+    if int(match_id) < REAL_DOTA_MATCH_ID_MIN:
+        return True
+    coverage_since = int(recent_completed_ids[0])
+    return not (
+        coverage_since + REAL_ID_WINDOW_MARGIN_SECONDS
+        <= int(observed_timestamp)
+        <= int(snapshot_reference)
+    )
+
+
 def _consume_key_for_match_id(
     recent_completed_keys: tuple[int, dict[int, tuple[int, int, int]]] | None,
     consumed: set[int],
@@ -1202,7 +1262,15 @@ def _applied_entry_for_rebase(
     # placeholder instead of the Valve match id, so exact-id membership
     # always misses even though the snapshot contains the match.  Fall back
     # to an unordered team-pair + start-time match within tolerance, picking
-    # (and consuming) the nearest still-unconsumed key.
+    # (and consuming) the nearest still-unconsumed key.  For a real id observed
+    # inside the exact-id window + margin (see `_applied_pair_fallback_applies`)
+    # the found key is a SIBLING map: the row is NOT covered by it (it replays),
+    # but the key is still consumed exactly as the original does, so every
+    # other row (applied or pending) sees the same `consumed` set and keeps the
+    # same action (r4: r3 skipped the search and let a later pending map claim
+    # the sibling key -> new mixed-series RuntimeRebaseError).
+    pair_may_cover = _applied_pair_fallback_applies(
+        match.match_id, match.timestamp, recent_completed_ids, snapshot_reference)
     found_match_id = _snapshot_find_team_pair_key(
         recent_completed_keys,
         radiant_team_id=match.radiant_team_id,
@@ -1212,7 +1280,8 @@ def _applied_entry_for_rebase(
     )
     if found_match_id is not None:
         consumed.add(found_match_id)
-        return "covered", match, result_timestamp
+        if pair_may_cover:
+            return "covered", match, result_timestamp
 
     if replay_floor_timestamp is not None and result_timestamp < replay_floor_timestamp:
         print(

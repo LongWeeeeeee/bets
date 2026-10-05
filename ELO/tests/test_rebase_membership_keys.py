@@ -707,3 +707,294 @@ def test_real_map_started_before_cutoff_but_applied_after_it_is_replayed_once(tm
     expected = HybridPlayerRosterEloModel.from_state(lts.full_model_state(snap))
     expected.process_match(lts.result_record(match, 1790812820), duration_seconds=None)
     assert json.loads(state_path.read_text(encoding="utf-8"))["model_state"] == expected.export_state()
+
+
+# ---------------------------------------------------------------------------
+# Sibling-map mis-proof (board ingame-kizf).  Real rows: see the fixture's
+# `_provenance`.  On the 03.10.2026 rebase, 10 live results whose own REAL Valve
+# match id was absent from the snapshot were tombstoned "covered" via the
+# team-pair fallback, with snapshot_covered_match_id = a DIFFERENT map of the
+# same series (8 siblings that had their own ledger row, plus a next map and a
+# previous map without one).  Their ELO updates were silently dropped.
+# ---------------------------------------------------------------------------
+_SIBLING_FIXTURE = json.loads(
+    (Path(__file__).with_name("rebase_sibling_tombstone_20261003.json")).read_text(encoding="utf-8")
+)
+_FX_REF = _SIBLING_FIXTURE["snapshot"]["reference_timestamp"]
+_FX_CASES = {c["name"]: c for c in _SIBLING_FIXTURE["cases"]}
+_SIBLING_CASES = [c["name"] for c in _SIBLING_FIXTURE["cases"] if c["kind"] == "sibling_with_own_row"]
+_LONE_CASES = [c["name"] for c in _SIBLING_FIXTURE["cases"]
+               if c["kind"] in ("next_map_without_own_row", "previous_map_without_own_row")]
+
+
+def _fixture_snapshot(tmp_path: Path) -> tuple[Path, dict]:
+    keys = [list(k) for k in _SIBLING_FIXTURE["snapshot"]["keys"]]
+    state = _k24_state(_FX_REF)
+    meta = {
+        "reference_timestamp": _FX_REF,
+        "model_config_signature": f"history-{_FX_REF}",
+        "recent_completed_match_ids_coverage_since": _FX_REF - 14 * _DAY,
+        "recent_completed_match_ids": [k[0] for k in keys],   # builder: ids == keys
+        "recent_completed_match_keys": keys,
+        "recent_completed_match_keys_tolerance_seconds": _SIBLING_FIXTURE["snapshot"]["tolerance_seconds"],
+    }
+    path = tmp_path / "fixture_snapshot.json"
+    payload = {"meta": meta, "model_state": state}
+    _write(path, payload)
+    return path, payload
+
+
+def _expected_replay_state(snap: dict, rows: list[dict]) -> dict:
+    model = HybridPlayerRosterEloModel.from_state(lts.full_model_state(snap))
+    for row in sorted(rows, key=lambda r: r["result_timestamp"]):
+        match = lts._deserialize_match_record(row["match_record"], radiant_win=row["radiant_win"])
+        model.process_match(lts.result_record(match, row["result_timestamp"]),
+                            duration_seconds=match.duration_seconds)
+    return model.export_state()
+
+
+def _rebase(tmp_path: Path, snap_path: Path, rows: dict, pending: dict | None = None):
+    state_path, progress_path = _seed_ledger(tmp_path, rows)
+    if pending:
+        payload = json.loads(progress_path.read_text(encoding="utf-8"))
+        payload["pending_series"] = pending
+        _write(progress_path, payload)
+    code = rebase_main(["--snapshot", str(snap_path), "--state", str(state_path),
+                        "--progress", str(progress_path)])
+    return code, json.loads(progress_path.read_text(encoding="utf-8")), \
+        json.loads(state_path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", _SIBLING_CASES)
+@pytest.mark.parametrize("swap_order", [False, True], ids=["ledger_order", "sibling_first"])
+def test_real_sibling_map_with_own_row_is_replayed_not_tombstoned(tmp_path, name, swap_order) -> None:
+    # L (real id, absent from the snapshot) and its sibling S (own row, id IN
+    # the snapshot) of one series.  Only S is covered, by its OWN exact id; L
+    # must replay.  On the original code L took S's key through the team-pair
+    # fallback (S starts <3 h after L) and both rows claimed one key.
+    case = _FX_CASES[name]
+    ledger_row = dict(case["ledger_row"])
+    if swap_order:   # classify S before L: the outcome must not depend on it
+        ledger_row["result_timestamp"] = ledger_row["applied_at"] = case["sibling_row"]["result_timestamp"] + 1
+    snap_path, snap = _fixture_snapshot(tmp_path)
+    assert case["ledger_id"] not in snap["meta"]["recent_completed_match_ids"]
+    assert case["proof_id"] in snap["meta"]["recent_completed_match_ids"]
+
+    code, progress, state = _rebase(tmp_path, snap_path, {
+        case["ledger_map_key"]: ledger_row, case["sibling_map_key"]: case["sibling_row"]})
+    assert code == 0
+    sibling = progress["applied_maps"][case["sibling_map_key"]]
+    assert sibling["snapshot_covered"] is True and "snapshot_covered_match_id" not in sibling  # exact id
+    lone = progress["applied_maps"][case["ledger_map_key"]]
+    assert "snapshot_covered" not in lone, f"{name}: result dropped as sibling-proven tombstone {lone}"
+    assert lone["match_record"] == ledger_row["match_record"]
+    assert state["model_state"] == _expected_replay_state(snap, [ledger_row])
+
+
+@pytest.mark.parametrize("name", _LONE_CASES)
+def test_real_next_and_previous_map_without_own_row_is_replayed(tmp_path, name) -> None:
+    # No sibling row at all: a next map (9010162791 -> 9010278932) and, the case
+    # no start/end-time guard could catch, a PREVIOUS map (9008730653 ->
+    # 9008635677, which started 73 min BEFORE L).  Both proof keys are other
+    # real maps; L is absent from the snapshot's exact-id window.
+    case = _FX_CASES[name]
+    snap_path, snap = _fixture_snapshot(tmp_path)
+    code, progress, state = _rebase(tmp_path, snap_path, {case["ledger_map_key"]: case["ledger_row"]})
+    assert code == 0
+    row = progress["applied_maps"][case["ledger_map_key"]]
+    assert "snapshot_covered" not in row, f"{name}: dropped via proof {row.get('snapshot_covered_match_id')}"
+    assert state["model_state"] == _expected_replay_state(snap, [case["ledger_row"]])
+
+
+def test_dltv_series_id_row_is_still_covered_by_team_pair_on_real_record(tmp_path) -> None:
+    # E-294 intent kept: a 7-digit DLTV series id (never in a snapshot) whose
+    # map IS in the snapshot under its Valve id is covered by team pair + time.
+    # Real record of case 9016945136 with its id replaced; its real key (S) is
+    # the only same-pair key in the snapshot.
+    case = _FX_CASES["sibling_9016945136"]
+    row = json.loads(json.dumps(case["ledger_row"]))
+    row["match_id"] = row["match_record"]["match_id"] = 4_321_098
+    row["series_key"] = "4321098"
+    snap_path, snap = _fixture_snapshot(tmp_path)
+    code, progress, state = _rebase(tmp_path, snap_path, {"dltv.org/matches/4321098.0": row})
+    assert code == 0
+    tomb = progress["applied_maps"]["dltv.org/matches/4321098.0"]
+    assert tomb["snapshot_covered"] is True
+    assert tomb["snapshot_covered_match_id"] == case["proof_id"]
+    assert state["model_state"] == snap["model_state"]
+
+
+
+
+def test_pair_fallback_scope_applied_real_ids_inside_window_plus_margin_only() -> None:
+    margin = lts.REAL_ID_WINDOW_MARGIN_SECONDS
+    assert margin == 24 * 3600
+    since, ref = 1_000_000, 1_000_000 + 14 * 86_400
+    ids_window = (since, {9_000_000_001})
+    inside = since + margin + 5_000
+    # series ids, small placeholders and the timestamp-shaped 1700000000: fallback stays
+    for fake_id in (1_234_567, 99_999_999, 1_700_000_000, 4_999_999_999):
+        assert lts._applied_pair_fallback_applies(fake_id, inside, ids_window, ref) is True
+    # real Valve id observed inside window + margin: absence is the answer
+    assert lts._applied_pair_fallback_applies(9_017_000_000, inside, ids_window, ref) is False
+    assert lts._applied_pair_fallback_applies(9_017_000_000, since + margin, ids_window, ref) is False
+    # closer to the window start than the margin (observation vs end-time bound): original
+    assert lts._applied_pair_fallback_applies(9_017_000_000, since + margin - 1, ids_window, ref) is True
+    assert lts._applied_pair_fallback_applies(9_017_000_000, since - 5_000, ids_window, ref) is True
+    # no exact-id window at all (old snapshot): no other proof, fallback stays
+    assert lts._applied_pair_fallback_applies(9_017_000_000, inside, None, ref) is True
+
+
+def test_real_id_row_observed_just_after_window_start_keeps_pair_fallback_until_margin() -> None:
+    # P1-c (r3 review): the ledger timestamp is the OBSERVATION time while
+    # coverage_since bounds map END time, so a map that ended just before the
+    # window start but was observed 10 min after it is in the base yet absent
+    # from the id list.  It keeps the original fallback (covered via the
+    # same-pair key); the twin observed 25 h after the start is outside that
+    # doubt and is replayed.  The margin edge is exact.
+    since = 1_000_000
+    ref = since + 14 * 86_400
+    margin = lts.REAL_ID_WINDOW_MARGIN_SECONDS
+    ids = (since, set())
+
+    def classify(start: int) -> str:
+        keys = (10_800, {9_999_000_020: (101, 202, start + 100)})
+        rec = _live_record(9_017_000_001, start=start, duration=None)
+        action, _m, _t = lts._applied_entry_for_rebase(
+            _applied_entry(rec, observed_at=start + 3_000), snapshot_reference=ref,
+            recent_completed_ids=ids, recent_completed_keys=keys, consumed=set())
+        return action
+    assert classify(since + 600) == "covered"
+    assert classify(since + margin - 1) == "covered"
+    assert classify(since + margin) == "replay_late"
+    assert classify(since + 25 * 3_600) == "replay_late"
+
+
+def _window_snapshot(tmp_path: Path, name: str, ref: int, keys: list[list[int]]) -> tuple[Path, dict]:
+    snap_path, snap = _real_night_snapshot(tmp_path, name, ref)
+    meta = snap["meta"]
+    meta["recent_completed_match_ids"] = [k[0] for k in keys]
+    meta["recent_completed_match_keys"] = keys
+    _write(snap_path, snap)
+    return snap_path, snap
+
+
+def test_row_below_the_window_keeps_covering_via_a_sibling_key_without_double_count(tmp_path) -> None:
+    # P1-a (r3 review).  L: real id, its map IS in the base but finished before
+    # the window start C (so its id is not in the id list); ledger row observed
+    # after C.  S: sibling, exact id in the list, same pair < 3 h later.  The
+    # original covered both (L via S's key); a two-pass reservation replayed L
+    # on top of a base that already contains it (double count).
+    ref = 1_790_800_000
+    since = ref - 14 * _DAY
+    s_id = 9_020_000_321
+    snap_path, snap = _window_snapshot(tmp_path, "p1a.json", ref, [[s_id, 101, 202, since + 3_000]])
+    l_rec = _live_record(9_019_999_900, start=since - 4_000, duration=None)
+    s_rec = _live_record(s_id, start=since + 3_000, duration=None)
+    rows = {"l": _applied_entry(l_rec, observed_at=since + 100),
+            "s": _applied_entry(s_rec, observed_at=since + 9_000)}
+    code, progress, state = _rebase(tmp_path, snap_path, rows)
+    assert code == 0
+    assert progress["applied_maps"]["l"]["snapshot_covered"] is True
+    assert progress["applied_maps"]["s"]["snapshot_covered"] is True
+    assert state["model_state"] == snap["model_state"]   # nothing replayed
+
+
+def test_legacy_small_id_row_and_exact_row_of_one_map_are_both_covered(tmp_path) -> None:
+    # P1-b (r3 review): a legacy/small-id ledger row and the exact-id row of
+    # the SAME map, base contains the map.  The original covers both (legacy
+    # row by pair, which takes the key; the exact row by id).  A two-pass
+    # reservation replayed the legacy row: double count.
+    ref = 1_790_800_000
+    k = 9_020_000_555
+    snap_path, snap = _window_snapshot(tmp_path, "p1b.json", ref, [[k, 101, 202, ref - 7_200]])
+    legacy = _live_record(4_321_098, start=ref - 7_200, duration=None)
+    exact = _live_record(k, start=ref - 7_200, duration=None)
+    rows = {"a": _applied_entry(legacy, observed_at=ref - 4_000),
+            "b": _applied_entry(exact, observed_at=ref - 3_000)}
+    code, progress, state = _rebase(tmp_path, snap_path, rows)
+    assert code == 0
+    assert progress["applied_maps"]["a"]["snapshot_covered"] is True
+    assert progress["applied_maps"]["b"]["snapshot_covered"] is True
+    assert state["model_state"] == snap["model_state"]
+
+
+def test_pending_series_with_absent_real_id_and_exact_sibling_does_not_abort_rebase(tmp_path) -> None:
+    # P2 (r3 review): pending series [L absent real id, S exact].  Pending rows
+    # keep the ORIGINAL classification: L takes S's key by pair -> covered, S
+    # covered by id -> no retained+covered mix, no RuntimeRebaseError.  Applying
+    # the real-id rule to pending rows would retain L next to covered S and abort
+    # the nightly rebase ("одновременно содержит covered и retained maps").
+    ref = 1_790_800_000
+    s_id, l_id = 9_020_000_777, 9_020_000_700
+    snap_path, snap = _window_snapshot(tmp_path, "p2.json", ref, [[s_id, 101, 202, ref - 3_000]])
+
+    def pmap(match_id: int, start: int) -> dict:
+        rec = _live_record(match_id, start=start, duration=None)
+        return {"map_key": f"dltv.org/matches/{match_id}.0", "registered_at": start,
+                "match_record": lts._serialize_match_record(rec)}
+    l_map, s_map = pmap(l_id, ref - 7_200), pmap(s_id, ref - 3_000)
+    pending = {"900": {"series_key": "900", "pending_maps": [l_map, s_map], "pending_map": l_map}}
+    code, progress, state = _rebase(tmp_path, snap_path, {}, pending=pending)
+    assert code == 0
+    assert progress["pending_series"] == {}
+    assert set(progress["applied_maps"]) == {l_map["map_key"], s_map["map_key"]}
+    assert all(v["snapshot_covered"] for v in progress["applied_maps"].values())
+    assert state["model_state"] == snap["model_state"]
+
+
+def _f1_scenario(tmp_path: Path):
+    # F1 (Opus review of r3).  S = map 1 of the series: its id is in the snapshot,
+    # NO ledger row.  L = map 2: applied row, real id absent from the snapshot,
+    # observed inside window + margin (the guard forbids covering L by pair).
+    # A pending series of the same pair holds two maps [m3, m4], both absent.
+    # c8536da8: L's pair search consumes S's key (L covered), m3/m4 find no key and
+    # stay pending -> series retained as a whole, no abort.  r3 skipped the search
+    # for guarded L, so m3 claimed S's key (covered) while m4 stayed pending ->
+    # "одновременно содержит covered и retained maps" -> nightly rebase aborted.
+    # r4: only L changes (replayed instead of covered); S's key is still consumed.
+    ref = 1_790_800_000
+    since = ref - 14 * _DAY
+    s_id, l_id = 9_020_000_100, 9_020_000_200
+    s_start = since + 3 * _DAY
+    snap_path, snap = _window_snapshot(tmp_path, "f1.json", ref, [[s_id, 101, 202, s_start]])
+
+    def pmap(match_id: int, start: int) -> dict:
+        rec = _live_record(match_id, start=start, duration=None)
+        return {"map_key": f"dltv.org/matches/{match_id}.0", "registered_at": start,
+                "match_record": lts._serialize_match_record(rec)}
+    m3, m4 = pmap(9_020_000_300, s_start + 5_000), pmap(9_020_000_400, s_start + 9_000)
+    l_rec = _live_record(l_id, start=s_start - 2_000, duration=None)
+    l_row = _applied_entry(l_rec, observed_at=since + 5 * _DAY)
+    assert since + 24 * 3_600 <= l_row["applied_at"] <= ref   # inside window + margin: guarded
+    assert l_id not in snap["meta"]["recent_completed_match_ids"]
+    return ref, s_id, snap_path, snap, m3, m4, l_row
+
+
+def test_guarded_applied_row_still_consumes_the_sibling_key_classification(tmp_path) -> None:
+    ref, s_id, _, snap, m3, m4, l_row = _f1_scenario(tmp_path)
+    ids = lts._snapshot_recent_completed_ids(snap)
+    keys = lts._snapshot_recent_completed_keys(snap)
+    consumed: set[int] = set()
+    action, _, _ = lts._applied_entry_for_rebase(
+        l_row, snapshot_reference=ref, recent_completed_ids=ids, recent_completed_keys=keys,
+        known_team_ids={101, 202}, consumed=consumed, replay_floor_timestamp=None)
+    assert action != "covered"            # the one intended change: L is replayed
+    assert consumed == {s_id}             # ... but the sibling key is consumed as in c8536da8
+    for pm in (m3, m4):                   # the c8536da8 actions of the pending maps
+        assert lts._pending_entry_for_rebase(
+            pm, snapshot_reference=ref, recent_completed_ids=ids, recent_completed_keys=keys,
+            known_team_ids={101, 202}, consumed=consumed)[0] == "pending"
+
+
+def test_guarded_applied_row_with_pending_series_of_the_pair_does_not_abort_rebase(tmp_path) -> None:
+    # Delivery boundary of F1: the whole rebase completes, the series is retained
+    # as a whole, L is replayed once.
+    ref, s_id, snap_path, snap, m3, m4, l_row = _f1_scenario(tmp_path)
+    pending = {"900": {"series_key": "900", "pending_maps": [m3, m4], "pending_map": m3}}
+    code, progress, state = _rebase(tmp_path, snap_path, {"l": l_row}, pending=pending)
+    assert code == 0
+    assert [m["map_key"] for m in progress["pending_series"]["900"]["pending_maps"]] == [
+        m3["map_key"], m4["map_key"]]
+    assert "snapshot_covered" not in progress["applied_maps"]["l"]
+    assert state["model_state"] == _expected_replay_state(snap, [l_row])
