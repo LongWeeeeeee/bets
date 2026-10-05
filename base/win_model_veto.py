@@ -563,6 +563,55 @@ def last_kills30(index):
     return None
 
 
+def _panel_w_5_15_entry(verdicts):
+    """Side/confidence of the panel ``w_5_15`` verdict, or None.
+
+    Owner decision 05.10.2026 (E-342): ml_dispatch bets one 5_15 kills window on
+    this verdict at confidence >= 0.60. ``confidence`` is max(p, 1 - p) of the
+    CALIBRATED probability ``p`` (never ``raw``); ``ok``/``blocked``/fill are
+    deliberately not consulted - the measured population had no such filter.
+    """
+    for verdict in verdicts or ():
+        if getattr(verdict, "key", None) != "w_5_15":
+            continue
+        side = getattr(verdict, "side", None)
+        if side not in ("Radiant", "Dire"):
+            return None
+        try:
+            probability = float(verdict.probability)
+            confidence = float(verdict.confidence)
+        except (TypeError, ValueError, AttributeError):
+            return None
+        if not (_math.isfinite(probability) and _math.isfinite(confidence)):
+            return None
+        # Range guard (review 05.10): a probability outside [0, 1] or a confidence
+        # outside [0.5, 1] is a broken verdict, never a bet.
+        if not (0.0 <= probability <= 1.0 and 0.5 <= confidence <= 1.0):
+            return None
+        metadata = getattr(verdict, "metadata", None)
+        model = metadata.get("model") if isinstance(metadata, dict) else None
+        return {"side": side, "confidence": confidence, "p": probability, "model": model}
+    return None
+
+
+def last_panel_w_5_15(index):
+    """Panel ``w_5_15`` {side, confidence, p, model} for THIS index, or None.
+
+    Same index-keyed contract as ``last_kills30``: the record is copied into the
+    per-index ``_LAST_FILL``/``_FILL_HISTORY`` entry right before
+    ``_remember_fill()``; a tick whose panel failed stores None, so another map's
+    verdict is never returned.
+    """
+    try:
+        _rec = _fill_for(index)
+        if _rec:
+            _value = _rec.get("panel_w_5_15")
+            return dict(_value) if isinstance(_value, dict) else None
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def last_draft_rank(index):
     """Место драфта среди признаков, тянущих в сторону ставки, и его вклад."""
     try:
@@ -918,14 +967,18 @@ def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, matc
                       [int(e.get("account_id") or 0) for e in entries]))
     (rh, ra), (dh, da) = slots
     if min(rh + dh) <= 0:
-        return {"panel_text": "", "kills30": None}
+        return {"panel_text": "", "kills30": None, "panel_w_5_15": None}
     display_b_kills = False
+    # Owner decision 05.10.2026 (E-342): same channel as kills30 - the verdict
+    # travels in this call's return dict (prematch ML is off in prod, no index).
+    panel_w_5_15 = None
     try:
         import prematch_panel_live as panel
         import ml_panel
         verdicts = panel.evaluate_map(rh, dh, ra, da, None, (),
                                       shadow_context=_prediction_context(match))
         _LAST_PANEL["verdicts"] = verdicts
+        panel_w_5_15 = _panel_w_5_15_entry(verdicts)
         _LAST_PANEL["text"], display_b_kills = _render_panel_kills_display(verdicts, ml_panel)
         _mid = None
         if isinstance(match, dict):
@@ -961,7 +1014,8 @@ def _off_auxiliary_panels(radiant, dire, radiant_team_name, dire_team_name, matc
     except Exception as exc:  # noqa: BLE001 — kills remain optional as before
         _LAST_PANEL["kills_error"] = f"E281 kills: {type(exc).__name__}: {exc}"
     return {"panel_text": str(_LAST_PANEL["text"] or ""),
-            "kills30": _LAST_PANEL["kills30"]}
+            "kills30": _LAST_PANEL["kills30"],
+            "panel_w_5_15": panel_w_5_15}
 
 
 def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
@@ -1345,6 +1399,10 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         # archives `_LAST_FILL` under THIS tick's `_idx`, gives `last_kills30`
         # the same index-keyed contract (owner rule 13.09.2026).
         _LAST_FILL["kills30"] = _LAST_PANEL.get("kills30")
+        # Owner decision 05.10.2026 (E-342): same contract for the panel w_5_15
+        # verdict; `_LAST_PANEL["verdicts"]` was reset to [] at the top of this
+        # tick's panel block, so a failed panel stores None, not a stale verdict.
+        _LAST_FILL["panel_w_5_15"] = _panel_w_5_15_entry(_LAST_PANEL.get("verdicts"))
         _remember_fill()
         # Оценка late-модели идёт В ЖУРНАЛ: без этого её молчаливый отказ
         # (нет артефакта, незнакомый герой) неотличим от работы — строка в
@@ -1519,7 +1577,7 @@ def win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                     radiant_heroes_and_pos, dire_heroes_and_pos,
                     radiant_team_name, dire_team_name, match)
             except Exception:  # noqa: BLE001 — broken positions cannot block other signals
-                auxiliary = {"panel_text": "", "kills30": None}
+                auxiliary = {"panel_text": "", "kills30": None, "panel_w_5_15": None}
             mismatch = _off_position_mismatch(radiant_heroes_and_pos,
                                               dire_heroes_and_pos)
             return None, None, {"reason": "prematch_ml_disabled", "disabled": True,

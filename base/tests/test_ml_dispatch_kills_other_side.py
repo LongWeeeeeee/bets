@@ -140,6 +140,7 @@ def test_same_side_dedup_keeps_original_reason(monkeypatch, case, side):
 
 
 def test_lane_rule_other_side_check_stays_on_when_old_paths_rolled_back(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_LANE_KILLS", "1")  # off by default since 05.10.2026
     monkeypatch.setenv("ML_DISPATCH_KILLS_WINDOW_ONE_SIDE", "0")
     ctx = _ctx(LANE)
     ctx.already_sent.add(md._dedup_key(ctx, "kills_window", "Radiant"))

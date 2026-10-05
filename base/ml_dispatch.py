@@ -234,7 +234,24 @@ side, produce one ``kills_window`` on the first open configured window
 (default ``5_15``), independently of ELO, Late/All and kills30. Set
 ``ML_DISPATCH_LANE_KILLS=0`` to roll back; select labels with
 ``ML_DISPATCH_LANE_KILLS_WINDOWS``. No offline outcome measurement exists;
-lead replay found 99/300 maps eligible by 120 seconds.
+lead replay found 99/300 maps eligible by 120 seconds. SWITCHED OFF BY DEFAULT
+05.10.2026 (owner decision, E-342 addendum, card ingame-h9b5): live hit rate
+51.0% [43.1, 58.9], n=149 (offline 60.5%); roll back with
+``ML_DISPATCH_LANE_KILLS=1``.
+
+panel_kills (owner decision 05.10.2026, E-342 addendum, card ingame-h9b5,
+replaces lane_kills): the panel model ``w_5_15`` (the "🤖 ML: окно 5-15" line)
+backs side ``S`` with confidence >= ``ML_DISPATCH_PANEL_KILLS_MIN_CONF``
+(default 0.60, inclusive) -> one ``kills_window`` on the first open configured
+window (``ML_DISPATCH_PANEL_KILLS_WINDOWS``, default ``5_15``), independently
+of ELO, Late/All, the early models and kills30. The verdict is
+``Ctx.panel_w_5_15`` (its calibrated ``confidence`` = max(p, 1-p) and ``side``,
+no ``ok``/``blocked``/fill filter: the measured population had none). The panel
+rule is evaluated before the lane rule, so it wins when both are enabled.
+``expected_wr`` is the kills-window probability itself, no WIN calibration.
+Measurement E-342 (live maps 12.09-05.10.2026): confidence >= 0.60 hits 64.3%
+[57.4, 70.7], n=196 (model A 62.1% n=132; model B_kv3 68.8% n=64). No offline
+validation of this rule exists. ``ML_DISPATCH_PANEL_KILLS=0`` disables it.
 """
 from __future__ import annotations
 
@@ -274,6 +291,10 @@ RULE_KILLS_EARLY_WIN_KILLS30 = "kills_early_win_kills30"
 RULE_KILLS_EARLY_NW_KILLS30 = "kills_early_nw_kills30"
 RULE_KILLS_LANE_EARLY_WINDOW = "kills_lane_early_window"
 REASON_LANE_KILLS_WINDOW_CLOSED = "lane_kills_window_closed"
+RULE_KILLS_PANEL_WINDOW = "kills_panel_window"
+REASON_PANEL_KILLS_LOW_CONF = "panel_kills_low_conf"
+REASON_PANEL_KILLS_WINDOW_CLOSED = "panel_kills_window_closed"
+REASON_PANEL_KILLS_BAD_VERDICT = "panel_kills_bad_verdict"
 REASON_KILLS_WINDOW_SENT_OTHER_SIDE = "kills_window_sent_other_side"
 
 LATE_CONFLICT_MODES = ("wait", "veto")
@@ -354,6 +375,8 @@ class Ctx:
     (оценка)" panel line prints — kept separate from ``prematch_index``
     (the raw ensemble index, logging-only, see module docstring design
     decision 3).
+    ``panel_w_5_15`` (owner decision 05.10.2026) is the panel ``w_5_15`` verdict
+    for THIS map at this tick (side + confidence), see ``panel_kills`` above.
     ``kills_windows_open`` lists labels of currently-open kill windows,
     nearest one first (empty list => no ``kills_window`` decision this
     tick, but ``kills_total`` is unaffected).
@@ -374,6 +397,7 @@ class Ctx:
     all: Optional[ModelVerdict] = None
     lane: Optional[ModelVerdict] = None
     prematch: Optional[ModelVerdict] = None
+    panel_w_5_15: Optional[ModelVerdict] = None
     prematch_index: Optional[float] = None
     kills_windows_open: List[str] = field(default_factory=list)
     kills30_radiant: Optional[float] = None
@@ -429,8 +453,14 @@ class Config:
     early_solo_block: bool = True
     kills_early_enabled: bool = True
     kills_early_min_kills30: float = 0.60
-    lane_kills_enabled: bool = True
+    # Owner decision 05.10.2026: ML Laning kills rule off (live 51.0%, n=149),
+    # panel w_5_15 >= 0.60 on (live 64.3%, n=196). Dataclass defaults match
+    # ``from_env`` defaults so a hand-built ``Config()`` is the production config.
+    lane_kills_enabled: bool = False
     lane_kills_windows: Tuple[str, ...] = ("5_15",)
+    panel_kills_enabled: bool = True
+    panel_kills_min_conf: float = 0.60
+    panel_kills_windows: Tuple[str, ...] = ("5_15",)
     kills_window_one_side: bool = True
     lane_elo_release_enabled: bool = True
     lane_elo_release_lane_conf: float = 0.55
@@ -502,11 +532,20 @@ class Config:
             ).strip().lower() not in ("0", "false", "off"),
             kills_early_min_kills30=_float("ML_DISPATCH_KILLS_EARLY_MIN_KILLS30", 0.60),
             lane_kills_enabled=str(
-                env.get("ML_DISPATCH_LANE_KILLS", "1")
+                env.get("ML_DISPATCH_LANE_KILLS", "0")
             ).strip().lower() not in ("0", "false", "off"),
             lane_kills_windows=tuple(
                 label.strip() for label in str(
                     env.get("ML_DISPATCH_LANE_KILLS_WINDOWS", "5_15")
+                ).split(",") if label.strip()
+            ),
+            panel_kills_enabled=str(
+                env.get("ML_DISPATCH_PANEL_KILLS", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            panel_kills_min_conf=_float("ML_DISPATCH_PANEL_KILLS_MIN_CONF", 0.60),
+            panel_kills_windows=tuple(
+                label.strip() for label in str(
+                    env.get("ML_DISPATCH_PANEL_KILLS_WINDOWS", "5_15")
                 ).split(",") if label.strip()
             ),
             kills_window_one_side=str(
@@ -1355,6 +1394,71 @@ def _evaluate_kills_lane_early(
     return decisions, skipped
 
 
+def _evaluate_kills_panel(
+    ctx: Ctx, cfg: Config,
+    decisions: List[Decision], skipped: List[Skipped],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """Owner rule 05.10.2026 (E-342): panel ``w_5_15`` >= min_conf -> one
+    ``kills_window`` bet on the side that verdict names."""
+    verdict = ctx.panel_w_5_15
+    if not cfg.panel_kills_enabled or verdict is None:
+        return decisions, skipped
+
+    side = verdict.side
+    confidence = verdict.confidence
+    # Fail closed on a verdict that cannot be a probability (review 05.10).
+    if not math.isfinite(confidence) or confidence > 1.0:
+        return decisions, skipped + [Skipped(
+            "kills_window", side, REASON_PANEL_KILLS_BAD_VERDICT,
+            f"panel_w_5_15 confidence={confidence!r} outside [0, 1]",
+        )]
+    if confidence < cfg.panel_kills_min_conf:
+        return decisions, skipped + [Skipped(
+            "kills_window", side, REASON_PANEL_KILLS_LOW_CONF,
+            f"panel_w_5_15={confidence:.3f} < {cfg.panel_kills_min_conf}",
+        )]
+    if any(decision.market == "kills_window" for decision in decisions):
+        return decisions, skipped
+
+    key = _dedup_key(ctx, "kills_window", side)
+    if ctx.already_sent is not None:
+        if key in ctx.already_sent:
+            return decisions, skipped + [Skipped(
+                "kills_window", side, REASON_DEDUP, f"key={key} already sent",
+            )]
+        other_key = _dedup_key(ctx, "kills_window", _other_side(side))
+        # Like the lane rule (test_ml_dispatch_kills_other_side.py), the other-side
+        # check is unconditional: ML_DISPATCH_KILLS_WINDOW_ONE_SIDE=0 only rolls
+        # back the older underdog paths.
+        if other_key in ctx.already_sent:
+            return decisions, skipped + [Skipped(
+                "kills_window", side, REASON_KILLS_WINDOW_SENT_OTHER_SIDE,
+                f"key={other_key} already sent for other side",
+            )]
+
+    label = next((name for name in ctx.kills_windows_open
+                  if name in cfg.panel_kills_windows), None)
+    if label is None:
+        return decisions, skipped + [Skipped(
+            "kills_window", side, REASON_PANEL_KILLS_WINDOW_CLOSED,
+            f"configured={cfg.panel_kills_windows}, open={ctx.kills_windows_open}",
+        )]
+
+    skipped = [
+        item for item in skipped
+        if not (item.market == "kills_window" and (item.side is None or item.side == side))
+    ]
+    decisions = decisions + [Decision(
+        market="kills_window", target_side=side, target_team=ctx.team_name(side),
+        rule=RULE_KILLS_PANEL_WINDOW, models_for=["panel_w_5_15"],
+        models_against=[], timing="now", expected_wr=confidence,
+        min_odds=_min_odds(confidence, cfg),
+        reasons=[f"panel_w_5_15={confidence:.3f} >= {cfg.panel_kills_min_conf} for {side}",
+                 f"window={label}"],
+    )]
+    return decisions, skipped
+
+
 def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     """Idempotent on every tick: same ``ctx``/``cfg`` -> same result.
 
@@ -1370,6 +1474,10 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
         ctx, cfg, underdog_side, kills_decisions, kills_skipped
     )
     kills_decisions, kills_skipped = _evaluate_kills_early(
+        ctx, cfg, kills_decisions, kills_skipped
+    )
+    # Panel rule first: it wins when the (off-by-default) lane rule is also enabled.
+    kills_decisions, kills_skipped = _evaluate_kills_panel(
         ctx, cfg, kills_decisions, kills_skipped
     )
     kills_decisions, kills_skipped = _evaluate_kills_lane_early(

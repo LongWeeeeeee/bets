@@ -414,13 +414,24 @@ E-290 (решение владельца 14.09.2026): обычное ожида�
 `ML_DISPATCH_LANE_ELO_RELEASE_LANE_ADV` (8); причина в `Decision.reasons` —
 `lane_elo_release: … via=lane|lane_adv_dict`; ветки ожидания1860с (late
 conflict) не затрагиваются.
+Правило `panel_kills` (владелец, 05.10.2026, E-342, карточка ingame-h9b5):
+панельная модель `w_5_15` с confidence ≥ 0,60 (`ML_DISPATCH_PANEL_KILLS_MIN_CONF`)
+даёт один `kills_window` (`rule="kills_panel_window"`) на свою сторону в первом
+открытом окне из `ML_DISPATCH_PANEL_KILLS_WINDOWS` (по умолчанию `5_15`), без
+ELO/Late/All/kills30 и без пола по кэфу. Вердикт при `PREMATCH_ML_ENABLED=0`
+(прод) приходит в `details["panel_w_5_15"]` из `_off_auxiliary_panels` тем же
+каналом, что `kills30`; сбой панели = `None` = ставки нет. Живое попадание
+64,3 % n=196, офлайн-проверки нет. Откат: `ML_DISPATCH_PANEL_KILLS=0`.
+Lane-правило ниже с 05.10.2026 выключено по умолчанию (вживую 51,0 % n=149);
+`ML_DISPATCH_LANE_KILLS=1` включает его обратно, панельное правило при этом
+оценивается раньше.
 Правило `lane_kills` (владелец, 26.09.2026): ML Laning ★ за `S` и хотя бы
 одна из Early NW/Early Win ★ за `S`, при отсутствии Early ★ за другую
 сторону, дают один `kills_window` (`rule="kills_lane_early_window"`) для
 первого открытого окна из `ML_DISPATCH_LANE_KILLS_WINDOWS` (по умолчанию
 `5_15`). Независимо от ELO, Late/All, prematch, kills30 и NW; если окно
-закрыто, отправки нет. `ML_DISPATCH_LANE_KILLS=1` по умолчанию, `=0`/
-`false`/`off` откатывает правило. Офлайн-результата для сочетания нет;
+закрыто, отправки нет. `ML_DISPATCH_LANE_KILLS=0` по умолчанию с 05.10.2026 (было `1`), `=1`
+включает правило. Офлайн-результата для сочетания нет;
 реплей ведущего: 99/300 карт до 120-й секунды, в 19 уже было такое же
 окно на ту же сторону по правилу андердога.
 С 26.09.2026 пути андердога и late-conflict 4.3 также пропускают `kills_window`, если реестр уже содержит окно за другую сторону той же карты; `ML_DISPATCH_KILLS_WINDOW_ONE_SIDE=0` (`false`/`off`) возвращает их прежнее поведение, проверка `lane_kills` остаётся включённой.

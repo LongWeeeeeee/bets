@@ -5292,6 +5292,9 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         _fallback_details["refusal_warning_line"] = _warning
         _fallback_details["panel_text"] = _ml_details.get("panel_text", "")
         _fallback_details["kills30"] = _ml_details.get("kills30")
+        # Owner decision 05.10.2026 (E-342): panel w_5_15 verdict of THIS call,
+        # same channel as kills30 (read by `_ml_dispatch_tick`).
+        _fallback_details["panel_w_5_15"] = _ml_details.get("panel_w_5_15")
         # Keep the structured, card-owned refusal for the ML dispatch gate.
         # Display-only fallback verdicts remain available even on this refusal.
         from copy import deepcopy

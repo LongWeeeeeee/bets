@@ -42,6 +42,15 @@ CAPTURES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _lane_rule_enabled(monkeypatch):
+    """The ML Laning rule is OFF by default since 05.10.2026 (owner decision, E-342
+    addendum: live 51.0% n=149); these tests exercise it, so enable it explicitly.
+    The panel rule is disabled so the captured lane ticks isolate the lane rule."""
+    monkeypatch.setenv("ML_DISPATCH_LANE_KILLS", "1")
+    monkeypatch.setenv("ML_DISPATCH_PANEL_KILLS", "0")
+
+
 def _ctx(case):
     record = CAPTURES[case]["record"]
     verdicts = record["verdicts"]

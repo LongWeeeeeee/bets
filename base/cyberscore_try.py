@@ -12753,7 +12753,14 @@ def _ml_dispatch_deliver_decision(
             special_header_mode="early_kills",
             kills_window_label=window_label,
         )
-        message_text = _ml_dispatch_compose_message(header, full_message_text)
+        panel_line = ""
+        if decision.rule == "kills_panel_window":
+            # Owner decision 05.10.2026: say which model this window bet rests on
+            # (the other kills_window rules keep their text unchanged).
+            panel_line = (f"🤖 Ранние килы {window_label.replace('_', '-')} по панели ML: "
+                          f"{decision.target_team} ({decision.target_side}) "
+                          f"{decision.expected_wr * 100:.0f}%")
+        message_text = _ml_dispatch_compose_message(header, full_message_text, panel_line)
     else:  # kills_total
         header = _format_signal_header(
             stake_team_name=decision.target_team,
@@ -12947,6 +12954,19 @@ def _ml_dispatch_tick(
                         else details.get("kills30"))
         kills30_radiant = kills30_pair.get("radiant") if isinstance(kills30_pair, dict) else None
         kills30_dire = kills30_pair.get("dire") if isinstance(kills30_pair, dict) else None
+        # Panel w_5_15 verdict of THIS map (owner decision 05.10.2026, E-342): the
+        # per-index record when the prematch model produced an index, otherwise
+        # (prod, PREMATCH_ML_ENABLED=0) the card-owned details snapshot that
+        # `_off_auxiliary_panels` returned in the same call - same channel as kills30.
+        # With the prematch model ON the snapshot (`last_prediction_details`) carries
+        # the key too and is preferred: the per-index record is shared by every map
+        # whose rounded index collides, the snapshot is owned by this card.
+        if isinstance(details, dict) and "panel_w_5_15" in details:
+            panel_w_5_15_pair = details["panel_w_5_15"]
+        elif index is not None:
+            panel_w_5_15_pair = win_model_veto.last_panel_w_5_15(index)
+        else:
+            panel_w_5_15_pair = None
         # 🤖 Prematch as a sixth win model (owner decision 15.09.2026): same
         # index/source this tick already extracted above, no recompute — see
         # `_ml_dispatch_prematch_pair` (matches `_format_win_model_line`,
@@ -12991,6 +13011,7 @@ def _ml_dispatch_tick(
             all=_ml_dispatch_verdict_from_pair(lane_verdicts.get("all")),
             lane=_ml_dispatch_verdict_from_pair(lane_verdicts.get("lane")),
             prematch=_ml_dispatch_verdict_from_pair(prematch_pair),
+            panel_w_5_15=_ml_dispatch_verdict_from_pair(panel_w_5_15_pair),
             prematch_index=index,
             kills_windows_open=_ml_dispatch_open_kills_windows(game_time_value),
             kills30_radiant=kills30_radiant,
@@ -13035,6 +13056,7 @@ def _ml_dispatch_tick(
             "all": _verdict_view(ctx.all),
             "lane": _verdict_view(ctx.lane),
             "prematch": _verdict_view(ctx.prematch),
+            "panel_w_5_15": _verdict_view(ctx.panel_w_5_15),
             "kills30": kills30_pair if isinstance(kills30_pair, dict) else None,
         }
         decisions_view = [
@@ -49810,6 +49832,10 @@ if __name__ == "__main__":
         f"/{_dispatch_startup_cfg.early_nw_min_lead}"
         f" kills_early={'on' if _dispatch_startup_cfg.kills_early_enabled else 'off'}"
         f"/{_dispatch_startup_cfg.kills_early_min_kills30}"
+        f" panel_kills={'on' if _dispatch_startup_cfg.panel_kills_enabled else 'off'}"
+        f"/{_dispatch_startup_cfg.panel_kills_min_conf}"
+        f"/{','.join(_dispatch_startup_cfg.panel_kills_windows)}"
+        f" lane_kills={'on' if _dispatch_startup_cfg.lane_kills_enabled else 'off'}"
     )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):
