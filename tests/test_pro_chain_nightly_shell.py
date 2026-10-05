@@ -21,6 +21,7 @@ same open-file-description semantics as flock(1)). On Linux the real flock is us
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import os
 import pty
@@ -562,7 +563,7 @@ def test_bash_n_under_system_bash(script: Path):
     assert r.returncode == 0, r.stderr
 
 
-def test_chain_gate_after_topup_before_rebuild(chain: Chain):
+def test_chain_gate_before_topup_and_rebuild(chain: Chain):
     write(chain.prod / "runtime/sourcetv_matches.json", '{"map": 1}', 0o644)
     write(chain.stubbin / "sleep", '''#!/bin/bash
 echo "live-gate" >> "$STUB_LOG"
@@ -570,16 +571,42 @@ printf '{}' > "$PROD_ROOT/runtime/sourcetv_matches.json"
 ''')
     r = chain.run(PRO_CHAIN_HEAVY_WAIT_SECONDS="2", PRO_CHAIN_LIVE_POLL_SECONDS="0.01")
     assert r.returncode == 0, chain.chain_log()
-    assert [s.split()[0] for s in chain.steps()] == ["topup", "live-gate", "rebuild"]
+    assert [s.split()[0] for s in chain.steps()] == ["live-gate", "topup", "rebuild"]
     assert "жду окончания живой карты" in chain.chain_log()
 
 
-def test_chain_gate_heavy_bound_warns_and_still_rebuilds(chain: Chain):
-    write(chain.prod / "runtime/sourcetv_matches.json", "unparsable", 0o644)
+@pytest.mark.parametrize("shadow", ["0", "1"])
+def test_chain_waits_before_topup_until_live_map_clears(chain: Chain, shadow: str):
+    live = chain.prod / "runtime/sourcetv_matches.json"
+    write(live, '{"map": 1}', 0o644)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(chain.run, PRO_CHAIN_HEAVY_WAIT_SECONDS="10",
+                                 PRO_CHAIN_LIVE_POLL_SECONDS="0.01", PRO_CHAIN_SHADOW=shadow)
+        try:
+            deadline = time.monotonic() + 5
+            while "добор про-корпуса — жду окончания живой карты" not in chain.chain_log():
+                assert chain.steps() == [], "topup ran while the live map was active"
+                assert not future.done(), chain.chain_log()
+                assert time.monotonic() < deadline, "topup gate did not start waiting"
+                time.sleep(0.01)
+            assert chain.steps() == [], "topup ran while the live map was active"
+        finally:
+            write(live, "{}", 0o644)
+        r = future.result(timeout=10)
+    assert r.returncode == 0, chain.chain_log()
+    assert [s.split()[0] for s in chain.steps()] == ["topup", "rebuild"]
+    assert "ВНИМАНИЕ" not in chain.chain_log()
+
+
+@pytest.mark.parametrize("live_state", ['{"map": 1}', "unparsable"])
+def test_chain_gate_heavy_bound_warns_and_still_runs_both_steps(chain: Chain, live_state: str):
+    write(chain.prod / "runtime/sourcetv_matches.json", live_state, 0o644)
     r = chain.run(PRO_CHAIN_HEAVY_WAIT_SECONDS="0")
     assert r.returncode == 0, chain.chain_log()
     assert [s.split()[0] for s in chain.steps()] == ["topup", "rebuild"]
-    assert "ВНИМАНИЕ: пересборка снимка" in chain.chain_log()
+    log = chain.chain_log()
+    assert log.index("ВНИМАНИЕ: добор про-корпуса") < log.index("добор про-корпуса ===")
+    assert log.index("ВНИМАНИЕ: пересборка снимка") < log.index("пересборка снимка ===")
 
 
 def test_chain_gate_refuses_rebuild_timeout_before_any_step(chain: Chain):

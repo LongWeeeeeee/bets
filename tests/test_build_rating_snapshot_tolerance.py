@@ -40,7 +40,8 @@ def test_snapshot_write_boundary(tmp_path, case):
     output = tmp_path / 'data/rating_snapshot.npz'
     env = dict(os.environ, DRAFT_ROOT=str(tmp_path),
                PANEL_RATING_SNAPSHOT=str(output),
-               PYTHONPYCACHEPREFIX='/private/tmp/rt-pyc',
+               PYTHONPYCACHEPREFIX=(os.environ.get('PYTHONPYCACHEPREFIX')
+                                    or str(tmp_path / 'pycache')),
                PYTHONPATH=str(ROOT / 'base'))
     subprocess.run([sys.executable, str(SCRIPT)], env=env, check=True,
                    capture_output=True, text=True, timeout=25)

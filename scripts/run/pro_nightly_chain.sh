@@ -139,6 +139,7 @@ run_step() {  # run_step ИМЯ ТАЙМАУТ|"" СКРИПТ  -> rc, сооб�
 }
 
 topup_rc=0
+wait_no_live_map "${PRO_CHAIN_HEAVY_WAIT_SECONDS:-2700}" "добор про-корпуса"
 run_step "добор про-корпуса" "$TOPUP_TIMEOUT" "$BUILD_ROOT/scripts/run/topup_pro_corpus.sh" || topup_rc=$?
 [ "$topup_rc" -eq 0 ] || echo "добор упал (rc=$topup_rc), пересобираю на текущем корпусе"
 

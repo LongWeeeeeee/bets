@@ -32,10 +32,12 @@ mkdir -p runtime
 
 run_topup() {
   local rc=0
-  # Тень: квота OpenDota 3000/сутки общая с ещё работающим добором на Маке —
-  # второй добор в ту же ночь съел бы её. PRO_CHAIN_SHADOW_TOPUP=1 — всё же идти.
+  # Shadow skips topup by default to rebuild the corpus exactly as synced from
+  # the Mac, keeping outputs comparable. PRO_CHAIN_SHADOW_TOPUP=1 enables it.
+  # A second topup that night costs ~700 STRATZ requests; each of the four keys
+  # has a 15000-request daily quota, so this extra run is harmless.
   if shadow_on && [ "${PRO_CHAIN_SHADOW_TOPUP:-0}" != 1 ]; then
-    echo "[тень] добор про-корпуса пропущен: квота OpenDota общая с добором на Маке (PRO_CHAIN_SHADOW_TOPUP=1 — запустить)"
+    echo "[тень] добор про-корпуса пропущен: сохраняю корпус ровно как синхронизирован с Мака для сопоставимости результатов пересборки (PRO_CHAIN_SHADOW_TOPUP=1 — запустить)"
     return 0
   fi
   if [ "$PRO_CHAIN_MODE" = local ]; then
