@@ -52,6 +52,15 @@
       "event_id": "16855095",
       "command": "cd /root/main && venv/bin/python3 runtime/experiments/odds-winline/collector_body_dump.py <out> --max-events 5 --max-loads 10 (deployed collector 75a93446, proxy CA, capped transient unit)",
       "note": "body read ~5.5 s after the event opened: only the Популярные block (105 lines, no line Все, 0 team kills headers); the same event rendered 485 lines with 9 team headers when waits were x3 (collector_debug_x3_20261005T0815*)"
+    },
+    "winline_kills_totals_ladder_prematch_yellow_submarine_cyberhero_20261005.txt": {
+      "source": "serv1 runtime/artifacts/odds-winline/collector_debug_x3_20261005T081650/16858345.txt (sha256 5802f95d...2a30, copied unchanged)",
+      "captured_at_utc": "2026-10-05T08:17Z",
+      "kind": "prematch event page, fully rendered, tier-3 LADDER layout",
+      "event_id": "16858345",
+      "league": "PR Universe, Qualifier",
+      "command": "cd /root/main && WAIT_MULT=3 venv/bin/python3 runtime/experiments/odds-winline/collector_body_dump.py <out> --max-events 5 --max-loads 10 (deployed collector 75a93446, proxy CA, capped transient unit)",
+      "note": "team kills totals as a ladder: per team a block 'Больше' with 4 lines б 27.5..30.5 then 'Меньше' with м 27.5..30.5, followed by a second Больше/Меньше block with one line (31.5); BLAST pages carry one line per team. The 75a93446/1e1c5bf2 parser rejected the ladder -> null rows on serv1. Also has 'N карта кол-во убийств <TEAM>' bucket markets (0-20/21-30/31-40/41+), not parsed. checked: serv1 IP absent"
     }
   }
 }

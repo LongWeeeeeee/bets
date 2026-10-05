@@ -56,7 +56,9 @@ def test_captured_maps(kind, teams, map_num, values, flatten):
     text = body(kind)
     if flatten:
         text = " ".join(text.split())
-    expected = {side: dict(team=team, **dict(zip(("line", "over", "under"), numbers)))
+    # BLAST pages carry one line per team: the ladder is that single rung.
+    expected = {side: dict(team=team, ladder=[list(numbers)],
+                           **dict(zip(("line", "over", "under"), numbers)))
                 for side, team, numbers in zip(("p1", "p2"), teams, values)}
     assert collector.parse_winline_team_kills_totals(text, map_num, *teams) == expected
 
@@ -164,6 +166,80 @@ def test_duplicate_market_is_ambiguous_and_commas_supported():
     got = collector.parse_winline_team_kills_totals(body().replace(".", ","), 1,
                                                   "TEAM YANDEX", "LGD GAMING")
     assert got["p1"]["line"] == 31.5
+
+
+LADDER_BODY = "winline_kills_totals_ladder_prematch_yellow_submarine_cyberhero_20261005.txt"
+LADDER_TEAMS = ("YELLOW SUBMARINE", "CYBERHERO")
+# Read by eye from the captured tier-3 page (PR Universe, event 16858345): per team a block
+# Больше б 27.5..30.5 / Меньше м 27.5..30.5, then a second block with one more line.
+LADDER_YS = [[27.5, 1.62, 2.15], [28.5, 1.72, 2.00], [29.5, 1.83, 1.87], [30.5, 2.00, 1.72],
+             [31.5, 2.15, 1.62]]
+LADDER_CH = [[23.5, 1.65, 2.10], [24.5, 1.72, 2.00], [25.5, 1.83, 1.87], [26.5, 1.90, 1.80],
+             [27.5, 2.00, 1.72]]
+LADDER_CH3 = [[23.5, 1.65, 2.10], [24.5, 1.72, 2.00], [25.5, 1.80, 1.90], [26.5, 1.90, 1.80],
+              [27.5, 2.00, 1.72]]
+
+
+def ladder_card():
+    return dict(event_id="16858345", live=False, league="PR Universe, Qualifier",
+                team1=LADDER_TEAMS[0], team2=LADDER_TEAMS[1], header_map=1)
+
+
+@pytest.mark.parametrize("flatten", [False, True])
+@pytest.mark.parametrize("map_num,ch_ladder,ch_main", [
+    (1, LADDER_CH, (25.5, 1.83, 1.87)),
+    (2, LADDER_CH, (25.5, 1.83, 1.87)),
+    # 25.5 (1.80/1.90) and 26.5 (1.90/1.80) are equally balanced: the lower line wins.
+    (3, LADDER_CH3, (25.5, 1.80, 1.90)),
+])
+def test_ladder_markets_on_captured_tier3_page(map_num, ch_ladder, ch_main, flatten):
+    text = (FIXTURES / LADDER_BODY).read_text()
+    if flatten:
+        text = " ".join(text.split())
+    got = collector.parse_winline_team_kills_totals(text, map_num, *LADDER_TEAMS)
+    assert got == {
+        "p1": dict(team="YELLOW SUBMARINE", line=29.5, over=1.83, under=1.87, ladder=LADDER_YS),
+        "p2": dict(team="CYBERHERO", line=ch_main[0], over=ch_main[1], under=ch_main[2],
+                   ladder=ch_ladder)}
+
+
+def test_ladder_rows_persist_and_dedupe(tmp_path):
+    text = (FIXTURES / LADDER_BODY).read_text()
+    rows = collector.build_rows(ladder_card(), text, wall=20)
+    assert [r["map_num"] for r in rows] == [1, 2, 3]
+    assert [(r["kills_t1_line"], r["kills_t2_line"]) for r in rows] == [(29.5, 25.5)] * 3
+    assert rows[0]["kills_t1_ladder"] == LADDER_YS
+    assert rows[2]["kills_t2_ladder"] == LADDER_CH3
+    path = tmp_path / "history.jsonl"
+    # An old-format row (before ladders were recorded) must replay without the ladder fields.
+    old = dict(rows[0], wall=1, kills_t1_line=None, kills_t1_over=None, kills_t1_under=None,
+               kills_t2_line=None, kills_t2_over=None, kills_t2_under=None)
+    del old["kills_t1_ladder"], old["kills_t2_ladder"]
+    path.write_text(json.dumps(old, ensure_ascii=False) + "\n")
+    with collector.HistoryWriter(path) as writer:
+        assert all(writer.write(r) for r in rows)
+        assert not any(writer.write(dict(r, wall=21)) for r in rows)
+    with collector.HistoryWriter(path) as writer:  # state JSON round trip: lists stay equal
+        assert not any(writer.write(dict(r, wall=22)) for r in rows)
+        changed = dict(rows[0], kills_t2_ladder=LADDER_CH[:-1] + [[27.5, 2.05, 1.70]], wall=23)
+        assert writer.write(changed)
+    stored = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(stored) == 5
+    assert stored[1]["kills_t1_ladder"] == LADDER_YS
+
+
+@pytest.mark.parametrize("old,new", [
+    ("м 27.5\n2.15", "м 32.5\n2.15"),          # over rung without an under rung
+    ("б 28.5\n1.72", "б 27.5\n1.72"),          # duplicate over rung
+    ("б 29.5\n1.83", "б 29.5\n1.0"),           # impossible price
+    ("Меньше\nм 27.5\n2.15\nм 28.5\n2.00\nм 29.5\n1.87\nм 30.5\n1.72\n", ""),  # no under block
+])
+def test_malformed_ladder_side_is_null(old, new):
+    text = (FIXTURES / LADDER_BODY).read_text()
+    assert text.count(old) >= 1
+    got = collector.parse_winline_team_kills_totals(text.replace(old, new, 1), 1, *LADDER_TEAMS)
+    assert got["p1"] is None
+    assert got["p2"]["ladder"] == LADDER_CH
 
 
 def test_proxy_pool_inventory_filter(monkeypatch, tmp_path):

@@ -28,6 +28,9 @@ IP_ECHO = "https://api.ipify.org"
 ALLOWED_COUNTRIES = {"DE", "US", "CA"}
 VALUE_FIELDS = tuple("kills_%s_%s" % (side, value)
                      for side in ("t1", "t2") for value in ("line", "over", "under"))
+LADDER_FIELDS = ("kills_t1_ladder", "kills_t2_ladder")
+# Rows written before ladders were recorded lack LADDER_FIELDS; they replay as None.
+DEDUPE_FIELDS = VALUE_FIELDS + LADDER_FIELDS
 
 OPEN_EVENT_JS = """(id) => {
   const el = document.getElementById('eventId-' + id);
@@ -86,15 +89,63 @@ def wait_full_markets(page):
     return True
 
 
+_NUMBER = r"[0-9]+(?:[.,][0-9]+)?"
+# One block of a team kills total: "Больше" + rungs "б <line> <price>", then "Меньше" + rungs
+# "м <line> <price>". BLAST pages show one block with one rung per side; tier-2/3 pages (e.g. PR
+# Universe, captured 05.10) show a ladder: a block with four rungs and a second block with one.
+_LADDER_BLOCK_RE = re.compile(
+    rf"\s+Больше((?:\s+б\s+{_NUMBER}\s+{_NUMBER})+)\s+Меньше((?:\s+м\s+{_NUMBER}\s+{_NUMBER})+)"
+    r"(?=\s|$)", re.I)
+_RUNG_RE = re.compile(rf"[бм]\s+({_NUMBER})\s+({_NUMBER})", re.I)
+
+
+def _number(text):
+    return float(text.replace(",", "."))
+
+
+def parse_kills_ladder(text, start):
+    """[[line, over, under], ...] sorted by line from consecutive blocks at start, else None.
+
+    Fail closed: a duplicate rung, a line priced on one side only, a price <= 1.0 or a
+    non-finite number makes the whole side None rather than a partial ladder.
+    """
+    over, under = {}, {}
+    pos = start
+    while True:
+        block = _LADDER_BLOCK_RE.match(text, pos)
+        if block is None:
+            break
+        for rungs, side in ((block.group(1), over), (block.group(2), under)):
+            for line_text, price_text in _RUNG_RE.findall(rungs):
+                line, price = _number(line_text), _number(price_text)
+                if line in side:
+                    return None
+                side[line] = price
+        pos = block.end()
+    if not over or set(over) != set(under):
+        return None
+    ladder = [[line, over[line], under[line]] for line in sorted(over)]
+    if not all(math.isfinite(x) for rung in ladder for x in rung):
+        return None
+    if any(price <= 1.0 for rung in ladder for price in rung[1:]):
+        return None
+    return ladder
+
+
+def main_rung(ladder):
+    """The most balanced rung (|over - under| smallest); ties go to the lower line."""
+    return min(ladder, key=lambda rung: (round(abs(rung[1] - rung[2]), 6), rung[0]))
+
+
 def parse_winline_team_kills_totals(body_text, map_num, team1, team2):
-    """Exact literal card names, p1/p2 in card order; malformed sides stay null."""
+    """Exact literal card names, p1/p2 in card order; malformed sides stay null.
+
+    line/over/under are the main (most balanced) rung; ladder holds every rung offered.
+    """
     result = {"p1": None, "p2": None}
     if not isinstance(body_text, str) or type(map_num) is not int or not 1 <= map_num <= 3:
         return result
     text = " ".join(body_text.split())
-    number = r"([0-9]+(?:[.,][0-9]+)?)"
-    prices_re = re.compile(
-        rf"Больше\s+б\s+{number}\s+{number}\s+Меньше\s+м\s+{number}\s+{number}(?=\s|$)", re.I)
     for side, team in (("p1", team1), ("p2", team2)):
         if not isinstance(team, str) or not team.strip():
             continue
@@ -105,17 +156,11 @@ def parse_winline_team_kills_totals(body_text, map_num, team1, team2):
         if len(headers) != 1:
             continue
         header = headers[0]
-        prices = prices_re.match(text, header.end() + 1)
-        if prices is None:
+        ladder = parse_kills_ladder(text, header.end())
+        if ladder is None:
             continue
-        try:
-            over_line, over, under_line, under = (float(x.replace(",", ".")) for x in prices.groups())
-        except (ValueError, OverflowError):
-            continue
-        if (over_line != under_line or over <= 1.0 or under <= 1.0
-                or not all(math.isfinite(x) for x in (over_line, over, under))):
-            continue
-        result[side] = dict(team=header.group(1), line=over_line, over=over, under=under)
+        line, over, under = main_rung(ladder)
+        result[side] = dict(team=header.group(1), line=line, over=over, under=under, ladder=ladder)
     return result
 
 
@@ -141,7 +186,7 @@ def build_rows(card, body_text, wall=None):
                    team1=card["team1"], team2=card["team2"], map_num=map_num,
                    source="winline_event_page")
         for target, side in (("t1", "p1"), ("t2", "p2")):
-            for value in ("line", "over", "under"):
+            for value in ("line", "over", "under", "ladder"):
                 row["kills_%s_%s" % (target, value)] = (totals[side] or {}).get(value)
         if card.get("score_text") is not None:
             row["score_text"] = card["score_text"]
@@ -175,7 +220,7 @@ class HistoryWriter:
                 with self.path.open(encoding="utf-8") as stream:
                     for line in stream:
                         row = json.loads(line)
-                        self.values[self.key(row)] = [row[field] for field in VALUE_FIELDS]
+                        self.values[self.key(row)] = [row.get(field) for field in DEDUPE_FIELDS]
             return self
         except BaseException:
             self.lock.close()
@@ -186,7 +231,7 @@ class HistoryWriter:
         return "%s:%s" % (row["event_id"], row["map_num"])
 
     def write(self, row):
-        values = [row[field] for field in VALUE_FIELDS]
+        values = [row.get(field) for field in DEDUPE_FIELDS]
         key = self.key(row)
         if key in self.values and self.values[key] == values:
             return False
