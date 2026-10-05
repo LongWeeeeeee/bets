@@ -2,6 +2,7 @@
 import gzip
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -196,7 +197,7 @@ def test_proxy_fail_closed_before_browser(monkeypatch, capsys, tmp_path, failure
     factory.assert_not_called()
     output = capsys.readouterr()
     assert len(output.out.splitlines()) == 1
-    assert "cards=0 events_opened=0 events_missing=0 rows_written=0 loads=0" in output.out
+    assert "cards=0 events_opened=0 events_missing=0 events_unrendered=0 rows_written=0 loads=0" in output.out
     assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT, "proxy.invalid"))
 
 
@@ -272,7 +273,7 @@ def test_live_first_both_kinds_and_load_cap(monkeypatch, tmp_path, capsys):
     path = tmp_path / "h.jsonl"
     assert collector.main(["--history", str(path), "--kinds", "all", "--max-loads", "4"]) == 0
     assert page.opened == ["live", "pre"]
-    assert "cards=2 events_opened=2 events_missing=0 rows_written=6 loads=4" in capsys.readouterr().out
+    assert "cards=2 events_opened=2 events_missing=0 events_unrendered=0 rows_written=6 loads=4" in capsys.readouterr().out
     assert factory.call_args.kwargs["block_webrtc"] is True
     assert factory.call_args.kwargs["firefox_user_prefs"]["network.proxy.failover_direct"] is False
     assert factory.call_args.kwargs["proxy"]["server"] == "http://proxy.invalid:1234"
@@ -292,7 +293,7 @@ def test_default_is_prematch_only_owner_decision(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("live", True), card("pre")])
     assert collector.main(["--history", str(tmp_path / "h.jsonl")]) == 0
     assert page.opened == ["pre"]
-    assert "cards=2 events_opened=1 events_missing=0 rows_written=3" in capsys.readouterr().out
+    assert "cards=2 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3" in capsys.readouterr().out
 
 
 def test_prematch_selection_on_captured_listing():
@@ -392,3 +393,38 @@ def test_ip_echo_ignores_environment_proxies(monkeypatch):
     assert seen == {"trust_env": False, "url": collector.IP_ECHO, "proxies": {}}
     collector.requests_ip_echo(PROXY)
     assert seen["proxies"] == {"http": PROXY, "https": PROXY} and seen["trust_env"] is False
+
+
+def test_unrendered_event_writes_no_rows_and_cycle_continues(monkeypatch, tmp_path, capsys):
+    """Serv1 05.10: the page read before the full list rendered gave null rows (5/5). Such an event
+    must write nothing (null would mean 'market absent'), and the next event is still collected."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    class Slow(FakePage):
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.FULL_MARKETS_JS and self.opened and self.opened[-1] == "slow":
+                raise PlaywrightTimeoutError("full list never rendered")
+
+    page = Slow()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("slow"), card("pre")])
+    path = tmp_path / "h.jsonl"
+    assert collector.main(["--history", str(path)]) == 0
+    assert page.opened == ["slow", "pre"]
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert {r["event_id"] for r in rows} == {"pre"} and len(rows) == 3
+    assert "events_opened=2 events_missing=0 events_unrendered=1 rows_written=3" in capsys.readouterr().out
+
+
+def test_full_market_marker_on_captured_bodies():
+    """The 'Все' line separates the captured unrendered body from the full one (same event 16855095)."""
+    unrendered = (FIXTURES / "winline_kills_totals_unrendered_popular_only_aurora_1w_20261005.txt").read_text()
+    full = body("aurora_1w")
+    marker = re.compile(r"(^|\n)Все(\n|$)")
+    assert "(^|\\n)Все(\\n|$)" in collector.FULL_MARKETS_JS
+    assert not marker.search(unrendered) and marker.search(full)
+    rows = collector.build_rows(card("16855095"), unrendered, wall=1)
+    assert [r["map_num"] for r in rows] == [1]
+    assert all(r[k] is None for r in rows for k in collector.VALUE_FIELDS)
+    full_rows = collector.build_rows(dict(card("16855095"), team1="TEAM AURORA", team2="1W"), full, wall=1)
+    assert [r["kills_t1_line"] for r in full_rows] == [28.5, 28.5, 28.5]

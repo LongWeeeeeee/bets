@@ -44,6 +44,14 @@
       "url": "https://winline.ru/stavki/sport/kibersport/dota_2",
       "note": "page.content() of the Dota 2 listing after the Angular feed rendered ([id^=eventId-]); 7 event cards incl. BLAST Slam TEAM YANDEX-LGD GAMING (event 16855431) and TEAM AURORA-1W (16855095) prematch; checked: serv1 IP absent",
       "command": "same as winline_kills_totals_prematch_yandex_lgd_20261005.txt"
+    },
+    "winline_kills_totals_unrendered_popular_only_aurora_1w_20261005.txt": {
+      "source": "serv1 runtime/artifacts/odds-winline/collector_debug_20261005T081348/16855095.txt",
+      "captured_at_utc": "2026-10-05T08:14Z",
+      "kind": "prematch event page, NOT yet fully rendered",
+      "event_id": "16855095",
+      "command": "cd /root/main && venv/bin/python3 runtime/experiments/odds-winline/collector_body_dump.py <out> --max-events 5 --max-loads 10 (deployed collector 75a93446, proxy CA, capped transient unit)",
+      "note": "body read ~5.5 s after the event opened: only the Популярные block (105 lines, no line Все, 0 team kills headers); the same event rendered 485 lines with 9 team headers when waits were x3 (collector_debug_x3_20261005T0815*)"
     }
   }
 }

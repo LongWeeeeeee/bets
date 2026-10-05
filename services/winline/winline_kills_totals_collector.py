@@ -58,6 +58,34 @@ EVENT_READY_JS = """([listing, team1, team2]) => {
 }"""
 
 
+# The event page first renders only the "Популярные на матч/карту" block; the full list (a line
+# "Все" followed by every market, incl. "N карта тотал убийств <TEAM>") arrives seconds later.
+# Measured on serv1 05.10: a ~5.5 s fixed wait read 105-line bodies (0 team headers) on BLAST
+# pages that render 485-487 lines with 9 team headers after ~16 s.
+FULL_MARKETS_JS = """() => /(^|\\n)Все(\\n|$)/.test(document.body.innerText || '')"""
+BODY_LENGTH_JS = """() => (document.body.innerText || '').length"""
+FULL_MARKETS_TIMEOUT_MS = 20000
+SETTLE_POLLS = 10
+
+
+def wait_full_markets(page):
+    """True once the full market list is on the page and its text stopped growing."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        page.wait_for_function(FULL_MARKETS_JS, timeout=FULL_MARKETS_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        return False
+    last, stable = None, 0
+    for _ in range(SETTLE_POLLS):
+        length = page.evaluate(BODY_LENGTH_JS)
+        stable = stable + 1 if length == last else 0
+        if stable >= 2:
+            break
+        last = length
+        time.sleep(1.0)
+    return True
+
+
 def parse_winline_team_kills_totals(body_text, map_num, team1, team2):
     """Exact literal card names, p1/p2 in card order; malformed sides stay null."""
     result = {"p1": None, "p2": None}
@@ -358,6 +386,12 @@ def _cycle(args, stats):
                     page.wait_for_function(EVENT_READY_JS,
                                            arg=[LIST_URL, card["team1"], card["team2"]], timeout=30000)
                     time.sleep(4.0)
+                    if not wait_full_markets(page):
+                        # Only the "Популярные" block rendered: nulls would be indistinguishable
+                        # from "market absent", so this event writes nothing this cycle.
+                        check_connection()
+                        stats["events_unrendered"] = stats.get("events_unrendered", 0) + 1
+                        continue
                     if page.evaluate(EXPAND_JS):
                         time.sleep(1.5)
                     body_text = page.locator("body").inner_text(timeout=20000)
@@ -408,10 +442,12 @@ def main(argv=None):
     # Never expose their output or exception messages; report only bounded counters.
     with quiet_output():
         code = _cycle(args, stats)
-    print("cards={cards} events_opened={events_opened} events_missing={missing} rows_written={rows_written} "
-          "loads={loads} country={country} status={status} error={error}".format(
-              status=code, missing=stats.get("events_missing", 0), error=stats.get("error", "-"),
-              **{k: v for k, v in stats.items() if k not in ("events_missing", "error")}), flush=True)
+    print("cards={cards} events_opened={events_opened} events_missing={missing} events_unrendered={unrendered} "
+          "rows_written={rows_written} loads={loads} country={country} status={status} error={error}".format(
+              status=code, missing=stats.get("events_missing", 0), unrendered=stats.get("events_unrendered", 0),
+              error=stats.get("error", "-"),
+              **{k: v for k, v in stats.items() if k not in ("events_missing", "events_unrendered", "error")}),
+          flush=True)
     return code
 
 

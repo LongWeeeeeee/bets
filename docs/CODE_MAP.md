@@ -1187,6 +1187,7 @@ HTTP-клиент обращается только к нейтральному 
 (00/3:17 MSK, CPUQuota 60 %, MemoryMax 1500M, Nice 19, OOMScoreAdjust 1000, `TimeoutStartSec=900` — у oneshot `RuntimeMaxSec` не действует), установка
 `scripts/ops/install-winline-kills-totals.sh` (на serv1), лог `runtime/artifacts/odds-winline/kills_totals_collector.log`.
 Карточка, пропавшая из листинга между загрузками, пропускается (`events_missing`), а не рвёт цикл.
+Страница события сначала рисует только «Популярные на матч/карту»; полный список (строка «Все» и все рынки, вкл. ИТ) приходит через секунды. Сборщик ждёт строку «Все» до 20 с (`wait_full_markets`), затем пока длина текста не перестанет расти; не дорисовавшееся событие строк не пишет (`events_unrendered`), поэтому null в истории = рынка нет. Замер serv1 05.10: фиксированная пауза ~5,5 с давала 105 строк и 0 заголовков ИТ, при паузах ×3 — 485–487 строк и 9 заголовков (первый боевой цикл 75a93446 записал 5 null-строк по этой причине).
 Мёртвый прокси не даёт прямого обхода: проба 05.10 на serv1 (Camoufox 0.5.6, прокси 127.0.0.1:9, нейтральный ipify) — `NS_ERROR_PROXY_CONNECTION_REFUSED` и с настройками по умолчанию, и с `network.proxy.failover_direct=false` (`runtime/experiments/odds-winline/proxy_failover_probe.py`).
 
 Цикл: листинг → карточки (`winline_enumerate_live_cards`, выбор `select_cards`) → клик
@@ -1213,7 +1214,7 @@ HTTP-клиент обращается только к нейтральному 
 повреждённый JSON не затирается, цикл завершается ошибкой.
 Exit: 0 (успех/нет карточек/достигнут лимит), 2 (прокси/IP/browser preflight),
 5 (ошибка после начала Winline-цикла). Stdout — одна строка
-`cards=… events_opened=… events_missing=… rows_written=… loads=… country=… status=… error=<класс>`.
+`cards=… events_opened=… events_missing=… events_unrendered=… rows_written=… loads=… country=… status=… error=<класс>`.
 Offline regressions: `services/winline/tests/test_winline_kills_totals_collector.py` (вне `base/`, чтобы не задевать цель доставки прода),
 захваченные EVENT-тексты и gzip-листинг от 05.10.2026 с provenance в fixtures.
 
