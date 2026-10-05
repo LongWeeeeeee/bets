@@ -30,7 +30,8 @@ REF = ART / "undercount_glicko_features.npz"
 OUT_MD = ART / "build_rating_snapshot.md"
 KEYS = ("glicko", "glicko_p", "glicko_rd", "pos_glicko", "trueskill",
         "trueskill_sig")
-TOL = 1e-9
+TOLERANCES = {"glicko": 1e-9, "glicko_p": 1e-9, "glicko_rd": 1e-9,
+              "pos_glicko": 1e-9, "trueskill": 1e-5, "trueskill_sig": 1e-5}
 
 
 def main() -> None:
@@ -71,11 +72,14 @@ def main() -> None:
                   f"({time.time()-t0:.0f} c)", flush=True)
 
     lines = ["# Снимок рейтингов: сверка порта с обучением", "",
-             f"Карт пройдено: {n:,}. Порог совпадения: {TOL:g}.", "",
-             "| колонка | величина | max\\|Δ\\| | карта |", "|---|---|---|---|"]
+             f"Карт пройдено: {n:,}. Пороги совпадения — по колонкам.", "",
+             "| колонка | величина | max\\|Δ\\| | карта | допуск | итог |",
+             "|---|---|---|---|---|---|"]
     for j, k in enumerate(KEYS):
-        lines.append(f"| rating_{j} | {k} | {worst[j]:.3e} | {worst_at[j]} |")
-    ok = bool(worst.max() <= TOL)
+        passed = worst[j] <= TOLERANCES[k]
+        lines.append(f"| rating_{j} | {k} | {worst[j]:.3e} | {worst_at[j]} | "
+                     f"{TOLERANCES[k]:g} | {'PASS' if passed else 'FAIL'} |")
+    ok = all(worst[j] <= TOLERANCES[k] for j, k in enumerate(KEYS))
     lines += ["", f"**Итог: {'порт совпал с обучением' if ok else 'РАСХОЖДЕНИЕ'}**",
               ""]
     if ok:

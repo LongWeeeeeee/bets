@@ -1,0 +1,55 @@
+{
+  "source_head": "0c091682d3dec981c7c8f5a6c7bc493e2e3bfa08",
+  "source_sha1": {
+    "/Users/alex/Documents/ingame/runtime/artifacts/misc/undercount_glicko_features.npz": "cc7c4a303bc04521bf946e891d297575dc87b69c",
+    "/Users/alex/Documents/ingame/runtime/artifacts/misc/pro_corpus_compact.npz": "6bfc1ff0105c26ac1a78b2c91a92b52443f372e7"
+  },
+  "old_script_sha1": "fe0040158f545ac82da4d33b2c5d16985ae7eb36",
+  "reference_prefix_rows": 2048,
+  "compact_rows": 2051,
+  "compact_extra_rows": 3,
+  "newest_ts": 1456336478,
+  "perturbation_row": 1024,
+  "cases": [
+    {
+      "name": "exact",
+      "shifts": {},
+      "written": true
+    },
+    {
+      "name": "platform_noise",
+      "shifts": {
+        "trueskill": 4.4e-07,
+        "trueskill_sig": 4.4e-07
+      },
+      "written": true
+    },
+    {
+      "name": "trueskill_divergence",
+      "shifts": {
+        "trueskill": 0.0001
+      },
+      "written": false
+    },
+    {
+      "name": "glicko_divergence",
+      "shifts": {
+        "glicko": 1e-08
+      },
+      "written": false
+    }
+  ],
+  "capture_commands": [
+    "mkdir -p /private/tmp/rt-evidence",
+    "cp scripts/pro_chain/build_rating_snapshot.py /private/tmp/rt-evidence/build_rating_snapshot_old.py # BEFORE editing, at source_head",
+    "PYTHONPYCACHEPREFIX=/private/tmp/rt-pyc /Users/alex/Documents/ingame/venv_catboost/bin/python3 /private/tmp/rt-evidence/capture_fixtures.py"
+  ],
+  "validation_commands": [
+    "PYTHONPYCACHEPREFIX=/private/tmp/rt-pyc /Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest -q -p no:cacheprovider tests/test_build_rating_snapshot_tolerance.py --basetemp=/private/tmp/rt-validation-0",
+    "RATING_SNAPSHOT_TEST_SCRIPT=/private/tmp/rt-evidence/build_rating_snapshot_old.py PYTHONPYCACHEPREFIX=/private/tmp/rt-pyc /Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest -q -p no:cacheprovider tests/test_build_rating_snapshot_tolerance.py --basetemp=/private/tmp/rt-validation-1"
+  ],
+  "capture_note": "Capture command writes only worktree fixtures; source SHA1 values computed from full files. Prefix state uses only earlier reference maps. Compact rows retain original order; 3 strictly newer maps exercise advance_newer_than. To replay NPZ capture, save capture_python as /private/tmp/rt-evidence/capture_fixtures.py and execute the final capture command.",
+  "compact_selection": "All compact rows with mids in reference[:2048], plus the first 3 rows strictly newer than reference ts[-1] in stable timestamp order; concatenated indices sorted in source order.",
+  "old_regression_observed": "platform_noise: AssertionError: platform_noise: snapshot write boundary violated; assert False == True; exact, trueskill_divergence and glicko_divergence pass.",
+  "capture_python": "import hashlib\nimport json\nfrom pathlib import Path\nimport numpy as np\n\nsource = Path('/Users/alex/Documents/ingame/runtime/artifacts/misc')\nfixtures = Path('/Users/alex/Documents/ingame-wt-rating/tests/fixtures/build_rating_snapshot')\nfixtures.mkdir(parents=True, exist_ok=True)\nref_path = source / 'undercount_glicko_features.npz'\ncompact_path = source / 'pro_corpus_compact.npz'\nwith np.load(ref_path) as z:\n    ref = {k: z[k][:2048].copy() for k in z.files}\nwith np.load(compact_path) as z:\n    mids, ts = z['mids'], z['ts']\n    selected = np.flatnonzero(np.isin(mids, ref['mids']))\n    later = np.flatnonzero(ts > ref['ts'][-1])\n    later = later[np.argsort(ts[later], kind='stable')][:3]\n    indices = np.sort(np.concatenate([selected, later]))\n    compact = {k: z[k][indices].copy() for k in ('mids', 'wins', 'accounts', 'ts')}\nassert len(selected) == 2048\nassert (np.diff(ref['ts']) >= 0).all()\nnp.savez_compressed(fixtures / 'reference.npz', **ref)\nnp.savez_compressed(fixtures / 'compact.npz', **compact)\ndef sha1(path):\n    h = hashlib.sha1()\n    with path.open('rb') as f:\n        for chunk in iter(lambda: f.read(1024 * 1024), b''):\n            h.update(chunk)\n    return h.hexdigest()\n"
+}
