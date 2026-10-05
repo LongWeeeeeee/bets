@@ -56,6 +56,9 @@ def _ctx(name, **overrides):
 
 
 def _cfg(**env):
+    # Underdog kills_window is OFF by default since 05.10.2026 (card ingame-h9b5);
+    # these tests exercise that path, so enable it explicitly.
+    env.setdefault("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
     return md.Config.from_env(env)
 
 

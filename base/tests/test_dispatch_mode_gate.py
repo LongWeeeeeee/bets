@@ -580,6 +580,9 @@ def test_ml_early_kills_tier_gate_before_delivery(
     import id_to_names
 
     monkeypatch.setenv("DISPATCH_MODE", "ml")
+    # Underdog kills_window is OFF by default since 05.10.2026 (card ingame-h9b5);
+    # this test exercises that path, so enable it explicitly.
+    monkeypatch.setenv("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
     monkeypatch.setattr(C, "KILLS_REQUIRE_TIER1_TEAM", require_tier1)
     monkeypatch.setattr(C, "_ensure_dynamic_tier2_overlay", lambda: None)
     monkeypatch.setattr(C, "_auto_added_tier2_ids", set())
@@ -646,6 +649,9 @@ def test_direborn_map4_incident_replay_respects_team_tier(monkeypatch, nemesis_t
     from base import ml_dispatch as md
 
     monkeypatch.setenv("DISPATCH_MODE", "ml")
+    # Underdog kills_window is OFF by default since 05.10.2026 (card ingame-h9b5);
+    # this test exercises that path, so enable it explicitly.
+    monkeypatch.setenv("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
     monkeypatch.setattr(C, "KILLS_REQUIRE_TIER1_TEAM", True)
     monkeypatch.setattr(C, "_get_team_tier", lambda team_id: nemesis_tier if team_id == 9691969 else 2)
     delivered, logged, ledger = [], [], _FakeLedger()

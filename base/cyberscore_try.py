@@ -49836,6 +49836,7 @@ if __name__ == "__main__":
         f"/{_dispatch_startup_cfg.panel_kills_min_conf}"
         f"/{','.join(_dispatch_startup_cfg.panel_kills_windows)}"
         f" lane_kills={'on' if _dispatch_startup_cfg.lane_kills_enabled else 'off'}"
+        f" underdog_kills_window={'on' if _dispatch_startup_cfg.underdog_kills_window_enabled else 'off'}"
     )
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):

@@ -28,6 +28,10 @@ def base_ctx(**overrides):
 
 
 def cfg(**overrides):
+    # The ELO-underdog kills_window path is OFF by default since 05.10.2026 (owner
+    # decision, card ingame-h9b5); these tests exercise it, so enable it explicitly.
+    # test_ml_dispatch_underdog_kills_off.py covers the default-off behavior.
+    overrides.setdefault("underdog_kills_window_enabled", True)
     return Config(**overrides)
 
 

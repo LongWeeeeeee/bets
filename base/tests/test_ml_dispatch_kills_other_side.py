@@ -29,6 +29,14 @@ except ImportError:
 import cyberscore_try as C  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _underdog_window_enabled(monkeypatch):
+    """The ELO-underdog kills_window path is OFF by default since 05.10.2026 (owner
+    decision, card ingame-h9b5); this file tests its other-side/dedup behavior, so
+    enable it explicitly. test_ml_dispatch_underdog_kills_off.py covers the default."""
+    monkeypatch.setenv("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
+
+
 def _captures(filename):
     path = Path(__file__).parent / "fixtures" / filename
     return {row["case"]: row for row in (json.loads(line) for line in path.read_text().splitlines())}

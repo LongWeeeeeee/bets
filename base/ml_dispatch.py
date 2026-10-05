@@ -252,6 +252,25 @@ rule is evaluated before the lane rule, so it wins when both are enabled.
 Measurement E-342 (live maps 12.09-05.10.2026): confidence >= 0.60 hits 64.3%
 [57.4, 70.7], n=196 (model A 62.1% n=132; model B_kv3 68.8% n=64). No offline
 validation of this rule exists. ``ML_DISPATCH_PANEL_KILLS=0`` disables it.
+
+underdog_kills_window (owner decision 05.10.2026, E-342 addendum, card
+ingame-h9b5): the ELO-underdog ``kills_window`` bet (rule
+``kills_underdog_early_window``, :func:`_evaluate_kills_underdog`) is OFF by default,
+``ML_DISPATCH_UNDERDOG_KILLS_WINDOW`` (default ``0``; the dataclass default
+``underdog_kills_window_enabled`` is ``False`` as well, so a hand-built ``Config()``
+is the production config). Reason: delivered underdog 5-15 bets hit 43.1% [31.8, 55.2]
+n=65 live (STRATZ team kills [5:00, 15:00), tie = loss), and 2/11 when the panel
+``w_5_15`` >= 0.60 backed the other side; the panel rule yields to an existing
+``kills_window`` decision, so the underdog bet used to win those conflicts. When off
+the path emits no ``kills_window`` decision for ANY window label (the dedup key has no
+window, so blocking only ``5_15`` would let it fire on ``10_20``) but
+``Skipped("kills_window", underdog_side, "underdog_kills_window_disabled", ...)``;
+the dedup / other-side checks run first, so their skip reasons are unchanged. The
+underdog ``kills_total`` decision does not depend on the window decision and is
+unchanged. The late-conflict 4.3 path still treats the window as covered for an early
+side that is also the underdog (the disabled skip counts), so it creates no new bet
+there. The panel rule is no longer pre-empted. Rollback:
+``ML_DISPATCH_UNDERDOG_KILLS_WINDOW=1``.
 """
 from __future__ import annotations
 
@@ -296,6 +315,7 @@ REASON_PANEL_KILLS_LOW_CONF = "panel_kills_low_conf"
 REASON_PANEL_KILLS_WINDOW_CLOSED = "panel_kills_window_closed"
 REASON_PANEL_KILLS_BAD_VERDICT = "panel_kills_bad_verdict"
 REASON_KILLS_WINDOW_SENT_OTHER_SIDE = "kills_window_sent_other_side"
+REASON_UNDERDOG_KILLS_WINDOW_DISABLED = "underdog_kills_window_disabled"
 
 LATE_CONFLICT_MODES = ("wait", "veto")
 
@@ -461,6 +481,9 @@ class Config:
     panel_kills_enabled: bool = True
     panel_kills_min_conf: float = 0.60
     panel_kills_windows: Tuple[str, ...] = ("5_15",)
+    # Owner decision 05.10.2026: ELO-underdog kills_window bet off (live 43.1%, n=65).
+    # Dataclass default == ``from_env`` default (production config).
+    underdog_kills_window_enabled: bool = False
     kills_window_one_side: bool = True
     lane_elo_release_enabled: bool = True
     lane_elo_release_lane_conf: float = 0.55
@@ -548,6 +571,9 @@ class Config:
                     env.get("ML_DISPATCH_PANEL_KILLS_WINDOWS", "5_15")
                 ).split(",") if label.strip()
             ),
+            underdog_kills_window_enabled=str(
+                env.get("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "0")
+            ).strip().lower() not in ("0", "false", "off"),
             kills_window_one_side=str(
                 env.get("ML_DISPATCH_KILLS_WINDOW_ONE_SIDE", "1")
             ).strip().lower() not in ("0", "false", "off"),
@@ -1052,6 +1078,12 @@ def _evaluate_kills_underdog(
                 "kills_window", underdog_side, REASON_KILLS_WINDOW_SENT_OTHER_SIDE,
                 f"key={other_key} already sent for other side",
             ))
+        elif not cfg.underdog_kills_window_enabled:
+            skipped.append(Skipped(
+                "kills_window", underdog_side, REASON_UNDERDOG_KILLS_WINDOW_DISABLED,
+                f"ML_DISPATCH_UNDERDOG_KILLS_WINDOW=0 (owner decision 05.10.2026); "
+                f"would bet window={ctx.kills_windows_open[0]}",
+            ))
         else:
             decisions.append(Decision(
                 market="kills_window",
@@ -1088,6 +1120,7 @@ def _evaluate_kills_underdog(
 
 def _evaluate_kills_late_conflict_a(
     ctx: Ctx, cfg: Config, late_conflict: LateConflict, existing_decisions: List[Decision],
+    existing_skipped: Optional[List[Skipped]] = None,
 ) -> Tuple[List[Decision], List[Skipped]]:
     """Sub-case 4.3 (owner decision, 13.09.2026): early★+All★ agree on ``A``
     against a lone starred Late for ``B`` -> kills bets fire on ``A``
@@ -1107,6 +1140,13 @@ def _evaluate_kills_late_conflict_a(
     target_team = ctx.team_name(side_a)
     reasons = [f"{name}>= {cfg.min_conf} for {side_a} (late_conflict early side)" for name in models_for]
     already_markets = {d.market for d in existing_decisions if d.target_side == side_a}
+    # An underdog window switched off by ``underdog_kills_window_enabled=False`` still
+    # counts as "decided for A": switching the underdog bet off must not hand the same
+    # side/market to this path under another rule label.
+    if any(s.market == "kills_window" and s.side == side_a
+           and s.reason == REASON_UNDERDOG_KILLS_WINDOW_DISABLED
+           for s in (existing_skipped or ())):
+        already_markets.add("kills_window")
 
     if ctx.kills_windows_open and "kills_window" not in already_markets:
         key = _dedup_key(ctx, "kills_window", side_a)
@@ -1163,7 +1203,7 @@ def _evaluate_kills(
     decisions, skipped = _evaluate_kills_underdog(ctx, cfg, underdog_side)
     if late_conflict is not None and late_conflict.subcase == "b":
         extra_decisions, extra_skipped = _evaluate_kills_late_conflict_a(
-            ctx, cfg, late_conflict, decisions
+            ctx, cfg, late_conflict, decisions, skipped
         )
         if extra_decisions:
             # A market just got resolved for side_a by the 4.3 early-side
