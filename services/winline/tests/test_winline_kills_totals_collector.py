@@ -242,6 +242,36 @@ def test_malformed_ladder_side_is_null(old, new):
     assert got["p2"]["ladder"] == LADDER_CH
 
 
+def test_ladder_duplicate_rung_on_both_sides_is_null():
+    # Both sides repeat 27.5, so the line sets still agree; only the duplicate check rejects it.
+    text = (FIXTURES / LADDER_BODY).read_text()
+    text = text.replace("б 28.5\n1.72", "б 27.5\n1.72", 1).replace("м 28.5\n2.00", "м 27.5\n2.00", 1)
+    got = collector.parse_winline_team_kills_totals(text, 1, *LADDER_TEAMS)
+    assert got["p1"] is None
+    assert got["p2"]["ladder"] == LADDER_CH
+
+
+def test_ladder_price_glued_to_text_is_null():
+    # "1.72x" is not a whole price token: the block must not be read as a 4-rung ladder.
+    text = (FIXTURES / LADDER_BODY).read_text()
+    old = "м 30.5\n1.72\nБольше"
+    assert text.count(old) >= 1
+    got = collector.parse_winline_team_kills_totals(text.replace(old, "м 30.5\n1.72x\nБольше", 1), 1,
+                                                  *LADDER_TEAMS)
+    assert got["p1"] is None
+    assert got["p2"]["ladder"] == LADDER_CH
+
+
+def test_ladder_is_sorted_when_a_later_block_has_a_lower_line():
+    text = (FIXTURES / LADDER_BODY).read_text()
+    old = "б 31.5\n2.15\nМеньше\nм 31.5\n1.62"
+    assert text.count(old) >= 1
+    got = collector.parse_winline_team_kills_totals(
+        text.replace(old, "б 26.5\n1.55\nМеньше\nм 26.5\n2.30", 1), 1, *LADDER_TEAMS)
+    assert got["p1"]["ladder"] == [[26.5, 1.55, 2.30]] + LADDER_YS[:-1]
+    assert got["p1"]["line"] == 29.5
+
+
 def test_proxy_pool_inventory_filter(monkeypatch, tmp_path):
     project_proxy_file(monkeypatch, tmp_path)
     base = tmp_path / "base/keys.py"
