@@ -12,6 +12,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50')
 EXTRA_TARGETS = ('dire_30_25', 'rad_ge30', 'dire_ge30', 'total_ge55')
+# E-352 per-line side models: journal-only, never rendered/starred/dispatched.
+LADDER_TARGETS = ('rad_ge16', 'rad_ge21', 'rad_ge26', 'dire_ge16', 'dire_ge21', 'dire_ge26')
 _lock = threading.RLock()
 _candidate = None
 _specs = None
@@ -93,7 +95,7 @@ def _load_uncached(bundle):
             else:
                 os.environ['KV3_SHADOW_DIR'] = old
         specs = {s.key: s for s in load_specs(directory)}
-        if not set(TARGETS) <= set(specs) or set(specs) - set(TARGETS) - set(EXTRA_TARGETS):
+        if not set(TARGETS) <= set(specs) or set(specs) - set(TARGETS) - set(EXTRA_TARGETS) - set(LADDER_TARGETS):
             raise kv3_shadow.FeatureContractError('KV3 panel.json target set differs')
         incumbent = {s.key: s for s in bundle.specs}
         for key in TARGETS:
@@ -107,6 +109,22 @@ def _load_uncached(bundle):
                 raise kv3_shadow.FeatureContractError(f'{key}: panel calibration x differs')
             if tuple(specs[key].knots_y) != tuple(new_candidate.calibration[key][1]):
                 raise kv3_shadow.FeatureContractError(f'{key}: panel calibration y differs')
+        for key in LADDER_TARGETS:
+            if key not in new_candidate.models:
+                continue
+            try:
+                if (key not in specs or len(new_candidate.models[key].feature_names_) != 1050
+                        or tuple(float(v) for v in specs[key].knots_x)
+                        != tuple(float(v) for v in new_candidate.calibration[key][0])
+                        or tuple(float(v) for v in specs[key].knots_y)
+                        != tuple(float(v) for v in new_candidate.calibration[key][1])):
+                    raise ValueError('contract differs')
+            except Exception as exc:  # noqa: BLE001 - journal-only shadow never fails B
+                # Journal-only shadow: drop the key, never fail B over it.
+                print(f'[kv3_panel] ladder shadow {key} dropped: {type(exc).__name__}: {exc}',
+                      flush=True)
+                new_candidate.models.pop(key, None)
+                new_candidate.calibration.pop(key, None)
         for key in EXTRA_TARGETS:
             if key not in new_candidate.models:
                 continue
@@ -207,6 +225,44 @@ def fallback(verdicts, reason):
             if v.key in TARGETS else v for v in verdicts]
 
 
+_LADDER_WARNED = set()
+
+
+def _ladder_shadow(candidate, row, anchor):
+    """Score the six E-352 side-line models on B's row; journal-only, fail-open per key.
+
+    Their verdicts never reach the card: ok is forced False here (independent of the
+    panel.json threshold), their metadata model is not "B_kv3", and every renderer selects by explicit key.
+    """
+    if os.getenv('ML_PANEL_KV3_LADDER_SHADOW', '1') == '0':
+        return []
+    specs = _specs if candidate is _candidate else candidate.specs
+    out = []
+    for key in LADDER_TARGETS:
+        try:
+            if key not in candidate.models or key not in specs:
+                continue
+            raw = float(candidate.models[key].predict_proba(row, thread_count=1)[0, 1])
+            if not np.isfinite(raw):
+                continue
+            from ml_panel import evaluate
+
+            verdict = evaluate(specs[key], raw, {}, fill=anchor.fill if anchor else 1.0,
+                               missing=anchor.missing if anchor else ())
+            # ok is forced False in code: journal-only, never a star, whatever panel.json says.
+            out.append(dataclasses.replace(
+                verdict, ok=False, metadata={'model': 'B_kv3_ladder_shadow',
+                                   'bundle_sha': candidate.manifest_sha256,
+                                   'state_cutoff': candidate.cutoff}))
+        except Exception as exc:  # noqa: BLE001 - shadow must never affect B
+            if key not in _LADDER_WARNED:
+                _LADDER_WARNED.add(key)
+                print(f'[kv3_panel] ladder shadow {key} scoring failed: '
+                      f'{type(exc).__name__}: {exc}', flush=True)
+            continue
+    return out
+
+
 def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                      draft_keys=(), feature_vector=None, candidate=None):
     """Replace six verdicts in place; feature_vector is a boundary test seam."""
@@ -286,6 +342,11 @@ def replace_verdicts(bundle, x, verdicts, context, *, prod35_names=(),
                 served.insert(index, replacements['dire_30_25'])
             index = next(i for i, verdict in enumerate(served)
                          if verdict.key == 'total_55_50') + 1
+            # Journal-only E-352 shadow verdicts sit before the plain targets so the
+            # plain trio stays the tail of the list.
+            for verdict in _ladder_shadow(candidate, row, replacements.get('rad_30_25')):
+                served.insert(index, verdict)
+                index += 1
             for key in ('rad_ge30', 'dire_ge30', 'total_ge55'):
                 if key in extra:
                     served.insert(index, replacements[key])

@@ -94,7 +94,26 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   радиант ≥30 против ≤29, дайр ≥30 против ≤29, тотал ≥55 против ≤54; заголовки, стороны,
   пороги и полосы берутся из бандла. `ML_PANEL_KV3_DIRE=0` выключает только `dire_30_25`,
   `ML_PANEL_KV3_PLAIN=0` — три plain-цели.
+  `LADDER_TARGETS=(rad_ge16,rad_ge21,rad_ge26,dire_ge16,dire_ge21,dire_ge26)` (E-352) — шесть теневых
+  моделей «сторона ≥L» на той же строке 1050 колонок, что B; только журнал `runtime/ml_panel.jsonl`
+  (`metadata.model=B_kv3_ladder_shadow`, `ok` принудительно False в коде независимо от порога в `panel.json`), в карточку, ★,
+  диспетчер и ставки не попадают; любой сбой одной shadow-модели/бандла (нет файла, не 1-D/нестрогие/неконечные узлы,
+  длины, расхождение с `panel.json`, ширина, ошибка predict) убирает только этот ключ и не влияет на выбор B/A. Нужны запись в `panel.json` и оба файла.
+  `ML_PANEL_KV3_LADDER_SHADOW=0` — не загружать и не считать (по умолчанию `1`).
   Сборка через `runtime/experiments/kills/dire30/promote.py BUNDLE_SRC TARGET_DIR [--dry-run]`.
+- `base/kills_ladder.py` + `ml-models/prematch_panel_kv3/ladder.json` (schema `kills-ladder-v1`, E-352) —
+  лесенка килов на карточке: под тремя строками B («Килы ML · B») две строки, Radiant затем Dire:
+  `Radiant ≈26 килов · ИТБ15,5 78% · ИТБ20,5 65% · ИТБ25,5 53%` (ИТБ{L-1},5 = P(сторона ≥ L), L из
+  `display_lines`). P_L = σ(a_L + b_L·x + shift + gamma_gap·clip(x − y, ±gap_clip)), x/y = logit по served-калиброванной
+  P(сторона ≥30) своей/чужой стороны (`rad_ge30`/`dire_ge30`, клип ±`clip_logit`), бегущий минимум по L;
+  медиана N = наибольшее L с P_L ≥ 0.5 (нет такого — наименьшая линия таблицы − 1); на краю таблицы
+  рендер `≈45+ килов` (N = наибольшая линия) / `≤5 килов` (ниже наименьшей). Рендер —
+  `win_model_veto._render_panel_kills_display`, режим `b`; ошибка лесенки убирает только её строки
+  (строки B остаются, E281 не включается). Каталог = `KV3_PANEL_DIR`; env `ML_PANEL_KILLS_LADDER=0` —
+  без лесенки, карточка байт в байт прежняя (по умолчанию `1`).
+  **Откат:** только env `ML_PANEL_KILLS_LADDER=0` / `ML_PANEL_KV3_LADDER_SHADOW=0`. Нельзя откатывать только код,
+  оставляя новый `panel.json`: старый загрузчик падает с «target set differs». Публичное API: `enabled()`, `load()`,
+  `probabilities(p_own, p_opp)`, `render_line(label, p_own, p_opp)`, `plural_kills(n)`.
 - `base/series_tempo.py` — журналируемая тень E-331 для целей в `TEMPO_CONSTANTS` (пока только
   `total_55_50`; для `total_ge55` параметры ещё не подогнаны): SourceTV ledger карт серии
   (`runtime/series_tempo_ledger.json`, env `SERIES_TEMPO_LEDGER`) и `metadata.series_tempo` в

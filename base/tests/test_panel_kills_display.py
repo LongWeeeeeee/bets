@@ -103,9 +103,23 @@ def _card(monkeypatch, tmp_path, model="B_kv3", display=None, panel_error=False,
     return details["panel_text"]
 
 
-@pytest.mark.parametrize("probabilities", [(0.385, 0.83, 0.41),
-                                             (0.72, 0.46, 0.68)])
-def test_b_card_shows_positive_event_probabilities(monkeypatch, tmp_path, probabilities):
+LADDER_LINES = {
+    # gap 2.06 is clipped to gap_clip 1.26; Dire's median sits on the table edge (45+).
+    (0.385, 0.83, 0.41): ("Radiant ≈20 килов · ИТБ15,5 63% · ИТБ20,5 47% · ИТБ25,5 35%",
+                          "Dire ≈45+ килов · ИТБ15,5 99% · ИТБ20,5 98% · ИТБ25,5 97%"),
+    (0.72, 0.46, 0.68): ("Radiant ≈44 кила · ИТБ15,5 98% · ИТБ20,5 96% · ИТБ25,5 94%",
+                         "Dire ≈24 кила · ИТБ15,5 73% · ИТБ20,5 58% · ИТБ25,5 45%"),
+    # The owner's live numbers of 05.10 (E-352): 35.4 % / 37.9 % / 34.2 %.
+    (0.354, 0.379, 0.342): ("Radiant ≈26 килов · ИТБ15,5 78% · ИТБ20,5 65% · ИТБ25,5 53%",
+                            "Dire ≈29 килов · ИТБ15,5 83% · ИТБ20,5 71% · ИТБ25,5 60%"),
+}
+
+
+@pytest.mark.parametrize("ladder", ["1", "0"])
+@pytest.mark.parametrize("probabilities", list(LADDER_LINES))
+def test_b_card_shows_positive_event_probabilities(monkeypatch, tmp_path, probabilities,
+                                                   ladder):
+    monkeypatch.setenv("ML_PANEL_KILLS_LADDER", ladder)
     text = _card(monkeypatch, tmp_path, plain=True,
                  plain_probabilities=probabilities)
     verdicts = _verdicts("B_kv3", plain=True,
@@ -120,10 +134,68 @@ def test_b_card_shows_positive_event_probabilities(monkeypatch, tmp_path, probab
                       expected_line("Radiant ≥30 килов", probabilities[0]),
                       expected_line("Dire ≥30 килов", probabilities[1]),
                       expected_line("Карта ≥55 килов", probabilities[2])]
+    if ladder == "1":
+        expected_lines += LADDER_LINES[probabilities]
     assert text.splitlines() == [*window_and_duration[:-1], *expected_lines,
                                  window_and_duration[-1]]
     assert "≤29" not in text and "≤54" not in text
     assert "Килы ML · E-281" not in text
+
+
+def test_owner_card_has_ladder_lines_after_the_three_b_lines(monkeypatch, tmp_path):
+    monkeypatch.delenv("ML_PANEL_KILLS_LADDER", raising=False)
+    text = _card(monkeypatch, tmp_path, plain=True,
+                 plain_probabilities=(0.354, 0.379, 0.342))
+    lines = text.splitlines()
+    start = lines.index("Килы ML · B")
+    assert lines[start + 1:start + 4] == ["Radiant ≥30 килов: 35.4%",
+                                          "Dire ≥30 килов: 37.9%",
+                                          "Карта ≥55 килов: 34.2%"]
+    assert lines[start + 4:start + 6] == list(LADDER_LINES[(0.354, 0.379, 0.342)])
+    assert lines[start + 6].startswith("🕐 Длительность")
+
+
+def test_ladder_off_is_byte_identical_to_the_pre_change_card(monkeypatch, tmp_path):
+    monkeypatch.setenv("ML_PANEL_KILLS_LADDER", "0")
+    text = _card(monkeypatch, tmp_path, plain=True,
+                 plain_probabilities=(0.354, 0.379, 0.342))
+    verdicts = _verdicts("B_kv3", plain=True, plain_probabilities=(0.354, 0.379, 0.342))
+    head, window, duration = ml_panel.render([verdicts[0], verdicts[-1]],
+                                             highlight=["w_5_15"]).splitlines()
+    # Pre-change layout: header, window, "Килы ML · B" + three B lines, duration.
+    assert text == "\n".join([head, window, "Килы ML · B", "Radiant ≥30 килов: 35.4%",
+                              "Dire ≥30 килов: 37.9%", "Карта ≥55 килов: 34.2%", duration])
+    assert "ИТБ" not in text
+
+
+@pytest.mark.parametrize("failure", ["raises", "missing_table", "partial"])
+def test_ladder_failure_drops_only_the_ladder_lines(monkeypatch, tmp_path, failure):
+    import kills_ladder
+    monkeypatch.delenv("ML_PANEL_KILLS_LADDER", raising=False)
+    # Control: the very same setup with a valid table DOES show both ladder lines, so
+    # a revert of the win_model_veto hook cannot pass this test by showing none.
+    control = _card(monkeypatch, tmp_path, plain=True,
+                    plain_probabilities=(0.354, 0.379, 0.342))
+    assert all(line in control.splitlines() for line in LADDER_LINES[(0.354, 0.379, 0.342)])
+    if failure == "raises":
+        def boom(*_a, **_k):
+            raise RuntimeError("ladder broke")
+        monkeypatch.setattr(kills_ladder, "render_line", boom)
+    elif failure == "missing_table":
+        monkeypatch.setenv("KV3_PANEL_DIR", str(tmp_path / "nowhere"))
+    else:
+        monkeypatch.setattr(kills_ladder, "render_line",
+                            lambda label, *a: "Radiant ≈1 кил" if label == "Radiant" else None)
+    text = _card(monkeypatch, tmp_path, plain=True,
+                 plain_probabilities=(0.354, 0.379, 0.342))
+    assert "ИТБ" not in text and "≈" not in text
+    assert "Килы ML · E-281" not in text          # no E281 fallback
+    assert veto._LAST_PANEL["error"] is None
+    lines = text.splitlines()
+    start = lines.index("Килы ML · B")
+    assert lines[start + 1:start + 4] == ["Radiant ≥30 килов: 35.4%",
+                                          "Dire ≥30 килов: 37.9%",
+                                          "Карта ≥55 килов: 34.2%"]
 
 
 def test_band_rollback_includes_optional_dire_in_order(monkeypatch, tmp_path):
@@ -162,6 +234,7 @@ def test_three_plain_b_verdicts_required_by_shared_renderer(monkeypatch):
     assert "Radiant ≥30 килов: 36.0%" in rendered
     assert "Dire ≥30 килов: 83.0%" in rendered
     assert "Карта ≥55 килов: 41.0%" in rendered
+    assert "Radiant ≈19 килов · ИТБ15,5 61% · ИТБ20,5 45% · ИТБ25,5 32%" in rendered
     rendered, use_b = veto._render_panel_kills_display(
         [v for v in verdicts if v.key != "dire_ge30"], ml_panel)
     assert use_b is False

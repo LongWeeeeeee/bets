@@ -880,12 +880,26 @@ def _render_panel_kills_display(verdicts, ml_panel):
                         if len(lines) != 1 + len(wins) + len(keys) + len(duration):
                             raise ValueError("unexpected B kills panel layout")
                         start = 1 + len(wins)
-                        lines[start:start + len(keys)] = [
+                        replacement = [
                             "Килы ML · B",
                             plain_line("Radiant ≥30 килов", targets['rad_ge30'].probability),
                             plain_line("Dire ≥30 килов", targets['dire_ge30'].probability),
                             plain_line("Карта ≥55 килов", targets['total_ge55'].probability),
                         ]
+                        # E-352 ladder: display only; any error drops just these lines.
+                        try:
+                            from kills_ladder import enabled as _ladder_on, render_line
+
+                            if _ladder_on():
+                                p_rad = targets['rad_ge30'].probability
+                                p_dire = targets['dire_ge30'].probability
+                                ladder = [render_line("Radiant", p_rad, p_dire),
+                                          render_line("Dire", p_dire, p_rad)]
+                                if all(isinstance(text, str) and text for text in ladder):
+                                    replacement += ladder
+                        except Exception:  # noqa: BLE001 — ladder never breaks the B lines
+                            pass
+                        lines[start:start + len(keys)] = replacement
                         rendered = "\n".join(lines)
                     return rendered, True
         except Exception:  # noqa: BLE001 — display error keeps the E281 block

@@ -361,7 +361,7 @@ def test_real_bundle_served_fixture_probability_and_render(monkeypatch):
     manifest_sha = hashlib.sha256((bundle_dir / 'manifest.json').read_bytes()).hexdigest()
     specs = {s.key: s for s in load_specs(bundle_dir)}
     assert set(serving.TARGETS) <= set(specs)
-    assert set(specs) <= set(serving.TARGETS + serving.EXTRA_TARGETS)
+    assert set(specs) <= set(serving.TARGETS + serving.EXTRA_TARGETS + serving.LADDER_TARGETS)
     names = json.loads((bundle_dir / 'feature_names.json').read_text())
     models = {}
     for key in serving.TARGETS:
@@ -459,3 +459,288 @@ def test_real_bundle_serves_fixture_kv3_features_by_name(monkeypatch):
             verdict = next(v for v in result if v.key == str(key))
             assert verdict.metadata['model'] == 'B_kv3'
             assert abs(verdict.probability - float(z['expected_b'][i])) <= 1e-9
+
+
+def _real_candidate_with_ladder(bundle_dir):
+    """Real B + plain + six E-352 ladder bundles, loaded like the production loader does."""
+    import hashlib
+    import json
+    from catboost import CatBoostClassifier
+    import kv3_panel_serving as serving
+    from ml_panel import load_specs
+
+    specs = {s.key: s for s in load_specs(bundle_dir)}
+    names = json.loads((bundle_dir / 'feature_names.json').read_text())
+    models, calibration = {}, {}
+    for key in serving.TARGETS + serving.EXTRA_TARGETS + serving.LADDER_TARGETS:
+        model = CatBoostClassifier()
+        model.load_model(str(bundle_dir / (key + '.cbm')))
+        models[key] = model
+        calib = json.loads((bundle_dir / (key + '.calib.json')).read_text())
+        calibration[key] = (np.asarray(calib['knots_x']), np.asarray(calib['knots_y']))
+    manifest_sha = hashlib.sha256((bundle_dir / 'manifest.json').read_bytes()).hexdigest()
+    return SimpleNamespace(panel_columns=names['panel_columns'], kv3_columns=names['kv3_columns'],
+                           models=models, specs=specs, manifest_sha256=manifest_sha,
+                           cutoff=1782864000,
+                           state=SimpleNamespace(serving_last_overvisible_seconds=0)), calibration
+
+
+def _serve_fixture_row(candidate, index=0):
+    import json
+    from ml_panel import ModelVerdict
+    import kv3_panel_serving as serving
+
+    path = Path(__file__).parent / 'fixtures/kv3_panel_b_maps.npz'
+    with np.load(path, allow_pickle=False) as z:
+        x928, kv3 = z['x928'][index], z['kv3'][index]
+    incumbents = [ModelVerdict(key=key, title=key, side='Dire', probability=.2,
+                               threshold=.7, fill=1, ok=False) for key in serving.TARGETS]
+    result = serving.replace_verdicts(None, x928, incumbents, {}, feature_vector=kv3,
+                                      candidate=candidate)
+    return result, np.concatenate((x928, kv3)).reshape(1, -1)
+
+
+def test_ladder_shadow_scored_on_the_same_row_calibrated_and_journaled(monkeypatch):
+    import json
+    import kv3_panel_serving as serving
+    import ml_panel
+
+    bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    candidate, calibration = _real_candidate_with_ladder(bundle_dir)
+    result, row = _serve_fixture_row(candidate)
+    by_key = {v.key: v for v in result}
+    assert set(serving.LADDER_TARGETS) <= set(by_key)
+    for key in serving.LADDER_TARGETS:
+        raw = float(candidate.models[key].predict_proba(row, thread_count=1)[0, 1])
+        knots_x, knots_y = calibration[key]
+        verdict = by_key[key]
+        assert verdict.raw == pytest.approx(raw, abs=1e-12)
+        assert verdict.probability == pytest.approx(float(np.interp(raw, knots_x, knots_y)), abs=1e-9)
+        assert verdict.ok is False and verdict.threshold > 1
+        assert verdict.metadata['model'] == 'B_kv3_ladder_shadow'
+        assert verdict.metadata['bundle_sha'] == candidate.manifest_sha256
+    # Journal row (delivery boundary 1): all six present with their probabilities.
+    journal = {m['key']: m for m in ml_panel.journal_row(1, result)['models']}
+    for key in serving.LADDER_TARGETS:
+        assert journal[key]['p'] == pytest.approx(by_key[key].probability, abs=1e-6)
+        assert journal[key]['ok'] is False
+        assert journal[key]['metadata']['model'] == 'B_kv3_ladder_shadow'
+    json.dumps(ml_panel.journal_row(1, result))
+    # B itself is unchanged by the shadow models.
+    assert all(by_key[key].metadata['model'] == 'B_kv3' for key in serving.TARGETS)
+
+
+def test_ladder_shadow_never_reaches_the_card(monkeypatch):
+    import kv3_panel_serving as serving
+    import ml_panel
+    from base import win_model_veto as veto
+
+    bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    candidate, _ = _real_candidate_with_ladder(bundle_dir)
+    result, _row = _serve_fixture_row(candidate)
+    ladder_titles = {v.title for v in result if v.key in serving.LADDER_TARGETS}
+    assert len(ladder_titles) == 6                      # titles exist to be searched for
+    for mode in (None, 'band', 'e281'):
+        if mode is None:
+            monkeypatch.delenv('ML_PANEL_KILLS_DISPLAY', raising=False)
+        else:
+            monkeypatch.setenv('ML_PANEL_KILLS_DISPLAY', mode)
+        text, _use_b = veto._render_panel_kills_display(result, ml_panel)
+        assert text
+        for key in serving.LADDER_TARGETS:
+            assert key not in text
+        for title in ladder_titles:
+            assert title not in text
+        without = [v for v in result if v.key not in serving.LADDER_TARGETS]
+        assert text == veto._render_panel_kills_display(without, ml_panel)[0]
+    assert not any(v.ok for v in result if v.key in serving.LADDER_TARGETS)
+
+
+def test_ladder_shadow_env_zero_is_not_scored(monkeypatch):
+    import kv3_panel_serving as serving
+
+    bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    candidate, _ = _real_candidate_with_ladder(bundle_dir)
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    with_shadow, _ = _serve_fixture_row(candidate)
+    monkeypatch.setenv('ML_PANEL_KV3_LADDER_SHADOW', '0')
+    without, _ = _serve_fixture_row(candidate)
+    assert not any(v.key in serving.LADDER_TARGETS for v in without)
+    assert [v.key for v in without] == [v.key for v in with_shadow
+                                        if v.key not in serving.LADDER_TARGETS]
+    kept = [v for v in with_shadow if v.key not in serving.LADDER_TARGETS]
+    assert kept == without
+
+
+def test_ladder_shadow_failure_never_takes_b_down(monkeypatch):
+    import kv3_panel_serving as serving
+
+    bundle_dir = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    candidate, _ = _real_candidate_with_ladder(bundle_dir)
+
+    def boom(*_a, **_k):
+        raise ValueError('ladder model failed')
+
+    candidate.models['dire_ge21'].predict_proba = boom
+    result, _row = _serve_fixture_row(candidate)
+    by_key = {v.key: v for v in result}
+    assert all(by_key[key].metadata['model'] == 'B_kv3' for key in serving.TARGETS)
+    assert 'dire_ge21' not in by_key
+    assert {'rad_ge16', 'rad_ge21', 'rad_ge26', 'dire_ge16', 'dire_ge26'} <= set(by_key)
+
+
+@pytest.mark.parametrize("mode", ["present", "disabled", "bad_calibration", "contract_mismatch"])
+def test_real_loader_ladder_keys_are_optional_and_never_fatal(monkeypatch, tmp_path, mode):
+    import json
+    import shutil
+    from base import kills_v3_serving
+    import kv3_panel_serving as serving
+    from ml_panel import load_specs
+
+    src = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    directory = tmp_path / 'bundle'
+    shutil.copytree(src, directory)
+    if mode == 'bad_calibration':
+        calib = json.loads((directory / 'rad_ge21.calib.json').read_text())
+        calib['knots_x'] = calib['knots_x'][::-1]
+        (directory / 'rad_ge21.calib.json').write_text(json.dumps(calib))
+    if mode == 'contract_mismatch':       # valid model, calibration differs from panel.json
+        shutil.copy2(directory / 'w_5_15.cbm', directory / 'rad_ge21.cbm')
+        shutil.copy2(directory / 'w_5_15.calib.json', directory / 'rad_ge21.calib.json')
+    features = json.loads((directory / 'feature_names.json').read_text())
+    parameters = json.loads((directory / 'manifest.json').read_text())['od3_parameters']
+    state = SimpleNamespace(serving_meta={
+        'cutoff': 1782864000, 'history_start': parameters['history_start'],
+        'visibility_delay': parameters['visibility_delay'], 'builder_params': parameters,
+        'tp_names': features['kv3_source_names'] + [f'unused_{i}' for i in range(30)]})
+    monkeypatch.setattr(kills_v3_serving, 'load_state', lambda path: state)
+    state_file = tmp_path / 'state.npz'
+    state_file.write_bytes(b'')
+    monkeypatch.setenv('KV3_STATE_PATH', str(state_file))
+    monkeypatch.setenv('KV3_PANEL_DIR', str(directory))
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    if mode == 'disabled':
+        monkeypatch.setenv('ML_PANEL_KV3_LADDER_SHADOW', '0')
+    monkeypatch.setattr(serving, '_candidate', None)
+    specs = {spec.key: spec for spec in load_specs(directory)}
+    bundle = SimpleNamespace(columns=features['panel_columns'],
+                             specs=tuple(specs[key] for key in serving.TARGETS))
+    candidate = serving._load_uncached(bundle)
+    assert set(serving.TARGETS) <= set(candidate.models)          # B always loads
+    loaded = {key for key in serving.LADDER_TARGETS if key in candidate.models}
+    expected = {'present': set(serving.LADDER_TARGETS), 'disabled': set(),
+                'bad_calibration': set(serving.LADDER_TARGETS) - {'rad_ge21'},
+                'contract_mismatch': set(serving.LADDER_TARGETS) - {'rad_ge21'}}[mode]
+    assert loaded == expected
+    assert set(candidate.calibration) == set(candidate.models)
+
+
+def _load_real_loader_candidate(monkeypatch, tmp_path, name, mutate=None):
+    """Copy the real bundle dir, optionally corrupt it, load it with the production loader."""
+    import json
+    import shutil
+    from base import kills_v3_serving
+    import kv3_panel_serving as serving
+    from ml_panel import load_specs
+
+    src = Path(__file__).resolve().parents[2] / 'ml-models/prematch_panel_kv3'
+    root = tmp_path / name
+    directory = root / 'bundle'
+    shutil.copytree(src, directory)
+    if mutate is not None:
+        mutate(directory)
+    features = json.loads((directory / 'feature_names.json').read_text())
+    parameters = json.loads((directory / 'manifest.json').read_text())['od3_parameters']
+    state = SimpleNamespace(serving_last_overvisible_seconds=0, serving_meta={
+        'cutoff': 1782864000, 'history_start': parameters['history_start'],
+        'visibility_delay': parameters['visibility_delay'], 'builder_params': parameters,
+        'tp_names': features['kv3_source_names'] + [f'unused_{i}' for i in range(30)]})
+    monkeypatch.setattr(kills_v3_serving, 'load_state', lambda path: state)
+    state_file = root / 'state.npz'
+    state_file.write_bytes(b'')
+    monkeypatch.setenv('KV3_STATE_PATH', str(state_file))
+    monkeypatch.setenv('KV3_PANEL_DIR', str(directory))
+    monkeypatch.setenv('ML_PANEL_KV3', '1')
+    monkeypatch.delenv('ML_PANEL_KV3_LADDER_SHADOW', raising=False)
+    monkeypatch.setattr(serving, '_candidate', None)
+    monkeypatch.setattr(serving, '_LADDER_WARNED', set())
+    specs = {spec.key: spec for spec in load_specs(directory)}
+    bundle = SimpleNamespace(columns=features['panel_columns'],
+                             specs=tuple(specs[key] for key in serving.TARGETS))
+    candidate = serving._load_uncached(bundle)
+    return candidate, serving
+
+
+def _corrupt_calib(key, mutation):
+    def mutate(directory):
+        import json
+        path = directory / (key + '.calib.json')
+        if mutation == 'invalid_json':
+            path.write_text('{not json')
+            return
+        calib = json.loads(path.read_text())
+        if mutation == 'nested_knots':
+            calib['knots_x'] = [[.1, .2], [.8, .9]]
+            calib['knots_y'] = [[.1, .2], [.8, .9]]
+        elif mutation == 'nan_knots':
+            calib['knots_x'][3] = float('nan')
+        elif mutation == 'length_mismatch':
+            calib['knots_y'] = calib['knots_y'][:-1]
+        elif mutation == 'non_monotone':
+            calib['knots_x'][2], calib['knots_x'][3] = calib['knots_x'][3], calib['knots_x'][2]
+        elif mutation == 'out_of_range_y':
+            calib['knots_y'][0] = 1.5
+        elif mutation == 'differs_from_panel_json':
+            calib['knots_y'] = [min(1.0, v + .01) for v in calib['knots_y']]
+        path.write_text(json.dumps(calib))
+    return mutate
+
+
+@pytest.mark.parametrize('mutation', ['nested_knots', 'nan_knots', 'length_mismatch',
+                                      'non_monotone', 'out_of_range_y', 'invalid_json',
+                                      'differs_from_panel_json'])
+def test_corrupt_shadow_calibration_drops_only_that_shadow_key(monkeypatch, tmp_path, mutation):
+    clean, serving = _load_real_loader_candidate(monkeypatch, tmp_path, 'clean')
+    clean_result, _ = _serve_fixture_row(clean)
+    bad, serving = _load_real_loader_candidate(monkeypatch, tmp_path, 'bad',
+                                               _corrupt_calib('rad_ge21', mutation))
+    assert set(serving.TARGETS) <= set(bad.models)                  # B/A selection untouched
+    assert 'rad_ge21' not in bad.models and 'rad_ge21' not in bad.calibration
+    result, _ = _serve_fixture_row(bad)
+    by_key = {v.key: v for v in result}
+    assert 'rad_ge21' not in by_key
+    assert {'rad_ge16', 'rad_ge26', 'dire_ge16', 'dire_ge21', 'dire_ge26'} <= set(by_key)
+    assert all(by_key[key].metadata['model'] == 'B_kv3' for key in serving.TARGETS)
+    # B verdicts are byte-identical to the uncorrupted run.
+    assert [repr(v) for v in result if v.key in serving.TARGETS] == \
+        [repr(v) for v in clean_result if v.key in serving.TARGETS]
+
+
+def test_shadow_ok_is_false_even_if_panel_json_threshold_is_low(monkeypatch, tmp_path):
+    import json
+    import ml_panel
+
+    def lower_threshold(directory):
+        panel = json.loads((directory / 'panel.json').read_text())
+        for model in panel['models']:
+            if model['key'] in ('rad_ge16', 'dire_ge16'):
+                model['threshold'] = 0.5
+        (directory / 'panel.json').write_text(json.dumps(panel))
+
+    candidate, serving = _load_real_loader_candidate(monkeypatch, tmp_path, 'low',
+                                                     lower_threshold)
+    assert candidate.models['rad_ge16'] is not None
+    assert serving._specs['rad_ge16'].threshold == 0.5            # the trap is really armed
+    result, _ = _serve_fixture_row(candidate)
+    by_key = {v.key: v for v in result}
+    assert by_key['rad_ge16'].confidence > 0.5                     # would pass the low threshold
+    assert not any(v.ok for v in result if v.key in serving.LADDER_TARGETS)
+    plain = [v for v in result if v.key not in serving.LADDER_TARGETS]
+    assert ml_panel.best_of(result) == ml_panel.best_of(plain)

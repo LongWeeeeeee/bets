@@ -19,6 +19,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = ('w_5_15', 'w_10_20', 'w_15_25', 'w_20_30', 'rad_30_25', 'total_55_50')
 EXTRA_TARGETS = ('dire_30_25', 'rad_ge30', 'dire_ge30', 'total_ge55')
+# E-352 per-line side models: scored on B's row and journaled only (ML_PANEL_KV3_LADDER_SHADOW).
+LADDER_TARGETS = ('rad_ge16', 'rad_ge21', 'rad_ge26', 'dire_ge16', 'dire_ge21', 'dire_ge26')
 _QUEUE = queue.Queue(maxsize=16)
 _START_LOCK = threading.Lock()
 _LOAD_LOCK = threading.Lock()
@@ -82,23 +84,34 @@ class Candidate:
         self.models = {}
         self.calibration = {}
         from ml_panel import load_specs
-        optional = {s.key for s in load_specs(directory)} & set(EXTRA_TARGETS)
-        optional = tuple(key for key in EXTRA_TARGETS if key in optional
+        optional = {s.key for s in load_specs(directory)} & set(EXTRA_TARGETS + LADDER_TARGETS)
+        optional = tuple(key for key in EXTRA_TARGETS + LADDER_TARGETS if key in optional
                          and (os.getenv('ML_PANEL_KV3_DIRE', '1') != '0' if key == 'dire_30_25'
+                              else os.getenv('ML_PANEL_KV3_LADDER_SHADOW', '1') != '0'
+                              if key in LADDER_TARGETS
                               else os.getenv('ML_PANEL_KV3_PLAIN', '1') != '0')
                          and (directory / (key + '.cbm')).is_file()
                          and (directory / (key + '.calib.json')).is_file())
         for key in TARGETS + optional:
-            model = CatBoostClassifier()
-            model.load_model(str(directory / (key + '.cbm')))
-            calib = json.loads((directory / (key + '.calib.json')).read_text())
-            knots_x = np.asarray(calib['knots_x'], dtype=np.float64)
-            knots_y = np.asarray(calib['knots_y'], dtype=np.float64)
-            if (len(knots_x) < 2 or len(knots_x) != len(knots_y)
-                    or not np.isfinite(knots_x).all() or not np.isfinite(knots_y).all()
-                    or not np.all(np.diff(knots_x) > 0)
-                    or np.any(knots_y < 0) or np.any(knots_y > 1)):
-                raise ValueError('Invalid calibration for ' + key)
+            try:
+                model = CatBoostClassifier()
+                model.load_model(str(directory / (key + '.cbm')))
+                calib = json.loads((directory / (key + '.calib.json')).read_text())
+                knots_x = np.asarray(calib['knots_x'], dtype=np.float64)
+                knots_y = np.asarray(calib['knots_y'], dtype=np.float64)
+                if (knots_x.ndim != 1 or knots_y.ndim != 1
+                        or len(knots_x) < 2 or len(knots_x) != len(knots_y)
+                        or not np.isfinite(knots_x).all() or not np.isfinite(knots_y).all()
+                        or not np.all(np.diff(knots_x) > 0)
+                        or np.any(knots_y < 0) or np.any(knots_y > 1)):
+                    raise ValueError('Invalid calibration for ' + key)
+            except Exception as exc:  # noqa: BLE001
+                if key not in LADDER_TARGETS:
+                    raise
+                # Journal-only shadow model: a bad bundle must never take B down.
+                print(f'[kv3_panel] ladder shadow {key} skipped: {type(exc).__name__}: {exc}',
+                      flush=True)
+                continue
             self.models[key] = model
             self.calibration[key] = (knots_x, knots_y)
 
