@@ -1,0 +1,24 @@
+[Unit]
+Description=Winline team kills-total lines collector (prematch event pages, proxy only; owner 05.10)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/main
+Environment=HOME=/root
+Environment=TZ=Europe/Moscow
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Owner rule: Winline only through a project proxy. The collector itself fails closed
+# (IP-echo through the proxy must differ from the direct IP, WebRTC blocked, no direct fallback).
+ExecStart=/root/main/venv/bin/python3 -m services.winline.winline_kills_totals_collector --kinds prematch --max-events 10 --max-loads 20
+StandardOutput=append:/root/main/runtime/artifacts/odds-winline/kills_totals_collector.log
+StandardError=append:/root/main/runtime/artifacts/odds-winline/kills_totals_collector.log
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=60%
+MemoryMax=1500M
+MemorySwapMax=0
+# First victim under memory pressure (nightly pro chain, cyberscore stay up).
+OOMScoreAdjust=1000
+# Type=oneshot ignores RuntimeMaxSec; the start timeout is what bounds a wedged browser (verifier D1).
+TimeoutStartSec=900

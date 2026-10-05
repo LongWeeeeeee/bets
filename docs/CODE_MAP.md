@@ -1168,6 +1168,55 @@ Worker обслуживает отложенные остановки и поб�
 поллера и не передаётся в Telegram. HTML содержит всю загруженную страницу,
 хранится локально на сервере и не публикуется.
 
+### Однократный сбор team kills totals с EVENT-страниц
+
+`services/winline/winline_kills_totals_collector.py` — независимый CLI:
+`python3 -m services.winline.winline_kills_totals_collector --kinds prematch --max-events 10 --max-loads 20`;
+прямой запуск файла также поддерживается. Прокси только из `BOOKMAKER_PROXY_POOL`,
+сверенный с `PROXY_INVENTORY` (HTTP(S), авторизация, DE/US/CA); `--pool-index N`
+фиксирует элемент пула. Проверка IP через requests выполняется до запуска
+Camoufox, затем IP браузера должен совпасть с проверенным proxy IP и отличаться
+от прямого IP. До обеих проверок Winline не открывается, WebRTC заблокирован;
+HTTP-клиент обращается только к нейтральному IP echo. Прокси/адреса IP/ошибки
+сторонних библиотек не выводятся и не сохраняются. Прод-поллер не вызывается.
+
+Решение владельца 05.10.2026 (ingame-nbpb): только предматчевые страницы, раз в 3 часа —
+`--kinds prematch` (по умолчанию; `live`/`all` — live первыми). Боевой поллер читает
+только листинг (`WINLINE_LIVE_URL`), где этих рынков нет (0/197 снимков DOM прода),
+поэтому сбор — отдельным процессом. Расписание на serv1: `scripts/ops/systemd/winline-kills-totals.{service,timer}`
+(00/3:17 MSK, CPUQuota 60 %, MemoryMax 1500M, Nice 19, OOMScoreAdjust 1000, `TimeoutStartSec=900` — у oneshot `RuntimeMaxSec` не действует), установка
+`scripts/ops/install-winline-kills-totals.sh` (на serv1), лог `runtime/artifacts/odds-winline/kills_totals_collector.log`.
+Карточка, пропавшая из листинга между загрузками, пропускается (`events_missing`), а не рвёт цикл.
+Мёртвый прокси не даёт прямого обхода: проба 05.10 на serv1 (Camoufox 0.5.6, прокси 127.0.0.1:9, нейтральный ipify) — `NS_ERROR_PROXY_CONNECTION_REFUSED` и с настройками по умолчанию, и с `network.proxy.failover_direct=false` (`runtime/experiments/odds-winline/proxy_failover_probe.py`).
+
+Цикл: листинг → карточки (`winline_enumerate_live_cards`, выбор `select_cards`) → клик
+события → раскрытие рынков → `body.inner_text` → точные имена команд карточки.
+Карты 1..3 берутся из упоминаний на странице события (при отсутствии — из
+`header_map` карточки); отсутствующая сторона остаётся null. Счёт optional
+`score_text` копируется только если helper карточки его предоставил (сейчас нет).
+Перед каждым переходом в листинг/событие выдерживается ≥3 с. `--max-loads`
+считает эти переходы, включая клики, но не IP echo и не фоновые SPA-запросы.
+Новый листинг нужен перед каждым следующим событием: при defaults максимум
+10 событий в 20 загрузках, даже если `--max-events=12`.
+
+История: `runtime/winline_kills_totals_history.jsonl`, override
+`WINLINE_KILLS_TOTALS_HISTORY_PATH` или `--history PATH` (аргумент приоритетнее).
+Строка: `wall` (Unix seconds), `event_id` (string), `kind` (live/prematch),
+`league`, `team1`, `team2` (порядок карточки), `map_num`,
+`kills_t1_line/over/under`, `kills_t2_line/over/under` (number/null),
+`source="winline_event_page"`, optional `score_text`.
+Первое наблюдение `(event_id, map_num)` записывается даже полностью null;
+дальше только изменение шести kills-полей. Append+flush+fsync, без усечения.
+Рядом `<history stem>.state.json` (tmp+atomic rename) и `<history stem>.lock`
+(flock, одновременный writer отклоняется). При несовпадении размера истории
+и сохранённого state история перечитывается для восстановления дедупа;
+повреждённый JSON не затирается, цикл завершается ошибкой.
+Exit: 0 (успех/нет карточек/достигнут лимит), 2 (прокси/IP/browser preflight),
+5 (ошибка после начала Winline-цикла). Stdout — одна строка
+`cards=… events_opened=… events_missing=… rows_written=… loads=… country=… status=… error=<класс>`.
+Offline regressions: `services/winline/tests/test_winline_kills_totals_collector.py` (вне `base/`, чтобы не задевать цель доставки прода),
+захваченные EVENT-тексты и gzip-листинг от 05.10.2026 с provenance в fixtures.
+
 `services/winline/winline_current_map_odds_poller.py` опрашивает ОДНУ общую страницу-список.
 Перезагрузка может на десятки секунд лишать страницу карточек, поэтому одиночный
 промах её не заказывает. Для подтверждённой мостом карты или карты с ранее

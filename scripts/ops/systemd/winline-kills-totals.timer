@@ -1,0 +1,10 @@
+[Unit]
+Description=Collect Winline team kills-total lines every 3 hours (owner 05.10: prematch only)
+
+[Timer]
+OnCalendar=*-*-* 00/3:17:00 Europe/Moscow
+Persistent=false
+Unit=winline-kills-totals.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,49 @@
+{
+  "captured_by": "runtime/experiments/odds-winline/kills_totals_capture.py (session 4a74137d, board ingame-nbpb)",
+  "how": "serv1, capped transient systemd unit, Camoufox headless via project proxy BOOKMAKER_PROXY_POOL[4] (CA), block_webrtc, exit-IP check through the proxy; body inner_text of the Winline event page",
+  "files": {
+    "winline_kills_totals_prematch_yandex_lgd_20261005.txt": {
+      "source": "runtime/artifacts/odds-winline/kills_totals_capture_20261005T0637/16855431_map1.txt",
+      "captured_at_utc": "2026-10-05T06:37:01Z",
+      "event_id": 16855431,
+      "kind": "prematch",
+      "league": "BLAST Slam",
+      "teams": [
+        "TEAM YANDEX",
+        "LGD GAMING"
+      ],
+      "command": "venv_catboost/bin/python3 runtime/experiments/odds-winline/kills_totals_capture.py --pool-index 4 --event-ids 16855431,16855095 --max-map-tabs 3"
+    },
+    "winline_kills_totals_prematch_aurora_1w_20261005.txt": {
+      "source": "runtime/artifacts/odds-winline/kills_totals_capture_20261005T0637/16855095_map1.txt",
+      "captured_at_utc": "2026-10-05T06:37:01Z",
+      "event_id": 16855095,
+      "kind": "prematch",
+      "teams": [
+        "TEAM AURORA",
+        "1W"
+      ],
+      "command": "same as above"
+    },
+    "winline_live_no_kills_totals_maddogs_20261005.txt": {
+      "source": "runtime/artifacts/odds-winline/kills_totals_capture_20261005T0631/16864905_map1.txt",
+      "captured_at_utc": "2026-10-05T06:31Z",
+      "event_id": 16864905,
+      "kind": "live",
+      "league": "Mad Dogs League",
+      "teams": [
+        "AZURE DRAGONS",
+        "HELLSPAWN"
+      ],
+      "note": "live page: only map winner markets, no team kills totals"
+    },
+    "winline_dota2_listing_20261005.html.gz": {
+      "source": "serv1 runtime/artifacts/odds-winline/kills_totals_capture_20261005T0637/list_dota2.html (gzip -c)",
+      "captured_at_utc": "2026-10-05T06:37Z",
+      "kind": "listing",
+      "url": "https://winline.ru/stavki/sport/kibersport/dota_2",
+      "note": "page.content() of the Dota 2 listing after the Angular feed rendered ([id^=eventId-]); 7 event cards incl. BLAST Slam TEAM YANDEX-LGD GAMING (event 16855431) and TEAM AURORA-1W (16855095) prematch; checked: serv1 IP absent",
+      "command": "same as winline_kills_totals_prematch_yandex_lgd_20261005.txt"
+    }
+  }
+}
