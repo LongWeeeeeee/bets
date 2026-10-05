@@ -105,6 +105,12 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # Подтверждено логами Winline/SourceTV 14.09.2026: SourceTV пишет
     # `Inner Circle x Insanity`, а карточка Winline — `INNER CIRCLE`.
     "Inner Circle x Insanity": ("Inner Circle",),
+    # 05.10.2026, квал PR Universe: SourceTV/GC отдаёт `Blasterbl` (team_id
+    # 10291736), карточка Winline — `LEGION BLASTERBI`: строчная `l` прочитана
+    # как заглавная `I`. Прод не нашёл карточку ни разу за две карты
+    # (`match_found=false`, `t1_text=0 t2_text=1`); снимок страницы —
+    # base/tests/fixtures/winline_overview_legion_blasterbi_20261005.json.
+    "Blasterbl": ("BLASTERBI",),
 }
 
 

@@ -1,0 +1,6 @@
+{
+  "captured_at": "2026-10-05 18:36:20 MSK",
+  "source": "serv1:/root/main/runtime/winline_overview_snapshot.json (written by prod cyberscore Winline overview poll, mtime 2026-10-05 18:35:37 MSK, 524244 bytes)",
+  "capture_command": "scp -q serv1:/root/main/runtime/winline_overview_snapshot.json base/tests/fixtures/winline_overview_legion_blasterbi_20261005.json",
+  "why": "Live series PR Universe Qualifier, our names Blasterbl (team_id 10291736) vs LEGION (10291652). Winline card text: 'LEGION BLASTERBI 2карта ... 2 карта 2.02 1.70'. Prod winline_odds_history.jsonl for this series: match_found=false, miss_fingerprint t1_text=0 (Blasterbl) t2_text=1 (LEGION)."
+}

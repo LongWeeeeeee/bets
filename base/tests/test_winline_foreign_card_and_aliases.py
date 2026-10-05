@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -349,3 +350,50 @@ def test_without_that_alias_the_qualifier_card_is_not_found(monkeypatch):
 
     assert odds == []
     assert extract.reason == "no_card"
+
+
+# Живая страница 05.10.2026 18:35 MSK (снимок обзора прода, провенанс рядом с
+# фикстурой): квал PR Universe, у нас `Blasterbl` — `LEGION`, Winline подписал
+# `LEGION BLASTERBI`: строчная `l` прочитана как заглавная `I`. Прод не нашёл
+# карточку ни разу за обе карты (`match_found=false`, `promotion=not_decider`,
+# `t1_text=0 t2_text=1`). Прод разбирает DOM, поэтому и тест идёт через html.
+def _blasterbi_page():
+    path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "winline_overview_legion_blasterbi_20261005.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _dom_odds(page, team1: str, team2: str, map_num: int):
+    extract = bk._extract_winline_current_map_winner(
+        page["text"], team1, team2, forced_map_num=map_num, html=page["html"]
+    )
+    return list(extract.odds or []), extract
+
+
+def test_bookmaker_l_read_as_capital_i_is_found():
+    """У нас `Blasterbl`, на странице `BLASTERBI` — та же команда, кэфы 2-й карты."""
+    page = _blasterbi_page()
+
+    odds, extract = _dom_odds(page, "Blasterbl", "LEGION", 2)
+
+    assert odds == [1.70, 2.02], f"карточка BLASTERBI не найдена: {extract.reason!r}"
+    assert odds != [1.22, 3.50], "это рынок «Матч», а не 2-й карты"
+    assert extract.map_num == 2
+
+    mirrored, _ = _dom_odds(page, "LEGION", "Blasterbl", 2)
+    assert mirrored == [2.02, 1.70]
+    # Поллер сверяет имена карточки с нашими тем же справочником.
+    assert _teams_equivalent("Blasterbl", "BLASTERBI")
+
+
+def test_without_that_alias_blasterbi_card_is_not_found(monkeypatch):
+    """Контроль фикстуры: без справочника — ровно провал прода."""
+    monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+
+    odds, extract = _dom_odds(_blasterbi_page(), "Blasterbl", "LEGION", 2)
+
+    assert odds == []
+    assert "promotion=not_decider" in (extract.miss_fingerprint or "")
