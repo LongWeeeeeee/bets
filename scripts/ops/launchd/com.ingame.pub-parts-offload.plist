@@ -7,7 +7,8 @@
     <!-- Daily 06:40 local: move finished pub-corpus parts serv1 -> Mac, then free them on serv1.
          Source: scripts/ops/pub_parts_offload.sh (+ .py). Design: docs/SERVER_LAYOUT.md (pub-corpus row).
          Fail closed: any failed check aborts, nothing is deleted on serv1, the admin gets a Telegram
-         message; exit 3 = a sweep holds serv1's pub_recrawl.lock (skipped, retried tomorrow).
+         message; exit 3 = skipped, retried tomorrow: a sweep holds serv1's pub_recrawl.lock, or a
+         local dict build (explore_database.py / rebuild_dicts.sh / build_driver.py) reads the Mac corpus.
          TEMPLATE - NOT installed. Install: cp to ~/Library/LaunchAgents/ and
          launchctl bootstrap gui/$(id -u) <plist>. Needs /bin/bash in Full Disk Access (TCC, as for
          the other ~/Documents jobs) and a non-interactive ssh key for `ssh serv1`.
