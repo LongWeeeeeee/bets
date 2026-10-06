@@ -148,6 +148,11 @@ def main() -> int:
         M._save_visited_teams(str(visited_path), visited - set(seeds))
         try:
             M.get_pros(max_waves=1)
+            try:
+                from backfill_by_id import backfill_by_id
+                backfill_by_id(since=window_from, corpus_dir=corpus, M=M)
+            except Exception as exc:
+                say(f"ВНИМАНИЕ: id-backfill не завершён: {exc}")
         finally:
             # Восстанавливаем ВСЕГДА: обрыв на середине волны не должен оставить
             # 625 команд «неопрошенными» — следующий обычный get_pros() тогда

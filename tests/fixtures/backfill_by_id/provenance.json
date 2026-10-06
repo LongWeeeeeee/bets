@@ -1,0 +1,43 @@
+{
+  "capture_date_utc": "2026-10-05T07:35:20.595551+00:00",
+  "capture_command": "/Users/alex/Documents/ingame/venv_catboost/bin/python3 tests/fixtures/backfill_by_id/capture.py",
+  "stratz_query": "query { m8991024043: match(id: 8991024043) { \nid\ndidRadiantWin\ntowerDeaths {\ntime\nisRadiant\nnpcId\n}\nbottomLaneOutcome\ntopLaneOutcome\nmidLaneOutcome\nwinRates\nfirstBloodTime\naverageImp\nregionId\nradiantTeam {\nname\nid\n}\ndireTeam {\nname\nid\n}\nstartDateTime\ndurationSeconds\nleagueId\nseries {\nid\ntype\n}\ndireKills\nradiantKills\nradiantNetworthLeads\nradiantExperienceLeads\nplayers {\nposition\nisRadiant\nkills\nassists\nnumDenies\nnumLastHits\ngoldPerMinute\nnetworth\nexperiencePerMinute\nlevel\nheroDamage\nheroHealing\ntowerDamage\nitem0Id\nitem1Id\nitem2Id\nitem3Id\nitem4Id\nitem5Id\nbackpack0Id\nbackpack1Id\nbackpack2Id\nheroId\nneutral0Id\ninvisibleSeconds\ndotaPlusHeroXp\nimp\ndeaths\nintentionalFeeding\nsteamAccount {\nid\nsmurfFlag\nisAnonymous\n}\n}\n } m9010162791: match(id: 9010162791) { \nid\ndidRadiantWin\ntowerDeaths {\ntime\nisRadiant\nnpcId\n}\nbottomLaneOutcome\ntopLaneOutcome\nmidLaneOutcome\nwinRates\nfirstBloodTime\naverageImp\nregionId\nradiantTeam {\nname\nid\n}\ndireTeam {\nname\nid\n}\nstartDateTime\ndurationSeconds\nleagueId\nseries {\nid\ntype\n}\ndireKills\nradiantKills\nradiantNetworthLeads\nradiantExperienceLeads\nplayers {\nposition\nisRadiant\nkills\nassists\nnumDenies\nnumLastHits\ngoldPerMinute\nnetworth\nexperiencePerMinute\nlevel\nheroDamage\nheroHealing\ntowerDamage\nitem0Id\nitem1Id\nitem2Id\nitem3Id\nitem4Id\nitem5Id\nbackpack0Id\nbackpack1Id\nbackpack2Id\nheroId\nneutral0Id\ninvisibleSeconds\ndotaPlusHeroXp\nimp\ndeaths\nintentionalFeeding\nsteamAccount {\nid\nsmurfFlag\nisAnonymous\n}\n}\n } m9021397264: match(id: 9021397264) { \nid\ndidRadiantWin\ntowerDeaths {\ntime\nisRadiant\nnpcId\n}\nbottomLaneOutcome\ntopLaneOutcome\nmidLaneOutcome\nwinRates\nfirstBloodTime\naverageImp\nregionId\nradiantTeam {\nname\nid\n}\ndireTeam {\nname\nid\n}\nstartDateTime\ndurationSeconds\nleagueId\nseries {\nid\ntype\n}\ndireKills\nradiantKills\nradiantNetworthLeads\nradiantExperienceLeads\nplayers {\nposition\nisRadiant\nkills\nassists\nnumDenies\nnumLastHits\ngoldPerMinute\nnetworth\nexperiencePerMinute\nlevel\nheroDamage\nheroHealing\ntowerDamage\nitem0Id\nitem1Id\nitem2Id\nitem3Id\nitem4Id\nitem5Id\nbackpack0Id\nbackpack1Id\nbackpack2Id\nheroId\nneutral0Id\ninvisibleSeconds\ndotaPlusHeroXp\nimp\ndeaths\nintentionalFeeding\nsteamAccount {\nid\nsmurfFlag\nisAnonymous\n}\n}\n } }",
+  "opendota": {
+    "capture_date": "2026-10-05",
+    "reproduction_command": "/Users/alex/Documents/ingame/venv_catboost/bin/python3 /Users/alex/Documents/ingame/runtime/artifacts/misc/corpus_gap_20261005/od_promatches.py",
+    "original_capture_command_verified": false,
+    "original_capture_script": "import json, time, urllib.request, datetime\nout=[]; lt=None; stop=int(datetime.datetime(2026,8,25,tzinfo=datetime.timezone.utc).timestamp())\nfor i in range(30):\n    url='https://api.opendota.com/api/proMatches' + (f'?less_than_match_id={lt}' if lt else '')\n    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'curl/8.7.1'}), timeout=40) as r: page=json.load(r)\n    if not page: break\n    out+=page; lt=min(m['match_id'] for m in page)\n    if min(m['start_time'] for m in page) < stop: break\n    time.sleep(1.1)\njson.dump(out, open(__file__.replace('.py','.json'),'w'))\nprint('pages', i+1, 'matches', len(out))\n",
+    "source": "/Users/alex/Documents/ingame/runtime/artifacts/misc/corpus_gap_20261005/od_promatches.json",
+    "source_sha256": "d30e330c5fb21eb7ca9b96db777133b630e00d841dacf684286934cf0e563be5",
+    "extraction": "Each contiguous 100-record slice is one original response page; 800 records = 8 pages."
+  },
+  "stored_part": {
+    "source": "/Users/alex/Documents/ingame/pro_heroes_data/json_parts_split_from_object/7.41e_part039.json",
+    "match_id": 8991024043,
+    "extraction": "json.load(open(part))['8991024043']",
+    "normal_id": 8990584658
+  },
+  "stratz_status": "CAPTURED",
+  "stratz_physical_calls": 1,
+  "files": {
+    "opendota_page_06.json": "99435f1e1ef9b4acd04539c4b0921c2ba6f6d791b7becdcd045df99b4bf1f437",
+    "opendota_page_07.json": "01721f71556039a0bc898ea0c150f7219127354e32a3ca754073ddf10431f803",
+    "stratz_response.json": "6c1350d9b0dd88d1e2022fe2d633e51d093e7319a21bb2dad8370a37358a5632",
+    "opendota_page_00.json": "759614fa8090d6d060fb5f055c61dfeb8b5b4628becc5a6ce0c16b1d485d717e",
+    "opendota_page_01.json": "b9b0bdcf956123ef5a6b42b80b29133e9c2e11003805164ede324ddec2ea3eb1",
+    "opendota_page_02.json": "f63f2bb557902450c8139f1de3f9280332090b996cea6558a8236a9aca0c430f",
+    "stored_c.json": "c2dcd7b8608e003c2b818977314117e5b28fb2a3aa2da9532191dfd6de72395b",
+    "stored_normal.json": "90c9b581e7850df75c5a0ff112f581f6296623070e5c8d783205c5dcf9402298",
+    "opendota_page_03.json": "84164455e21c3f4a38e09faaec723c4ea2928723ae2df6b9fbebc6330b437d7d",
+    "opendota_page_04.json": "55f4cacd7a56c11254299909836f55ee8258846e5c1efed053014d108d08332c",
+    "opendota_page_05.json": "f86703bb81ea8af87ba288b5ad2e4ed863ec9f2d2563c4a7ae25f80f767885ff",
+    "stratz_520_reconstructed.json": "fb3869932b1e91d5b0a23252e26f4c427951712e4b8301897f9f442b7e52d5c9"
+  },
+  "reconstructed_responses": {
+    "stratz_520_reconstructed.json": {
+      "source_log": "/private/tmp/claude-501/-Users-alex-Documents-ingame/973c9f63-3334-4f26-9ef2-7bfcfecc9d98/scratchpad/dryrun.out",
+      "kind": "Reconstruction of a logged response, not a captured complete body.",
+      "extraction": "type/title/status copied from logged response; detail retains only the visible prefix because the log truncates the body."
+    }
+  }
+}
