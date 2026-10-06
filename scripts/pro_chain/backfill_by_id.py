@@ -14,6 +14,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 from urllib.parse import urlencode
@@ -165,9 +166,38 @@ def scan_recent(corpus, since, M, now=None):
     manifest = M._load_scan_manifest(corpus)
     for cached in manifest.values():
         processed.update(int(mid) for mid in cached[2])
+    # get_pros and write_records bucket startDateTime in [start, end).
+    # An unchanged, cached part in a closed older bucket has no window maps;
+    # its IDs above still participate in deduplication. Uncached/stale parts
+    # must be read to preserve processed, even when their bucket is old.
+    old_patches = {str(name) for name, start, end in M.DOTA_PATCH_SPECS
+                   if end is not None and int(end) <= since
+                   and str(name) != M.OUTSIDE_PATCH_BUCKET}
+    # The writer resolves a start outside every patch interval (or no start)
+    # to the outside bucket (maps_research._resolve_patch_name). With
+    # gap-free intervals open to the future and since inside them, a record
+    # with since <= startDateTime cannot be stored there. Its IDs reach
+    # processed through processed_ids.txt, as in the merge's own dedup
+    # (maps_research existing_part_files never scans this bucket). Its parts
+    # are 500 MiB each: parsing them after a migration reset mtimes was the
+    # serv1 thrash of 06.10.2026.
+    spans = sorted((int(start), None if end is None else int(end))
+                   for name, start, end in M.DOTA_PATCH_SPECS)
+    outside_closed = (
+        processed_path.exists() and bool(spans) and spans[0][0] <= since
+        and spans[-1][1] is None
+        and all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1))
+        and M.OUTSIDE_PATCH_BUCKET not in {str(p[0]) for p in M.DOTA_PATCH_SPECS})
     locations, unfinished, valid = {}, set(), set()
     for path in sorted(M._corpus_json_paths(corpus, "*_part*")):
         if path.stat().st_mtime < since:
+            continue
+        part = re.fullmatch(r"(.+)_part[0-9]+\.json(?:\.gz)?", path.name)
+        cached = manifest.get(path.name)
+        if (part and part.group(1) in old_patches and cached and cached[2]
+                and cached[:2] == M._file_stamp(path)):
+            continue
+        if part and part.group(1) == M.OUTSIDE_PATCH_BUCKET and outside_closed:
             continue
         data = read_json(path)  # A corrupt part aborts rather than permits duplicates.
         if not isinstance(data, dict):

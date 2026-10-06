@@ -13,7 +13,11 @@
 `topup_pro_corpus.py` calls `backfill_by_id.py` under its existing lock and restores
 visited teams even if backfill fails. OpenDota pages back to the same `TOPUP_DAYS`
 window (default 10 days, cap 15 pages); Stratz batches use the shared proxy pool.
-Only recent parts are read. Incomplete records are replaced in their original
+Only recent parts are read; a migration that resets mtimes does not force a full
+scan: unchanged cached parts of patch buckets that ended before the window and
+the outside-patch bucket (`historical`, when the patch table is gap-free and
+open-ended) are skipped, their IDs come from the manifest/`processed_ids.txt`.
+Incomplete records are replaced in their original
 JSON/gzip part. New parsed maps use the existing patch buckets, 500 MiB rotation,
 `PRO_CORPUS_GZIP`, counters, processed-ID cache and scan manifest. Null matches
 request `retryMatchDownload` at most once per three days; the attempt date is

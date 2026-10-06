@@ -259,6 +259,177 @@ def test_old_parts_are_not_loaded(tmp_path, monkeypatch):
     assert C in unfinished and C in locations
 
 
+@pytest.mark.parametrize('compressed', [False, True])
+def test_fresh_mtimes_skip_cached_old_patch_parts(tmp_path, monkeypatch, compressed):
+    corpus, normal = tiny_corpus(tmp_path, compressed)
+    # Use the writer's table and records at both edges of the old bucket.
+    patch, start, end = next(p for p in reversed(M.DOTA_PATCH_SPECS)
+                             if p[2] is not None and p[2] <= SINCE)
+    suffix = '.json.gz' if compressed else '.json'
+    old_paths, manifest = set(), {}
+    for index, timestamp in enumerate((start, end - 1), 1):
+        record = dict(normal, id=C - index, startDateTime=timestamp)
+        if index == 2:
+            record['players'] = []  # An old unfinished match is also irrelevant.
+        path = corpus / ('%s_part%03d%s' % (patch, index, suffix))
+        payload = M.orjson.dumps({str(record['id']): record})
+        path.write_bytes(gzip.compress(payload) if compressed else payload)
+        old_paths.add(path)
+        manifest[path.name] = [0, 0, [record['id']]]
+    # Model gz migration: all parts have the same fresh mtime.
+    for path in parts(corpus):
+        os.utime(path, (NOW, NOW))
+        if path in old_paths:
+            manifest[path.name][:2] = M._file_stamp(path)
+    M._save_scan_manifest(corpus, manifest)
+    before = snapshot(corpus)
+    opened, original_read = [], B.read_json
+
+    def read(path):
+        if path in parts(corpus):
+            opened.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(B, 'read_json', read)
+    # Removing only the cache forces the parse-all control on the same files.
+    with monkeypatch.context() as control:
+        control.setattr(M, '_load_scan_manifest', lambda corpus: {})
+        expected = B.scan_recent(corpus, SINCE, M, NOW)
+    assert set(opened) == set(parts(corpus))
+    opened.clear()
+    processed, actual_manifest, locations, unfinished = B.scan_recent(corpus, SINCE, M, NOW)
+    assert processed == expected[0]
+    assert actual_manifest == expected[1]
+    window_ids = {C, normal['id']}
+    assert {mid: loc for mid, loc in locations.items() if mid in window_ids} == {
+        mid: loc for mid, loc in expected[2].items() if mid in window_ids}
+    assert unfinished == expected[3] == {C}
+    assert snapshot(corpus) == before
+    assert set(opened) == set(parts(corpus)) - old_paths
+
+
+@pytest.mark.parametrize('cache_state', ['missing', 'size', 'mtime', 'empty'])
+def test_old_patch_without_usable_cache_is_parsed(tmp_path, monkeypatch, cache_state):
+    corpus, normal = tiny_corpus(tmp_path)
+    patch, start, _ = next(p for p in reversed(M.DOTA_PATCH_SPECS)
+                          if p[2] is not None and p[2] <= SINCE)
+    path = corpus / ('%s_part001.json.gz' % patch)
+    record = dict(normal, id=C - 1, startDateTime=start)
+    path.write_bytes(gzip.compress(M.orjson.dumps({str(record['id']): record})))
+    os.utime(path, (NOW, NOW))
+    cached = M._file_stamp(path) + [[record['id']]]
+    if cache_state == 'size':
+        cached[0] += 1
+    elif cache_state == 'mtime':
+        cached[1] -= 1
+    elif cache_state == 'empty':
+        cached[2] = []
+    M._save_scan_manifest(corpus, {} if cache_state == 'missing' else {path.name: cached})
+    opened, original_read = [], B.read_json
+
+    def read(path):
+        opened.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(B, 'read_json', read)
+    processed, manifest, locations, _ = B.scan_recent(corpus, SINCE, M, NOW)
+    assert path in opened
+    assert record['id'] in processed and locations[record['id']] == [(path, str(record['id']))]
+    assert manifest[path.name] == M._file_stamp(path) + [[record['id']]]
+
+
+@pytest.mark.parametrize('name', ['odd_part001.json.gz',
+                                  '7.41d_part001_extra.json', '7.41e_part041.json',
+                                  'outside_bucket'])
+def test_unbounded_or_odd_patch_names_are_parsed(tmp_path, monkeypatch, name):
+    corpus, _ = tiny_corpus(tmp_path)
+    if name == 'outside_bucket':
+        patch = next(p[0] for p in reversed(M.DOTA_PATCH_SPECS)
+                     if p[2] is not None and p[2] <= SINCE)
+        monkeypatch.setattr(M, 'OUTSIDE_PATCH_BUCKET', patch)
+        name = '%s_part001.json' % patch
+    path = corpus / name
+    payload = M.orjson.dumps({str(C): fixture('stored_c.json')})
+    path.write_bytes(gzip.compress(payload) if path.suffix == '.gz' else payload)
+    os.utime(path, (NOW, NOW))
+    M._save_scan_manifest(corpus, {name: M._file_stamp(path) + [[C]]})
+    # Keep only this part to check a window repair in an unbounded/unknown bucket.
+    monkeypatch.setattr(M, '_corpus_json_paths', lambda *args: [path])
+    _, _, locations, unfinished = B.scan_recent(corpus, SINCE, M, NOW)
+    assert locations[C] == [(path, str(C))] and unfinished == {C}
+
+
+@pytest.mark.parametrize('state', ['closed', 'gap', 'open_end', 'since_before_first',
+                                   'no_processed_ids', 'bucket_is_patch'])
+def test_outside_bucket_is_skipped_only_when_no_window_start_can_land_there(
+        tmp_path, monkeypatch, state):
+    # serv1 06.10.2026: 29 historical parts of ~500 MiB JSON each had the
+    # migration mtime, so the scan parsed all of them and the box thrashed.
+    corpus, normal = tiny_corpus(tmp_path)
+    specs = list(M.DOTA_PATCH_SPECS)
+    since = SINCE
+    if state == 'gap':
+        name, start, end = specs[0]
+        specs[0] = (name, start, end - 1)
+    elif state == 'open_end':
+        name, start, _ = specs[-1]
+        specs[-1] = (name, start, NOW + 86400)
+    elif state == 'since_before_first':
+        since = min(int(p[1]) for p in specs) - 1
+    elif state == 'no_processed_ids':
+        (corpus / 'processed_ids.txt').unlink()
+    elif state == 'bucket_is_patch':
+        monkeypatch.setattr(M, 'OUTSIDE_PATCH_BUCKET', str(specs[-1][0]))
+    monkeypatch.setattr(M, 'DOTA_PATCH_SPECS', tuple(specs))
+    old_id = C - 7
+    record = dict(normal, id=old_id, startDateTime=min(int(p[1]) for p in specs) - 1)
+    path = corpus / ('%s_part001.json' % M.OUTSIDE_PATCH_BUCKET)
+    path.write_bytes(M.orjson.dumps({str(old_id): record}))
+    for each in parts(corpus):
+        os.utime(each, (NOW, NOW))
+    stored = set(B.read_json(corpus / 'processed_ids.txt')) if state != 'no_processed_ids' else set()
+    opened, original_read = [], B.read_json
+
+    def read(p):
+        opened.append(p)
+        return original_read(p)
+
+    monkeypatch.setattr(B, 'read_json', read)
+    processed, manifest, locations, unfinished = B.scan_recent(corpus, since, M, NOW)
+    assert C in unfinished and C in locations and stored <= processed
+    if state == 'closed':
+        assert path not in opened and old_id not in locations and path.name not in manifest
+    else:
+        assert path in opened and locations[old_id] == [(path, str(old_id))]
+        assert old_id in processed
+
+
+@pytest.mark.parametrize('since_offset', [-1, 0])
+def test_patch_end_exclusive_boundary(tmp_path, monkeypatch, since_offset):
+    corpus, normal = tiny_corpus(tmp_path)
+    patch, _, end = next(p for p in reversed(M.DOTA_PATCH_SPECS)
+                         if p[2] is not None and p[2] <= SINCE)
+    path = corpus / ('%s_part001.json' % patch)
+    record = dict(normal, id=C, startDateTime=end - 1, players=[])
+    path.write_bytes(M.orjson.dumps({str(C): record}))
+    os.utime(path, (NOW, NOW))
+    M._save_scan_manifest(corpus, {path.name: M._file_stamp(path) + [[C]]})
+    monkeypatch.setattr(M, '_corpus_json_paths', lambda *args: [path])
+    opened, original_read = [], B.read_json
+
+    def read(path):
+        opened.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(B, 'read_json', read)
+    processed, _, locations, unfinished = B.scan_recent(corpus, end + since_offset, M, NOW)
+    assert C in processed
+    if since_offset == 0:
+        assert path not in opened and locations == {} and unfinished == set()
+    else:
+        assert path in opened and locations[C] == [(path, str(C))] and unfinished == {C}
+
+
 @pytest.mark.parametrize('status', [429, 522])
 def test_http_stop_escapes_pool_retry(monkeypatch, status):
     calls = []
