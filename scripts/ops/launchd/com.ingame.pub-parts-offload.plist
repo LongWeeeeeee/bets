@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.pub-parts-offload</string>
+    <!-- Daily 06:40 local: move finished pub-corpus parts serv1 -> Mac, then free them on serv1.
+         Source: scripts/ops/pub_parts_offload.sh (+ .py). Design: docs/SERVER_LAYOUT.md (pub-corpus row).
+         Fail closed: any failed check aborts, nothing is deleted on serv1, the admin gets a Telegram
+         message; exit 3 = a sweep holds serv1's pub_recrawl.lock (skipped, retried tomorrow).
+         TEMPLATE - NOT installed. Install: cp to ~/Library/LaunchAgents/ and
+         launchctl bootstrap gui/$(id -u) <plist>. Needs /bin/bash in Full Disk Access (TCC, as for
+         the other ~/Documents jobs) and a non-interactive ssh key for `ssh serv1`.
+         One-off run: launchctl kickstart gui/$(id -u)/com.ingame.pub-parts-offload
+         Remove:      launchctl bootout gui/$(id -u)/com.ingame.pub-parts-offload -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/Documents/ingame/scripts/ops/pub_parts_offload.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>40</integer>
+    </dict>
+    <!-- No RunAtLoad: installing the job must not by itself start a transfer/delete. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/ingame_pub_parts_offload.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_pub_parts_offload.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/alex/Documents/ingame</string>
+</dict>
+</plist>
