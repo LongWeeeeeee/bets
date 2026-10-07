@@ -59,6 +59,10 @@ def _cfg(**env):
     # Underdog kills_window is OFF by default since 05.10.2026 (card ingame-h9b5);
     # these tests exercise that path, so enable it explicitly.
     env.setdefault("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
+    # 07.10.2026 NW gate on win_late_after_wait is a different gate; the captured
+    # underdog_late_after_wait_delivered tick trails by 13227 NW, so switch it off here
+    # (it is tested in test_ml_dispatch_late_nw_gate.py).
+    env.setdefault("ML_DISPATCH_LATE_WAIT_NW_GATE", "0")
     return md.Config.from_env(env)
 
 

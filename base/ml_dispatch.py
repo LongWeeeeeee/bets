@@ -163,6 +163,14 @@ branch (owner rule 4.4): the bet on ``B`` must still fire once the wait
 deadline is reached even under a configured cap; the cap only ever applies
 to the plain (non-conflict) win path.
 
+NW gate on the wait branch (owner decision 07.10.2026, research E-357): after
+the deadline the ``win_late_after_wait`` bet on ``B`` is skipped
+(``Skipped(..., reason="late_conflict_nw_gate")``) while ``B`` trails by >=
+``ML_DISPATCH_LATE_WAIT_NW_GATE`` net worth (default 11000; ``<= 0`` disables,
+which is the rollback) at the tick; it is re-evaluated every tick, so the bet
+fires later if the deficit shrinks below the gate. A missing/non-finite
+``radiant_networth_lead`` keeps the bet and adds ``nw=unknown`` to its reasons.
+
 Sub-case 4.3 (``all`` also stars ``A``, i.e. early+All agree against a lone
 starred Late for ``B``): additionally fires ``kills_total``/``kills_window``
 decisions for ``A`` immediately (``timing="now"``, independent of ELO or
@@ -299,6 +307,7 @@ REASON_DEDUP = "dedup"
 REASON_MODEL_MISSING = "model_missing"
 REASON_TOO_LATE = "too_late"
 REASON_LATE_CONFLICT_WAIT = "late_conflict_wait"
+REASON_LATE_CONFLICT_NW_GATE = "late_conflict_nw_gate"
 REASON_KILLS30_MISSING = "kills30_missing"
 REASON_KILLS30_BELOW = "kills30_below_threshold"
 REASON_EARLY_SOLO_BLOCKED = "early_solo_blocked"
@@ -464,6 +473,10 @@ class Config:
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
     late_wait_seconds: float = 1860.0
+    # Owner decision 07.10.2026 (E-357): skip win_late_after_wait while the Late side
+    # trails by >= this net worth at the tick; <= 0 disables. Dataclass default ==
+    # ``from_env`` default (production config).
+    late_wait_nw_gate: float = 11000.0
     kills_total_gate_enabled: bool = True
     kills_total_gate_favorite: float = 0.60
     kills_total_gate_other: float = 0.70
@@ -541,6 +554,7 @@ class Config:
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
             late_wait_seconds=_float("ML_DISPATCH_LATE_WAIT_SECONDS", 1860.0),
+            late_wait_nw_gate=_float("ML_DISPATCH_LATE_WAIT_NW_GATE", 11000.0),
             kills_total_gate_enabled=str(env.get("ML_DISPATCH_KILLS_TOTAL_GATE", "1")) == "1",
             kills_total_gate_favorite=_float("ML_DISPATCH_KILLS_TOTAL_GATE_FAVORITE", 0.60),
             kills_total_gate_other=_float("ML_DISPATCH_KILLS_TOTAL_GATE_OTHER", 0.70),
@@ -838,6 +852,21 @@ def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
     return ("Dire" if diff > 0 else "Radiant"), diff
 
 
+def _late_side_nw_deficit(ctx: Ctx, side: str) -> Optional[float]:
+    """Net worth ``side`` trails by at this tick (> 0 = behind), ``None`` if unknown.
+
+    ``ctx.radiant_networth_lead`` > 0 means Radiant is ahead, so the Dire deficit
+    is ``+lead`` and the Radiant deficit is ``-lead``.
+    """
+    try:
+        lead = float(ctx.radiant_networth_lead)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(lead):
+        return None
+    return -lead if side == "Radiant" else lead
+
+
 def _evaluate_win_late_conflict(
     ctx: Ctx, cfg: Config, late_conflict: LateConflict,
 ) -> Tuple[List[Decision], List[Skipped]]:
@@ -873,9 +902,19 @@ def _evaluate_win_late_conflict(
         models_against = models_against + ["all"]
         reasons = reasons + ["tiebreak_ignored_all_for_A"]
 
+    nw_gate_active = math.isfinite(cfg.late_wait_nw_gate) and cfg.late_wait_nw_gate > 0
+    nw_deficit = _late_side_nw_deficit(ctx, side_b) if nw_gate_active else None
+    if nw_gate_active and nw_deficit is None:
+        reasons = reasons + ["nw=unknown"]
+
     key = _dedup_key(ctx, "win", side_b)
     if ctx.already_sent is not None and key in ctx.already_sent:
         skipped.append(Skipped("win", side_b, REASON_DEDUP, f"key={key} already sent"))
+    elif nw_deficit is not None and nw_deficit >= cfg.late_wait_nw_gate:
+        skipped.append(Skipped(
+            "win", side_b, REASON_LATE_CONFLICT_NW_GATE,
+            f"{side_b} nw_deficit={nw_deficit:.0f} >= gate={cfg.late_wait_nw_gate:.0f}; {detail}",
+        ))
     elif (against_elo := _win_against_elo(ctx, cfg, side_b)):
         skipped.append(Skipped("win", side_b, REASON_WIN_AGAINST_ELO,
                                f"{against_elo}; {detail}"))

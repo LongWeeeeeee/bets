@@ -358,7 +358,8 @@ Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): пор
                    underdog U/F по ELO-диффу (порог ML_DISPATCH_UNDERDOG_MIN_DIFF),
                    _detect_late_conflict(ctx, cfg) (13.09.2026, один раз за тик):
                    ранний★ A vs Late/All★ B -> win-маркет ждёт до 31-й минуты
-                   (ML_DISPATCH_LATE_WAIT_SECONDS), затем ставка на B; sub-case
+                   (ML_DISPATCH_LATE_WAIT_SECONDS), затем ставка на B (если B не отстаёт по NW
+                   на ≥ ML_DISPATCH_LATE_WAIT_NW_GATE=11000, иначе late_conflict_nw_gate); sub-case
                    "All★ тоже за A" (4.3) добавляет немедленные kills-решения
                    за A; без конфликта — win-маркет как раньше (поддержка/вето
                    по правилу «правка 0»), kills-маркеты (только при наличии U),
@@ -473,7 +474,9 @@ All подтверждают *другую* сторону `B`, немедлен
 решение ни на одну сторону не выносится, пока `game_time` не достигнет 31-й
 минуты (`ML_DISPATCH_LATE_WAIT_SECONDS=1860`), затем ставка уходит на `B`
 (`rule="win_late_after_wait"`), приоритетнее `ctx.lane` и
-`ML_DISPATCH_TIMING_SECONDS`. Sub-case 4.3 (All тоже звездит `A`, Late один
+`ML_DISPATCH_TIMING_SECONDS`; с 07.10.2026 (E-357) ставка не выносится
+(`late_conflict_nw_gate`), пока `B` отстаёт по NW на тике на ≥
+`ML_DISPATCH_LATE_WAIT_NW_GATE=11000` (`<=0` — откат). Sub-case 4.3 (All тоже звездит `A`, Late один
 за `B`) дополнительно даёт немедленные `kills_total`/`kills_window` за `A`
 (`rule="kills_late_conflict_early_side"`), независимо от ELO — офлайн-данные
 E-288 после 31 мин фаворитят `A` (57.9%, n=38), но владелец решил ставить win

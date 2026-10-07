@@ -1932,6 +1932,7 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
 | `ML_DISPATCH_MAX_GAME_TIME` | не задан (без потолка) | если задан и `game_time` > потолка, win-маркет пропускается с `reason=too_late`; kills не затронуты; НЕ применяется к веткам ожидания ниже (правило 4.4) |
 | `ML_DISPATCH_LATE_CONFLICT_MODE` | `wait` | `wait` — новые ветки ожидания 13.09.2026 (см. ниже); `veto` — точное поведение до 13.09.2026 (откат без деплоя, systemd drop-in); иное значение → `wait` |
 | `ML_DISPATCH_LATE_WAIT_SECONDS` | `1860.0` | дедлайн ожидания (31-я минута) для веток ниже |
+| `ML_DISPATCH_LATE_WAIT_NW_GATE` | `11000.0` | owner 07.10.2026 (E-357): с дедлайна ставка `win_late_after_wait` на Late-сторону не выносится (`Skipped(reason="late_conflict_nw_gate")`), пока она отстаёт по NW на тике на ≥ порога (`+radiant_networth_lead` для Dire, `-` для Radiant); пересчёт на каждом тике; NW неизвестен — ставка как раньше (`reasons` += `nw=unknown`); `<=0` выключает (откат) |
 | `ML_DISPATCH_EARLY_SOLO_BLOCK` | `1` | E-291, решение владельца 15.09.2026: одиночная ★ Early NW/Early Win (без `all`/`late` в `models_for`) не даёт win-Decision, а даёт `Skipped(reason="early_solo_blocked")` — офлайн-WR 50-57%, хуже ELO; пары «ранняя + all/late» не затронуты; `=0`/`false`/`off` — откат к до-E-291 поведению |
 | `ML_DISPATCH_KILLS_EARLY` | `1` | E-301, решение владельца 19.09.2026: второй независимый путь `kills_total` (`_evaluate_kills_early`, после гейта E-281): Early Win ★ за `A` (Early NW против не мешает) либо Early NW ★ за `A` при молчащем Early Win, и E-281 P(A ≥30) ≥ `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` → `kills_total` на `A` независимо от ELO/андердога и Late/All; rule `kills_early_win_kills30` / `kills_early_nw_kills30`, `expected_wr` = P(A ≥30). `=0`/`false`/`off` — поведение до 19.09 |
 | `ML_DISPATCH_KILLS_EARLY_MIN_KILLS30` | `0.60` | порог E-281 P(сторона ≥30) для пути `kills_early` (включительно); без числа — fail-closed `kills30_missing` |
@@ -2019,6 +2020,9 @@ Late, All, ML Laning). Модуль ничего не импортирует и�
   `models_for` = какие из `late`/`all` звездят за `B`, `timing="now"`,
   независимо от `ctx.lane` и `ML_DISPATCH_TIMING_SECONDS` (ожидание дедлайна
   приоритетнее обоих).
+  С 07.10.2026 NW-гейт: пока `B` отстаёт по NW на тике на ≥ `ML_DISPATCH_LATE_WAIT_NW_GATE`
+  (11000), вместо решения — `Skipped(reason="late_conflict_nw_gate")`; порядок: dedup, NW-гейт,
+  against-ELO.
 - Правило 4.3 (subcase `"b"`: All звездит за `A`, Late один звездит за `B`):
   то же ожидание → ставка на `B` с дедлайна (`reasons` содержит
   `tiebreak_ignored_all_for_A`), ПЛЮС немедленно (`timing="now"`, с первого
