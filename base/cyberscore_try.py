@@ -29496,12 +29496,47 @@ def _register_completed_live_map_for_elo(
     return result if isinstance(result, dict) else None
 
 
+def _fill_missing_duration_from_opendota(
+    looked: Any,
+    pending_map: Any,
+    fallback: Optional[Dict[str, Any]],
+) -> Any:
+    """Дополнить ответ кэша Stratz длительностью из OpenDota, только где её нет.
+
+    `looked` — результат `_live_elo_winner_lookup(..., with_duration=True)`:
+    dict, bool или None. Длительность Stratz, если она есть, не трогается.
+    Применяется лишь к отложенной карте с тем же match_id, что у ответа
+    OpenDota, и лишь когда исход Stratz (если он известен) совпадает с
+    исходом OpenDota — иначе длительность чужой карты исказила бы рейтинг.
+    """
+    if not isinstance(fallback, dict):
+        return looked
+    od_duration = _coerce_int(fallback.get("duration_seconds"))
+    od_match_id = _coerce_int(fallback.get("match_id"))
+    if od_duration <= 0 or od_match_id <= 0 or not isinstance(fallback.get("radiant_win"), bool):
+        return looked
+    record = pending_map.get("match_record") if isinstance(pending_map, dict) else None
+    pending_match_id = _coerce_int((record or {}).get("match_id")) if isinstance(record, dict) else 0
+    if pending_match_id != od_match_id:
+        return looked
+    od_radiant_win = bool(fallback["radiant_win"])
+    if isinstance(looked, dict) and isinstance(looked.get("radiant_won"), bool):
+        if _coerce_int(looked.get("duration_seconds")) > 0 or looked["radiant_won"] != od_radiant_win:
+            return looked
+        return {"radiant_won": od_radiant_win, "duration_seconds": od_duration}
+    if isinstance(looked, bool):
+        if looked != od_radiant_win:
+            return looked
+    return {"radiant_won": od_radiant_win, "duration_seconds": od_duration}
+
+
 def _finalize_finished_live_series_for_elo(
     *,
     series_key: Any,
     series_url: str,
     first_team_score: Any,
     second_team_score: Any,
+    duration_fallback: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     if (
         not ELO_LIVE_SNAPSHOT_AVAILABLE
@@ -29518,6 +29553,14 @@ def _finalize_finished_live_series_for_elo(
     if first_score < 0 or second_score < 0:
         return None
 
+    def _score_duration_lookup(key, pending):
+        looked = _live_elo_winner_lookup(key, pending, with_duration=True, cache_only=True)
+        try:
+            return _fill_missing_duration_from_opendota(looked, pending, duration_fallback)
+        except Exception as exc:  # the fallback must never cost the Stratz result
+            logger.warning("orphan live ELO: OpenDota duration fallback failed: %s", exc)
+            return looked
+
     try:
         result = _elo_live_finalize_series_from_scores(
             series_key=normalized_series_key,
@@ -29526,8 +29569,7 @@ def _finalize_finished_live_series_for_elo(
             second_team_score=second_score,
             winner_lookup=lambda key, pending: _live_elo_winner_lookup(
                 key, pending, with_duration=True),
-            score_duration_lookup=lambda key, pending: _live_elo_winner_lookup(
-                key, pending, with_duration=True, cache_only=True),
+            score_duration_lookup=_score_duration_lookup,
         )
     except Exception:
         logger.exception("Failed to finalize live ELO series context for %s", normalized_series_key)
@@ -29757,9 +29799,47 @@ def _sourcetv_match_id_from_series_url(series_url: str) -> Optional[int]:
     return int(id_match.group(1)) if id_match else None
 
 
+_OPENDOTA_ORPHAN_LOG_LAST: Dict[Tuple[int, str], float] = {}
+_OPENDOTA_ORPHAN_LOG_LOCK = threading.Lock()
+_OPENDOTA_ORPHAN_LOG_EVERY_SECONDS = 600.0
+# Keys older than the throttle window carry no information; pruning them above
+# this size keeps the dict bounded in a process that runs for weeks.
+_OPENDOTA_ORPHAN_LOG_MAX_KEYS = 512
+
+
+def _log_opendota_orphan_lookup_failure(match_id: Any, reason: str) -> None:
+    """Причина отказа OpenDota на подборе сирот — в лог, раз в 10 минут на пару.
+
+    Раньше любой не-200 молча давал None: квота 429 и «карта ещё не разобрана»
+    (404) выглядели одинаково, и карта без Stratz оставалась без исхода и без
+    длительности, не оставив следа в логе. Подбор идёт каждый цикл, поэтому
+    повтор одной и той же причины по одному match_id глушится.
+    """
+    try:
+        key = (int(match_id), str(reason))
+    except (TypeError, ValueError):
+        key = (0, str(reason))
+    now = time.time()
+    with _OPENDOTA_ORPHAN_LOG_LOCK:
+        last = _OPENDOTA_ORPHAN_LOG_LAST.get(key)
+        if last is not None and now - last < _OPENDOTA_ORPHAN_LOG_EVERY_SECONDS:
+            return
+        if len(_OPENDOTA_ORPHAN_LOG_LAST) >= _OPENDOTA_ORPHAN_LOG_MAX_KEYS:
+            for stale_key, stamp in list(_OPENDOTA_ORPHAN_LOG_LAST.items()):
+                if now - stamp >= _OPENDOTA_ORPHAN_LOG_EVERY_SECONDS:
+                    del _OPENDOTA_ORPHAN_LOG_LAST[stale_key]
+            if len(_OPENDOTA_ORPHAN_LOG_LAST) >= _OPENDOTA_ORPHAN_LOG_MAX_KEYS:
+                _OPENDOTA_ORPHAN_LOG_LAST.clear()
+        _OPENDOTA_ORPHAN_LOG_LAST[key] = now
+    logger.warning(
+        "orphan live ELO: OpenDota lookup for match %s failed: %s",
+        match_id, reason)
+
+
 def _fetch_finished_sourcetv_series_scores(
     match_id: int,
     previous_scores: Optional[Dict[str, Any]],
+    result_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[Tuple[int, int]]:
     """Счёт серии после завершённой sourcetv-карты: исход карты из OpenDota.
 
@@ -29767,23 +29847,44 @@ def _fetch_finished_sourcetv_series_scores(
     победителя = first при radiant_win. HTTP к dltv.org для псевдо-URL даёт
     только 404-ретраи — поэтому одна быстрая попытка в OpenDota без прокси.
     Возвращает None, пока матч ещё не появился в OpenDota (повтор в следующем
-    цикле sweep'а).
+    цикле sweep'а); причина отказа (HTTP-статус) пишется в лог.
+
+    `result_out`, если передан, получает `radiant_win` и `duration_seconds`
+    (поле `duration` того же ответа; None, если его нет) — длительность нужна
+    варианту A для карт, которых нет в кэше Stratz. Возврат не меняется.
+    Ответ с чужим `match_id` отвергается целиком; `result_out` заполняется
+    только когда `match_id` ответа равен запрошенному.
     """
     try:
         resp = requests.get(
             f"https://api.opendota.com/api/matches/{int(match_id)}",
             timeout=10,
         )
-    except Exception:
+    except Exception as exc:
+        _log_opendota_orphan_lookup_failure(match_id, f"request error {type(exc).__name__}")
         return None
     if resp.status_code != 200:
+        _log_opendota_orphan_lookup_failure(match_id, f"HTTP {resp.status_code}")
         return None
     try:
-        radiant_win = resp.json().get("radiant_win")
+        payload = resp.json()
+        radiant_win = payload.get("radiant_win")
     except Exception:
+        _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 with unreadable JSON")
         return None
     if radiant_win is None:
+        _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 without radiant_win (not parsed yet)")
         return None
+    payload_match_id = _coerce_int(payload.get("match_id"))
+    if payload_match_id > 0 and payload_match_id != int(match_id):
+        _log_opendota_orphan_lookup_failure(
+            match_id, f"HTTP 200 for another match_id {payload_match_id}")
+        return None
+    if result_out is not None and payload_match_id == int(match_id):
+        od_duration = _coerce_int(payload.get("duration"))
+        result_out["radiant_win"] = bool(radiant_win)
+        result_out["duration_seconds"] = od_duration if od_duration > 0 else None
+        result_out["match_id"] = int(match_id)
     prev_first = max(_coerce_int((previous_scores or {}).get("first")), 0)
     prev_second = max(_coerce_int((previous_scores or {}).get("second")), 0)
     if radiant_win:
@@ -29854,9 +29955,10 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
             _coerce_int(pending_map.get("match_id"))
             or _sourcetv_match_id_from_series_url(series_url)
         )
+        opendota_result: Dict[str, Any] = {}
         if _sourcetv_match_id_from_series_url(series_url):
             finished_scores = _fetch_finished_sourcetv_series_scores(
-                sourcetv_match_id, previous_scores
+                sourcetv_match_id, previous_scores, result_out=opendota_result
             )
         else:
             finished_scores = _fetch_finished_series_scores_from_page(series_url)
@@ -29888,11 +29990,18 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
         if winner_slot is None:
             continue
 
+        finalize_kwargs: Dict[str, Any] = {}
+        if opendota_result.get("duration_seconds"):
+            # Тот же ответ OpenDota, что дал исход, несёт и длительность. Без неё
+            # карта, которой нет в кэше Stratz, применялась с m = 1.0 (25 из 41
+            # живых карт в леджере 06.10.2026, все 9 сиротских).
+            finalize_kwargs["duration_fallback"] = dict(opendota_result)
         result = _finalize_finished_live_series_for_elo(
             series_key=series_key,
             series_url=series_url,
             first_team_score=current_scores["first"],
             second_team_score=current_scores["second"],
+            **finalize_kwargs,
         )
         if not isinstance(result, dict):
             continue
