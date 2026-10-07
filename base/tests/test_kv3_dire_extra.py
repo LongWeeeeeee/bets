@@ -157,6 +157,7 @@ def test_promotion_dry_run_and_real_only_change_dire_and_manifests(tmp_path):
     target = _copy_bundle(tmp_path, dire=False)
     before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
               for p in target.iterdir() if p.is_file()}
+    keys_before = _keys_for_test(target)
     command = [sys.executable, str(PROMOTE), str(_dire_source(tmp_path)), str(target)]
     dry = subprocess.run(command + ["--dry-run"], capture_output=True, text=True, check=True)
     assert json.loads(dry.stdout)["dry_run"] is True
@@ -170,7 +171,9 @@ def test_promotion_dry_run_and_real_only_change_dire_and_manifests(tmp_path):
     for name, sha in before.items():
         if name not in ("panel.json", "manifest.json"):
             assert hashlib.sha256((target / name).read_bytes()).hexdigest() == sha
-    assert _keys_for_test(target) == list(serving.TARGETS[:5]) + ["dire_30_25", "total_55_50"]
+    # Optional plain/ladder-shadow keys already in panel.json stay where they were.
+    position = keys_before.index("rad_30_25") + 1
+    assert _keys_for_test(target) == keys_before[:position] + ["dire_30_25"] + keys_before[position:]
 
 
 @pytest.mark.parametrize("mode", ["absent", "incomplete", "present", "disabled"])

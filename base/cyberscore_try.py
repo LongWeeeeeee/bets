@@ -6705,6 +6705,12 @@ _prematch_model_bet_sent_lock = threading.Lock()
 # (id_to_names.tier_one_teams). Default ON; set KILLS_REQUIRE_TIER1_TEAM=0 to
 # restore the previous "kills for all matches" behaviour without a code change.
 KILLS_REQUIRE_TIER1_TEAM = _env_flag("KILLS_REQUIRE_TIER1_TEAM", "1")
+# Owner decision 06.10.2026 (card ingame-h9b5, "Снять для панели"): the ML-dispatch panel
+# rule ``kills_panel_window`` is exempt from the Tier-1 gate above (it delivered 0 bets in
+# 23 h because its 5_15 window is open only before game_time 120 on non-Tier-1 matches).
+# Every other kills_window rule keeps the gate. ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1=1
+# applies the gate to the panel rule again (env-only rollback, read at import).
+PANEL_KILLS_REQUIRE_TIER1 = _env_flag("ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1", "0")
 # The standalone trigger fires in the early kills window (up to 10:00).
 # Ideally at 00, but if the match becomes visible later we still send as soon
 # as we see it, as long as the gates hold. After this cutoff the regular
@@ -13032,10 +13038,15 @@ def _ml_dispatch_tick(
             result.decisions = []
         # Apply the same Tier-1 requirement as the legacy early-kills senders
         # before audit/delivery, including both ML rules that emit windows.
+        # Owner decision 06.10.2026: the panel rule is exempt (rule-specific, not
+        # market-wide) unless ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1=1.
         if not _match_has_tier1_team(radiant_team_id, dire_team_id):
             allowed_decisions = []
             for decision in result.decisions:
-                if decision.market == "kills_window":
+                if decision.market == "kills_window" and not (
+                    decision.rule == _md.RULE_KILLS_PANEL_WINDOW
+                    and not PANEL_KILLS_REQUIRE_TIER1
+                ):
                     result.skipped.append(_md.Skipped(
                         "kills_window", decision.target_side, "kills_requires_tier1_team",
                         f"radiant_team_id={radiant_team_id}, dire_team_id={dire_team_id}",
@@ -49835,6 +49846,7 @@ if __name__ == "__main__":
         f" panel_kills={'on' if _dispatch_startup_cfg.panel_kills_enabled else 'off'}"
         f"/{_dispatch_startup_cfg.panel_kills_min_conf}"
         f"/{','.join(_dispatch_startup_cfg.panel_kills_windows)}"
+        f" panel_tier1={'on' if PANEL_KILLS_REQUIRE_TIER1 else 'off'}"
         f" lane_kills={'on' if _dispatch_startup_cfg.lane_kills_enabled else 'off'}"
         f" underdog_kills_window={'on' if _dispatch_startup_cfg.underdog_kills_window_enabled else 'off'}"
     )

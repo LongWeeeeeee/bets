@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+import re
 import sys
 import types
 
@@ -417,13 +418,35 @@ class _Ledger:
 
 
 def _drive_tick(monkeypatch, blocks, *, tier1=True, game_time=100.0,
-                match_key="https://example/m"):
+                match_key="https://example/m", captured=None):
     """``_ml_dispatch_tick`` the way prod runs it: prematch ML off (no index), the
-    real card blocks, the real details extractor."""
+    real card blocks, the real details extractor.
+
+    ``captured`` (a journal row of ``ml_dispatch_panel_tier1_ticks_20261006.jsonl``) replaces
+    the card blocks by the verdicts, ELO, team names/ids and game_time of that real tick:
+    the details extractor and the laning verdicts are then stubbed with its values."""
     delivered, logged = [], []
+    names, ids = ("Alpha", "Beta"), (1, 2)
+    elo = (None, None)
     monkeypatch.setenv("DISPATCH_MODE", "ml")
-    monkeypatch.setattr(laning_serving, "verdicts", lambda *a, **k: {"all": None, "lane": None})
-    monkeypatch.setattr(C, "_team_elo_base_rating_for_side", lambda meta, side: None)
+    if captured is None:
+        monkeypatch.setattr(laning_serving, "verdicts",
+                            lambda *a, **k: {"all": None, "lane": None})
+    else:
+        v = captured["verdicts"]
+        details = {k: v[k] for k in ("early_nw", "early_win", "late", "panel_w_5_15", "kills30")}
+        monkeypatch.setattr(C, "_ml_dispatch_extract_index_details",
+                            lambda *a, **k: (None, dict(details)))
+        monkeypatch.setattr(laning_serving, "verdicts",
+                            lambda *a, **k: {"all": v["all"], "lane": v["lane"]})
+        names = (captured["teams"]["radiant"], captured["teams"]["dire"])
+        ids = _captured_team_ids(captured)
+        elo = (captured["elo_r"], captured["elo_d"])
+        game_time = captured["game_time"]
+        match_key = captured["match_key"]
+        blocks = {"early_output": {}, "mid_output": {}, "post_lane_output": {}}
+    monkeypatch.setattr(C, "_team_elo_base_rating_for_side",
+                        lambda meta, side: elo[0] if side == "radiant" else elo[1])
     monkeypatch.setattr(C, "_bookmaker_infer_map_num", lambda *a, **k: 1)
     monkeypatch.setattr(C, "_match_has_tier1_team", lambda *a: tier1)
     monkeypatch.setattr(C, "_ml_dispatch_sent_ledger", lambda: _Ledger())
@@ -432,15 +455,25 @@ def _drive_tick(monkeypatch, blocks, *, tier1=True, game_time=100.0,
     monkeypatch.setattr(C, "_deliver_and_persist_signal",
                         lambda *a, **k: delivered.append((a, k)) or True)
     C._ml_dispatch_tick(
-        match_key=match_key, radiant_team_name="Alpha", dire_team_name="Beta",
+        match_key=match_key, radiant_team_name=names[0], dire_team_name=names[1],
         live_league={}, top="", mid="", bot="", protracker_payload=None,
         team_elo_block="", team_elo_meta={}, game_time_seconds=game_time, radiant_lead=0,
         early_output=blocks["early_output"], mid_output=blocks["mid_output"],
         all_output=blocks["post_lane_output"],
         radiant_heroes_and_pos=RADIANT_DRAFT, dire_heroes_and_pos=DIRE_DRAFT,
         full_message_text="СТАВКА НА x\n🤖 ML:\n  окно 5-15: Dire 72%",
-        radiant_team_id=1, dire_team_id=2)
+        radiant_team_id=ids[0], dire_team_id=ids[1])
     return delivered, logged
+
+
+TIER1_TICKS = [json.loads(line) for line in
+               (FIXTURES / "ml_dispatch_panel_tier1_ticks_20261006.jsonl").read_text().splitlines()]
+
+
+def _captured_team_ids(row):
+    """The journal row has no id field: they are in the Tier-1 skip's detail string."""
+    detail = next(s["detail"] for s in row["skipped"] if s["reason"] == "kills_requires_tier1_team")
+    return tuple(int(x) for x in re.findall(r"team_id=(\d+)", detail))
 
 
 def _window_calls(delivered):
@@ -500,13 +533,82 @@ def test_tick_below_threshold_sends_nothing_and_logs_the_skip(monkeypatch):
     assert logged[0]["verdicts"]["panel_w_5_15"] == {"side": "Radiant", "confidence": 0.5691}
 
 
-def test_tick_applies_the_tier1_gate_to_the_panel_rule(monkeypatch):
+# ---- owner decision 06.10.2026 ("Снять для панели", card ingame-h9b5): the Tier-1 kills
+# gate no longer drops the panel rule unless ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1=1.
+# The ticks are the two real serv1 journal rows of non-Tier-1 matches that the gate dropped.
+
+def _tier1_skips(logged):
+    return [s for s in logged[0]["skipped"] if s["reason"] == "kills_requires_tier1_team"]
+
+
+@pytest.mark.parametrize("row", TIER1_TICKS, ids=["DIREBORN_Xipto", "CloudDawning_Yangon"])
+def test_tick_non_tier1_panel_bet_is_delivered_by_default(monkeypatch, row):
+    assert C.PANEL_KILLS_REQUIRE_TIER1 is False          # the shipped default
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=False, captured=row)
+    window_calls = _window_calls(delivered)
+    assert len(window_calls) == 1
+    args, kwargs = window_calls[0]
+    context = kwargs["stake_multiplier_context"]
+    assert (context["origin"], context["ml_rule"], context["target_side"]) == (
+        "ml_dispatch", "kills_panel_window", "dire")
+    assert args[1].splitlines()[0] == C._format_signal_header(
+        stake_team_name=row["teams"]["dire"], stake_multiplier=None,
+        special_header_mode="early_kills", kills_window_label="5_15")
+    entry = logged[0]
+    assert [(d["market"], d["rule"], d["target_side"]) for d in entry["decisions"]] == [
+        ("kills_window", "kills_panel_window", "Dire")]
+    assert entry["verdicts"]["panel_w_5_15"] == row["verdicts"]["panel_w_5_15"]
+    assert entry["delivered"][-1]["status"] == "delivered"
+    assert _tier1_skips(logged) == []
+
+
+@pytest.mark.parametrize("row", TIER1_TICKS, ids=["DIREBORN_Xipto", "CloudDawning_Yangon"])
+def test_tick_rollback_env_applies_the_tier1_gate_to_the_panel_rule(monkeypatch, row):
+    monkeypatch.setattr(C, "PANEL_KILLS_REQUIRE_TIER1", True)
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=False, captured=row)
+    assert delivered == []
+    assert [(s["market"], s["side"]) for s in _tier1_skips(logged)] == [("kills_window", "Dire")]
+    assert logged[0]["decisions"] == []
+
+
+def test_tick_synthetic_non_tier1_panel_bet_default_and_rollback(monkeypatch):
     blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
     delivered, logged = _drive_tick(monkeypatch, blocks, tier1=False)
+    assert len(_window_calls(delivered)) == 1 and _tier1_skips(logged) == []
+    monkeypatch.setattr(C, "PANEL_KILLS_REQUIRE_TIER1", True)
+    delivered, logged = _drive_tick(monkeypatch, blocks, tier1=False)
+    assert delivered == [] and len(_tier1_skips(logged)) == 1
+
+
+def test_tick_exemption_is_rule_specific_the_underdog_window_stays_gated(monkeypatch):
+    """Same non-Tier-1 tick with the panel exemption ON (the default) and the underdog rule
+    switched on: ``evaluate`` then emits the underdog Radiant window instead of the panel's
+    Dire one, and the Tier-1 gate still drops it - the exemption is not market-wide."""
+    row = TIER1_TICKS[0]
+    monkeypatch.setenv("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
+    assert C.PANEL_KILLS_REQUIRE_TIER1 is False
+    # Control: with a Tier-1 team the underdog rule really emits its Radiant window.
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=True, captured=row)
+    assert [(d["rule"], d["target_side"]) for d in logged[0]["decisions"]] == [
+        ("kills_underdog_early_window", "Radiant")]
+    assert len(_window_calls(delivered)) == 1
+    # The non-Tier-1 tick: dropped by the gate, nothing delivered.
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=False, captured=row)
     assert delivered == []
-    assert any(s["reason"] == "kills_requires_tier1_team" and s["market"] == "kills_window"
-               for s in logged[0]["skipped"])
+    assert [(s["market"], s["side"]) for s in _tier1_skips(logged)] == [("kills_window", "Radiant")]
     assert logged[0]["decisions"] == []
+
+
+def test_panel_tier1_flag_is_an_env_flag_defaulting_to_off():
+    tree = ast.parse((BASE_DIR / "cyberscore_try.py").read_text())
+    assign = next(n for n in tree.body if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "PANEL_KILLS_REQUIRE_TIER1"
+                          for t in n.targets))
+    call = assign.value
+    assert isinstance(call, ast.Call) and call.func.id == "_env_flag"
+    assert [a.value for a in call.args] == ["ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1", "0"]
+    # the deploy check: the startup config line prints the flag
+    assert "panel_tier1=" in (BASE_DIR / "cyberscore_try.py").read_text()
 
 
 def test_tick_closed_window_logs_the_skip(monkeypatch):
