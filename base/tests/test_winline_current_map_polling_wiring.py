@@ -76,6 +76,49 @@ class FakeClock:
 
 
 @pytest.fixture(autouse=True)
+def _camoufox_worker_isolation(monkeypatch):
+    """Reject real browser work, including errors swallowed by the collector."""
+    attempts = []
+
+    def forbidden(*_args, **_kwargs):
+        attempts.append("real camoufox launch in unit test")
+        raise AssertionError(attempts[-1])
+
+    monkeypatch.setattr(cs, "_run_shared_camoufox_job", forbidden)
+    monkeypatch.setattr(cs._SharedCamoufoxSession, "submit", forbidden)
+    if cs.camoufox is not None:
+        # Guard the classes too: imported API aliases must not bypass the guard.
+        monkeypatch.setattr(cs.camoufox.Camoufox, "__enter__", forbidden)
+        monkeypatch.setattr(cs.camoufox.AsyncCamoufox, "__aenter__", forbidden)
+        from camoufox.pkgman import CamoufoxFetcher
+        monkeypatch.setattr(CamoufoxFetcher, "__init__", forbidden)
+
+    # 08.10.2026: check_head -> live-ELO registration -> _live_elo_winner_lookup
+    # sent real STRATZ GraphQL requests with the real keys/proxies (base/ is
+    # first on sys.path, so a keys stub on PYTHONPATH does not apply); one test
+    # spent 37 s in an SSL read. Every STRATZ request goes through _post.
+    import stratz_map_result as _stratz
+
+    def forbidden_stratz(*_args, **_kwargs):
+        attempts.append("real STRATZ request in unit test")
+        raise AssertionError(attempts[-1])
+
+    monkeypatch.setattr(_stratz, "_post", forbidden_stratz)
+    # The STRATZ warm-up daemon is never stopped and would outlive the test.
+    monkeypatch.setattr(cs, "_ensure_stratz_warmup", lambda: None)
+    try:
+        yield attempts
+    finally:
+        # Join while each test's browser fakes and this guard are still installed.
+        # Otherwise a surviving scheduler can launch after monkeypatch.undo().
+        scheduler = cs._winline_current_map_scheduler_thread
+        cs.stop_winline_current_map_polling_scheduler(join_timeout_s=2)
+        assert scheduler is None or not scheduler.is_alive(), "scheduler leaked"
+        _clear_wiring_state()
+        assert not attempts, attempts
+
+
+@pytest.fixture(autouse=True)
 def _notification_worker_isolation(monkeypatch):
     assert cs.stop_winline_notification_worker(join_timeout_s=2)
     cs._winline_notification_queue.clear()
@@ -119,6 +162,22 @@ def _clear_wiring_state() -> None:
         st = getattr(cs, attr, None)
         if isinstance(st, dict):
             st.clear()
+
+
+def test_unstubbed_collector_records_forbidden_camoufox_launch(
+        monkeypatch, _camoufox_worker_isolation):
+    """Collector fail-open must not hide a forbidden real browser attempt."""
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True)
+    monkeypatch.setattr(cs, "_bookmaker_parse_site_in_camoufox_page", lambda **kw: None)
+    monkeypatch.setattr(cs, "_bookmaker_urls_for_mode",
+                        lambda _mode: {"winline": "https://winline.example/live"})
+
+    result = cs._winline_current_map_poller_collect(
+        series=LISTING_SERIES, map_num=MAP_NUM, team1=TEAM1, team2=TEAM2)
+
+    assert result["acquisition_error"] == "shared_camoufox_job:AssertionError"
+    # Acknowledge this deliberate guard probe; any other attempt fails teardown.
+    assert _camoufox_worker_isolation.pop() == "real camoufox launch in unit test"
 
 
 def test_yangon_card_absence_does_not_announce_map_end(
@@ -1966,6 +2025,14 @@ def test_check_head_successful_parse_triggers_polling_without_star(monkeypatch, 
     monkeypatch.setattr(cs, "ensure_winline_current_map_polling", _capture_ensure)
     # Keep shadow fail-open from doing real work.
     monkeypatch.setattr(cs, "_fail_open_winline_shadow_after_send", lambda **_k: None)
+    # Live-ELO registration is not under test. Unstubbed it loaded the real
+    # 858 MB ELO snapshot (~30 s), registered this fake map into the local
+    # live-ELO state and asked STRATZ for the winner. A non-dict result is the
+    # "not registered" branch of check_head.
+    monkeypatch.setattr(cs, "_register_completed_live_map_for_elo", lambda **_k: None)
+    # Same snapshot read (~28 s) through the ML coverage call; ELO is not under
+    # test here and the result must not depend on a local 858 MB file.
+    monkeypatch.setattr(cs, "_build_team_elo_matchup_summary", lambda *_a, **_k: None)
 
     heads, bodies = _build_heads_and_bodies()
     cs.check_head(heads=heads, bodies=bodies, i=0, maps_data=set(), return_status=None)
@@ -2596,7 +2663,7 @@ def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeyp
         "id доигранной карты не должен уезжать в опрос следующей")
 
 
-def test_intermission_row_does_not_make_us_wait_for_the_map_after_next():
+def test_intermission_row_does_not_make_us_wait_for_the_map_after_next(monkeypatch):
     """Номер в строке перерыва УЖЕ сдвинут — прибавлять к нему единицу нельзя.
 
     Bo5, счёт 1:0, строка доигранной карты 1: номер карты из неё выходит 2.
@@ -2605,6 +2672,11 @@ def test_intermission_row_does_not_make_us_wait_for_the_map_after_next():
     в чат как конец несуществующей карты.
     """
     _clear_wiring_state()
+    # Reconciliation registers an expected-map poller. This registry test must
+    # not start a browser worker, including after its monkeypatches are undone.
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **kw: True)
+    monkeypatch.setattr(cs, "_run_shared_camoufox_job",
+                        lambda *_a, **_kw: _missing_collector_result())
     row = _puckchamp_intermission_row()
     row["series_type"] = 2          # Bo5
     row["radiant_series_wins"] = 1  # карта 1 уже засчитана GC
