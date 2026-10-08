@@ -35259,7 +35259,65 @@ def _get_team_tier_by_name(team_name: str) -> Optional[int]:
     return _get_team_tier(next(iter(ids)))
 
 
-def _bet_ledger_price_snapshot(match_key: str, selected_side: Any) -> Optional[Dict[str, Any]]:
+def _bet_ledger_poll_price_snapshot(
+    ctx: Dict[str, Any], map_num: Any, game_time: Any,
+) -> Optional[Dict[str, Any]]:
+    """Send-time Winline price from the current-map poller state.
+
+    08.10.2026: ``price_snapshot`` was null on 544/544 prod ledger rows because
+    the prefetch snapshot is empty in prod, while the live price sits in the
+    poller orientation state that the WIN floor gate already reads
+    (``_ml_dispatch_fresh_winline_price``: TTL 300/1800 s, highest fresh quote,
+    state lock taken inside, an RLock). p1/p2 = radiant/dire price (the getter
+    called once per side), selected = the stake team's price; a side without a
+    fresh quote is None. None when no side has a fresh quote.
+    """
+    try:
+        radiant = str(ctx.get("radiant_team_name") or "").strip()
+        dire = str(ctx.get("dire_team_name") or "").strip()
+        if not radiant or not dire or map_num is None:
+            return None
+        base_ctx = {"radiant_team_name": radiant, "dire_team_name": dire}
+        game_time_seconds = ctx.get("game_time_seconds")
+        if game_time_seconds is None:
+            game_time_seconds = game_time
+        if game_time_seconds is not None:
+            base_ctx["game_time_seconds"] = game_time_seconds
+
+        def _price(team_name: str) -> Optional[float]:
+            return _ml_dispatch_fresh_winline_price(
+                {**base_ctx, "stake_team_name": team_name}, map_num)
+
+        p1 = _price(radiant)
+        p2 = _price(dire)
+        if p1 is None and p2 is None:
+            return None
+        # selected comes from the two reads above (not a third read), so it always
+        # equals p1 or p2 even if the poller updates between reads (astra L2 note).
+        target = _winline_normalized_team_identity(ctx.get("stake_team_name"))
+        selected_price = None
+        if target and target == _winline_normalized_team_identity(radiant):
+            selected_price = p1
+        elif target and target == _winline_normalized_team_identity(dire):
+            selected_price = p2
+        # market: the poller holds only the map-winner market, so on a kills bet
+        # this is NOT the bet's own price (Opus L3 a). game_time_s is the game time
+        # the getter saw: < 60 (e.g. 0 on a STAR path without game time) -> prematch
+        # TTL 1800 s; None/non-numeric -> the getter assumes 60 s -> TTL 300 s (L3 b, L4).
+        return {"p1": p1, "p2": p2, "selected": selected_price, "source": "winline_poll",
+                "market": "map_winner", "game_time_s": base_ctx.get("game_time_seconds")}
+    except Exception:
+        return None
+
+
+def _bet_ledger_price_snapshot(
+    match_key: str,
+    selected_side: Any,
+    *,
+    ctx: Optional[Dict[str, Any]] = None,
+    map_num: Any = None,
+    game_time: Any = None,
+) -> Optional[Dict[str, Any]]:
     """Лучшая попытка снять цену Winline на момент доставки.
 
     Отдельного геттера вида `current_map_odds()`/`winline_current_map_price()`
@@ -35269,25 +35327,31 @@ def _bet_ledger_price_snapshot(match_key: str, selected_side: Any) -> Optional[D
     prefetch-снимок, из которого `_bookmaker_format_odds_block` уже строит
     показанный в сигнале блок кэфов; wait_seconds=0.0 — не ждём, берём что
     есть. None на любой сбой — цена необязательна для леджера.
+
+    08.10.2026: в проде prefetch пуст, поэтому без цены prefetch берётся
+    состояние опросника текущей карты (`_bet_ledger_poll_price_snapshot`,
+    source="winline_poll", market="map_winner").
     """
     try:
         snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
-        if not isinstance(snapshot, dict):
-            return None
-        sites_payload = snapshot.get("sites")
-        winline = sites_payload.get("winline") if isinstance(sites_payload, dict) else None
-        odds = winline.get("odds") if isinstance(winline, dict) else None
-        if not isinstance(odds, list) or len(odds) < 2:
-            return None
-        p1 = float(odds[0])
-        p2 = float(odds[1])
-        selected_price = None
-        odds_index, _reason = _bookmaker_map_selected_side_to_odds_index(selected_side)
-        if odds_index is not None:
-            selected_price = p1 if odds_index == 0 else p2
-        return {"p1": p1, "p2": p2, "selected": selected_price}
+        if isinstance(snapshot, dict):
+            sites_payload = snapshot.get("sites")
+            winline = sites_payload.get("winline") if isinstance(sites_payload, dict) else None
+            odds = winline.get("odds") if isinstance(winline, dict) else None
+            if isinstance(odds, list) and len(odds) >= 2:
+                p1 = float(odds[0])
+                p2 = float(odds[1])
+                selected_price = None
+                odds_index, _reason = _bookmaker_map_selected_side_to_odds_index(selected_side)
+                if odds_index is not None:
+                    selected_price = p1 if odds_index == 0 else p2
+                return {"p1": p1, "p2": p2, "selected": selected_price, "source": "prefetch"}
     except Exception:
-        return None
+        pass
+    # Prefetch gave no price (always the case in prod): current-map poller state.
+    if isinstance(ctx, dict):
+        return _bet_ledger_poll_price_snapshot(ctx, map_num, game_time)
+    return None
 
 
 def _build_bet_dispatch_ledger_entry(
@@ -35367,7 +35431,13 @@ def _build_bet_dispatch_ledger_entry(
         "prematch_model_confidence": prematch_model_confidence,
         "late_model_side": ctx.get("late_model_side"),
         "game_time": details.get("game_time"),
-        "price_snapshot": _bet_ledger_price_snapshot(match_key, selected_side),
+        "price_snapshot": _bet_ledger_price_snapshot(
+            match_key,
+            selected_side,
+            ctx=ctx,
+            map_num=resolved_map_num,
+            game_time=details.get("game_time"),
+        ),
     }
 
 

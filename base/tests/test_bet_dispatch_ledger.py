@@ -162,3 +162,77 @@ def test_ledger_write_never_raises_when_build_fails(monkeypatch, tmp_path) -> No
 
     assert delivered is True, "билдер леджера упал, но доставка не должна была прерваться"
     assert not ledger_path.exists()
+
+
+# --- send-time Winline price from the current-map poller state (card L1) ---
+# 08.10.2026: price_snapshot was null on 544/544 prod ledger rows, because the
+# snapshot read only the old multi-site prefetch. The live price lives in the
+# poller orientation state read by _ml_dispatch_fresh_winline_price.
+# Fixture: captured 2026-09-15 by the Winline current-map poller (see the
+# capture note inside the file), shared with test_ml_win_floor_delivery.py.
+WINLINE_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "winline_yangon_yache_map3_20260915.json"
+)
+
+
+def _winline_poll_delivery(monkeypatch, tmp_path, *, seed_quote, target):
+    first = json.loads(WINLINE_FIXTURE.read_text(encoding="utf-8"))["messages"][0]
+    key = first["canonical_key"]
+    p1, p2 = first["observation"]["output_pair"]
+    state = {}
+    if seed_quote:
+        state[key] = {"p1": p1, "p2": p2, "status": "open",
+                      "last_quote_mono": time.monotonic()}
+    ledger_path = tmp_path / "bet_dispatch_ledger.jsonl"
+    monkeypatch.setattr(runtime, "_winline_odds_orientation_state", state)
+    monkeypatch.setattr(runtime, "BET_DISPATCH_LEDGER_PATH", str(ledger_path), raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False)
+    # The captured fixture team is denylisted since 29.09; the ledger is not
+    # under test there.
+    monkeypatch.setattr(runtime, "_is_denylisted_bet_team_name", lambda *_a, **_k: False)
+    monkeypatch.setattr(runtime, "send_message", lambda *a, **k: True)
+    monkeypatch.setattr(runtime, "add_url", lambda *a, **k: None)
+    ctx = {
+        "origin": "ml_dispatch", "ml_market": "kills_total",  # no floor gate: ledger only
+        "target_side": "radiant" if target == "YANGON GALACTICOS" else "dire",
+        "stake_team_name": target,
+        "radiant_team_name": "YANGON GALACTICOS", "dire_team_name": "YACHE123",
+        "game_time_seconds": 600,
+    }
+    delivered = runtime._deliver_and_persist_signal(
+        "dltv.org/matches/yangon-yache.3",
+        f"СТАВКА НА {target} x1\n",
+        add_url_reason="ml_dispatch",
+        skip_bookmaker_prepare=True,
+        map_num=3,
+        selected_side=ctx["target_side"],
+        stake_multiplier_context=ctx,
+    )
+    assert delivered is True
+    lines = _read_ledger_lines(ledger_path)
+    assert len(lines) == 1, lines
+    return lines[0], (p1, p2)
+
+
+def test_ledger_records_send_time_winline_poll_price(monkeypatch, tmp_path) -> None:
+    row, (p1, p2) = _winline_poll_delivery(
+        monkeypatch, tmp_path, seed_quote=True, target="YACHE123")
+    assert row["price_snapshot"] == {
+        "p1": p1, "p2": p2, "selected": p2, "source": "winline_poll",
+        "market": "map_winner", "game_time_s": 600}
+    assert p1 != p2  # the target side is really distinguished
+
+
+def test_ledger_poll_price_radiant_target_gets_p1(monkeypatch, tmp_path) -> None:
+    row, (p1, p2) = _winline_poll_delivery(
+        monkeypatch, tmp_path, seed_quote=True, target="YANGON GALACTICOS")
+    assert row["price_snapshot"]["selected"] == p1
+    assert row["price_snapshot"]["source"] == "winline_poll"
+
+
+def test_ledger_without_fresh_quote_has_null_snapshot_and_no_exception(
+        monkeypatch, tmp_path) -> None:
+    row, _ = _winline_poll_delivery(
+        monkeypatch, tmp_path, seed_quote=False, target="YACHE123")
+    assert row["price_snapshot"] is None
+    assert row["target_team_name"] == "YACHE123"
