@@ -6,7 +6,7 @@ area: ml
 status: full
 corpus: "29 241 про-карта 24.03–21.09 (predictions.npz pro_calibration_20261003), боевые словари prod0809, ELO-реплей levels.npz (A/K24), NW pro_corpus_rich; 182 живые WIN-ставки 12.09–08.10"
 verdict: "нет: 4 пары голова↔словарь ΔLL в пределах ±0,12·10⁻³ (Holm ns); «≥2 из 4 против» −3,75 п.п. на всех картах — это ось темпа и ELO-андердоги; после ELO-блока −0,97 [−4,61; +2,79], на 10-й мин логит флага +0,14 (z +1,4), на 31-й за ставку (z +5,2); гейт не вводится"
-harness: "runtime/experiments/draft-cp/dict_vs_ml_20261008/{dict_values.py,prep_columns.py,analyze_agreement.py,bet_sim.py,bet_sim_split.py,bet_sim_elo.py,bet_sim_nw.py,live_bets.py}"
+harness: "runtime/experiments/draft-cp/dict_vs_ml_20261008/{dict_values.py,prep_columns.py,analyze_agreement.py,bet_sim.py,bet_sim_split.py,bet_sim_elo.py,bet_sim_nw.py,bet_sim_fav.py,live_bets.py}"
 ---
 # E-358 — Паб-словари против ML-голов: есть ли информация сверх модели и нужен ли гейт согласия (08.10.2026)
 
@@ -58,6 +58,7 @@ $PY $E/bet_sim.py $A/sel_pro_prod0809.npz $A/e358_betsim_prod0809.md
 $PY $E/bet_sim_split.py $A/sel_pro_prod0809.npz > $A/e358_betsim_split.md
 $PY $E/bet_sim_elo.py   $A/sel_pro_prod0809.npz > $A/e358_betsim_elo.md
 $PY $E/bet_sim_nw.py    $A/sel_pro_prod0809.npz > $A/e358_betsim_nw.md
+$PY $E/bet_sim_fav.py   $A/sel_pro_prod0809.npz > $A/e358_betsim_fav.md
 # 4. живые ставки
 $PY $E/live_bets.py $A/dict_values_live_prod0809.npz $A/live_bets_prod0809.md runtime/artifacts/draft-cp/bet_ledger_20261008/rows.json
 ```
@@ -116,6 +117,21 @@ $PY $E/live_bets.py $A/dict_values_live_prod0809.npz $A/live_bets_prod0809.md ru
 разгоняется, а All/Late — за позднюю. Если игра короткая, выигрывает сторона словарей, если
 длинная — сторона голов. На 10-й минуте это уже отражено в NW-лиде и ELO. Если карта дожила до
 31-й, ранняя сторона не закрыла игру, и поздний драфт выигрывает чаще своего NW.
+
+### Второй проход: фавориты и близкие по ELO (`bet_sim_fav.py`, `e358_betsim_fav.md`)
+
+Логит флага поверх logit(уверенности), ELO и NW на 10-й, strict-ставки:
+
+| срез | вариант A: ставок / флаг, логит (z) | K24: логит (z) | до 20.06 / после 20.06 (A) |
+|---|---|---|---|
+| фаворит ≥+50 | 3 394 / 297, −0,156 (z −1,06) | −0,230 (z −1,44) | −0,209 (z −1,18) / −0,027 (z −0,10) |
+| близкие \|Δ\|<50 | 3 674 / 341, +0,346 (z +2,65) | +0,246 (z +2,18) | +0,308 (z +1,92) / +0,455 (z +1,99) |
+| проходит блок > −50 | 7 068 / 638, +0,133 (z +1,36) | +0,094 (z +1,02) | +0,085 / +0,261 |
+
+Взаимодействие флаг × фаворит: −0,493 (z −2,50). Отрицательный сдвиг у фаворитов без поправки на NW
+(−5,18 п.п.) с поправкой незначим, и гейт «только для фаворитов» не обоснован. Плюс у близких по
+силе — разведочный разрез (одна из шести проверенных ячеек). Цен в нём нет, и повод повышать
+ставку он не даёт. Он записан в идею ingame-2nq9 как вторая проверка на живых ценах.
 
 ## 3. Живые ставки (12.09–08.10, 182 с исходом и словарями)
 
