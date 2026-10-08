@@ -111,6 +111,12 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # (`match_found=false`, `t1_text=0 t2_text=1`); снимок страницы —
     # base/tests/fixtures/winline_overview_legion_blasterbi_20261005.json.
     "Blasterbl": ("BLASTERBI",),
+    # 08.10.2026, BLAST Slam: SourceTV/GC отдаёт `1win` (team_id 9467224, ключ
+    # моста `...|id:9255039|id:9467224|map2|Aurora Gaming|1win`), карточка Winline
+    # — `TEAM AURORA 1W`. Прод не нашёл цену текущей карты ни разу за 17:01-18:35
+    # (в листинге при этом «Победитель 2 карта 1.61 2.22»); снимок страницы —
+    # base/tests/fixtures/winline_overview_snapshot_20261008_blast_duel_cards.json.
+    "1win": ("1W",),
 }
 
 

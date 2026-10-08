@@ -1896,6 +1896,31 @@ def _winline_market_row_re(map_num: int) -> "re.Pattern[str]":
     )
 
 
+# Проп-карточки листинга («BLAST Slam. Дуэль игроков. Убийства»: «WS (TEAM
+# AURORA)» против «33 (1W)») — не матчи команд. Единое правило для sweep карточек
+# (cyberscore_try._winline_card_is_prop_duel) и выбора карточки матча ниже:
+# имена игроков в скобках содержат названия команд, и без этого фильтра дуэль
+# выбиралась контекстом матча (08.10.2026, карта 3 пары Aurora Gaming - 1win).
+# Откат обоих мест одним флагом: WINLINE_CARD_SWEEP_SKIP_PROPS=0.
+_WINLINE_PROP_LEAGUE_MARKERS = ("дуэль игроков",)
+# Контейнер секции турнира в ленте: заголовок и карточки `eventId-*` лежат в нём.
+_WINLINE_TOURNAMENT_BLOCK_TAG = "ww-feature-block-tournament-dsk"
+
+
+def winline_prop_skip_enabled() -> bool:
+    return str(os.getenv("WINLINE_CARD_SWEEP_SKIP_PROPS", "1")).strip().lower() \
+        not in {"0", "false", "off", "no", "n"}
+
+
+def winline_league_is_prop_duel(league: Any) -> bool:
+    """Заголовок лиги относится к проп-секции (дуэль игроков), а не к матчу."""
+    try:
+        low = re.sub(r"\s+", " ", str(league or "")).lower()
+    except Exception:
+        return False
+    return any(marker in low for marker in _WINLINE_PROP_LEAGUE_MARKERS)
+
+
 class _WinlineDOMSnapshot:
     """Read-only parse and text index owned by one acquired DOM payload."""
 
@@ -1909,6 +1934,49 @@ class _WinlineDOMSnapshot:
         # snapshot applies the same card proof and side orientation.
         self._team_search_plans: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {}
         self._team_match_results: Dict[Tuple[str, str, str], bool] = {}
+        self._prop_event_ids: Optional[set] = None
+
+    def _prop_duel_event_ids(self) -> set:
+        """id() карточек `eventId-*`, чей СОБСТВЕННЫЙ блок турнира назван «Дуэль игроков».
+
+        Решение по каждой карточке берётся из ближайшего предка
+        `ww-feature-block-tournament-dsk` и его заголовка, а не из флага,
+        перенесённого по порядку документа: карточка без такого контейнера или
+        без заголовка в нём — не дуэль (fail toward keeping real match cards).
+        """
+        if self._prop_event_ids is None:
+            found: set = set()
+            try:
+                titles: Dict[int, bool] = {}
+                for node in self.soup.find_all(id=re.compile(r"^eventId-\d+$")):
+                    block = node.find_parent(_WINLINE_TOURNAMENT_BLOCK_TAG)
+                    if block is None:
+                        continue
+                    is_prop = titles.get(id(block))
+                    if is_prop is None:
+                        title = block.select_one('[class*="block-tournament-header__title"]')
+                        is_prop = bool(
+                            title is not None
+                            and winline_league_is_prop_duel(title.get_text(" ", strip=True))
+                        )
+                        titles[id(block)] = is_prop
+                    if is_prop:
+                        found.add(id(node))
+            except Exception:
+                found = set()
+            self._prop_event_ids = found
+        return self._prop_event_ids
+
+    def in_prop_duel_card(self, node: Any) -> bool:
+        """Узел лежит внутри карточки секции «Дуэль игроков» (не матч команд)."""
+        ids = self._prop_duel_event_ids()
+        if not ids:
+            return False
+        while node is not None:
+            if id(node) in ids:
+                return True
+            node = getattr(node, "parent", None)
+        return False
 
     def text(self, node: Any) -> str:
         key = id(node)
@@ -1970,9 +2038,12 @@ def _winline_matched_card_context(
             soup = snapshot.soup
             market_re = _winline_market_row_re(map_num) if map_num else None
             candidates: List[Tuple[int, Any, str]] = []
+            skip_props = winline_prop_skip_enabled()
             for element in snapshot.elements:
                 card_text = snapshot.text(element)
                 if not card_text or not snapshot.text_matches_teams(card_text, team1, team2):
+                    continue
+                if skip_props and snapshot.in_prop_duel_card(element):
                     continue
                 candidates.append((len(card_text), element, card_text))
             if candidates:
@@ -2058,6 +2129,22 @@ def _winline_matched_card_context(
     card = flat[card_start:card_end].strip()
     if not card or not _text_matches_teams(card, team1, team2):
         return None
+    if winline_prop_skip_enabled():
+        # Заголовок секции — ближайший заголовок дисциплины не правее карточки.
+        all_headers = [m.start() for m in re.finditer(r"dota\s*2\s*[|,]", low)]
+        header_starts = [pos for pos in all_headers if pos <= card_start + 1]
+        if header_starts:
+            h = header_starts[-1]
+            # Текст заголовка кончается на ближайшем из: следующий заголовок
+            # дисциплины, начало пары команд карточки, h + 100. Иначе окно
+            # заходит в СЛЕДУЮЩУЮ секцию («...1W 2карта 1.61 2.22 DOTA 2 | BLAST
+            # Slam. Дуэль игроков») и настоящая карточка отбрасывается как дуэль.
+            header_end = h + 100
+            for stop in [pos for pos in all_headers if pos > h] + [pair_start]:
+                if h < stop < header_end:
+                    header_end = stop
+            if winline_league_is_prop_duel(flat[h:header_end]):
+                return None
     if not _winline_single_card_scope(card):
         # Кусок всё ещё накрывает соседние матчи: отдать его — значит отдать
         # чужую строку рынка. Именно так запрос `REKONIX vs L1GA TEAM`
@@ -2895,6 +2982,10 @@ def _winline_structured_current_map_winner(
     saw_unbettable_winner = False
     evidence = ""
     valid: List[Tuple[List[float], str]] = []
+    # Секция «Дуэль игроков» не матч команд: имена игроков «WS (TEAM AURORA)» /
+    # «33 (1W)» совпадают с командами, а ряд «3 карта» дуэли — линия убийств с
+    # заблокированными кнопками, которая давала market_closed вместо «карточки нет».
+    skip_props = winline_prop_skip_enabled()
 
     def _append_legacy_prices(
         container: Any,
@@ -2941,6 +3032,8 @@ def _winline_structured_current_map_winner(
     for root in expanded_roots:
         scope_text = snapshot.text(root)
         if not snapshot.text_matches_teams(scope_text, team1, team2):
+            continue
+        if skip_props and snapshot.in_prop_duel_card(root):
             continue
         order = _winline_team_order(scope_text, team1, team2, _snapshot=snapshot)
         if order is None:
@@ -3040,6 +3133,8 @@ def _winline_structured_current_map_winner(
         scope_text = snapshot.text(event_scope)
         if not snapshot.text_matches_teams(scope_text, team1, team2):
             continue
+        if skip_props and snapshot.in_prop_duel_card(event_scope):
+            continue
         order = _winline_team_order(scope_text, team1, team2, _snapshot=snapshot)
         if order is None:
             continue
@@ -3085,6 +3180,8 @@ def _winline_structured_current_map_winner(
                 break
             node = node.parent
         if event_scope is None:
+            continue
+        if skip_props and snapshot.in_prop_duel_card(event_scope):
             continue
 
         scope_text = snapshot.text(event_scope)

@@ -201,8 +201,14 @@ def test_roster_qualifier_is_never_dropped():
 
 
 def test_short_name_is_not_matched_inside_longer_word():
-    """Порядок сторон рынка не может решаться подстрокой: `1w` внутри `1WIN`."""
-    assert bk._first_index_with_fallback("1win essence vici gaming", "1w") == -1
+    """Порядок сторон рынка не может решаться подстрокой: `Pari` внутри `PARIVISION`.
+
+    До 08.10.2026 здесь стояла пара `1w` внутри `1WIN`. Теперь `1w` — подтверждённое
+    написание команды `1win` (справочник, карточка `TEAM AURORA 1W`), так что
+    `1win` законно находится по `1w`; проверка подстроки идёт на паре без алиаса.
+    """
+    assert bk._first_index_with_fallback("parivision vici gaming", "pari") == -1
+    assert bk._first_index_with_fallback("pari vici gaming 1карта", "pari") == 0
     assert bk._first_index_with_fallback("1w vici gaming 1карта", "1w") == 0
 
 
@@ -397,3 +403,118 @@ def test_without_that_alias_blasterbi_card_is_not_found(monkeypatch):
 
     assert odds == []
     assert "promotion=not_decider" in (extract.miss_fingerprint or "")
+
+
+# Живая страница 08.10.2026 18:34 MSK (снимок обзора прода, провенанс рядом с
+# фикстурой): BLAST Slam, у нас `Aurora Gaming` — `1win` (team_id 9467224),
+# Winline подписал карточку `TEAM AURORA 1W`: «Победитель 2 карта 1.61 2.22».
+# Прод не нашёл цену текущей карты ни разу за 17:01-18:35 (ключ моста
+# `sourcetv:league:19102|id:9255039|id:9467224|map2|Aurora Gaming|1win`), а гейт
+# пола по кэфу при пустой цене открыт. В том же снимке стоят три карточки
+# «Дуэль игроков. Убийства» с `(TEAM AURORA)` и `(1W)` в именах игроков.
+def _blast_duel_page():
+    path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "winline_overview_snapshot_20261008_blast_duel_cards.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_bookmaker_1w_spelling_of_1win_is_found():
+    """У нас `1win`, на странице `1W` — кэфы 2-й карты настоящей карточки."""
+    page = _blast_duel_page()
+
+    odds, extract = _dom_odds(page, "Aurora Gaming", "1win", 2)
+
+    assert odds == [1.61, 2.22], f"карточка TEAM AURORA 1W не найдена: {extract.reason!r}"
+    assert extract.map_num == 2
+
+    mirrored, _ = _dom_odds(page, "1win", "Aurora Gaming", 2)
+    assert mirrored == [2.22, 1.61]
+    # Поллер сверяет имена карточки с нашими тем же справочником.
+    assert _teams_equivalent("1win", "1W")
+    assert not _teams_equivalent("1win", "Aurora Gaming")
+
+
+def test_without_that_alias_1win_card_is_not_found(monkeypatch):
+    """Контроль фикстуры: без справочника — ровно провал прода."""
+    monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+
+    odds, extract = _dom_odds(_blast_duel_page(), "Aurora Gaming", "1win", 2)
+
+    assert odds == []
+    assert "promotion=not_decider" in (extract.miss_fingerprint or "")
+
+
+def test_1w_alias_does_not_glue_duel_card_odds_on_map_3():
+    """Алиас не должен подклеить к 3-й карте кэфы дуэли игроков.
+
+    На странице у настоящей карточки есть только 2-я карта (1.61 2.22); карточки
+    `WS (TEAM AURORA) 33 (1W)` и две соседние — дуэли по убийствам с линиями
+    14.5/15.5/11.5 и кэфами 1.72/2.00/1.85/1.70/1.80/1.90. Ни один из этих кэфов
+    не вправе стать ценой победителя 3-й карты `Aurora Gaming` — `1win`.
+    """
+    page = _blast_duel_page()
+    duel_prices = {1.72, 2.00, 1.85, 2.02, 1.70, 1.80, 1.90}
+
+    odds, extract = _dom_odds(page, "Aurora Gaming", "1win", 3)
+
+    assert odds == [], f"кэфы дуэли подклеены к 3-й карте: {odds!r}"
+    assert not (set(odds) & duel_prices)
+    assert odds != [1.61, 2.22], "это кэфы 2-й карты, не 3-й"
+    assert extract.map_num == 3
+
+
+def _duel_leaks(context: str) -> bool:
+    low = (context or "").lower()
+    return any(marker in low for marker in ("дуэль", "ws (team aurora)", "33 (1w)", "skiter", "mikoto"))
+
+
+@pytest.mark.parametrize("ours", ["1win", "1W"])
+def test_map_3_never_takes_a_player_duel_card_as_match_context(ours):
+    """Карта 3 пары `Aurora Gaming` - `1win`: контекст матча не бывает дуэлью игроков.
+
+    У настоящей карточки на снимке есть только 2-я карта. Дуэль `WS (TEAM AURORA)
+    33 (1W)` (имена игроков содержат названия команд) раньше выигрывала выбор
+    карточки: её ряд «3 карта» — линия убийств с закрытыми кнопками, и результат
+    был `market_closed=True, reason=closed` вместо «рынка карты нет».
+    """
+    page = _blast_duel_page()
+
+    context = bk._winline_matched_card_context(
+        page["text"], "Aurora Gaming", ours, html=page["html"], map_num=3
+    )
+    odds, extract = _dom_odds(page, "Aurora Gaming", ours, 3)
+
+    assert not _duel_leaks(context), f"контекст матча — дуэль: {context!r}"
+    assert odds == []
+    assert extract.market_closed is False, "market_closed взят у карточки дуэли"
+    assert extract.reason == "map"
+    assert "promotion=not_decider" in (extract.miss_fingerprint or "")
+
+
+def test_map_3_duel_card_returns_when_the_prop_filter_is_off(monkeypatch):
+    """Контроль: флаг отката возвращает прежнее поведение, и тест выше ловит именно фильтр."""
+    monkeypatch.setenv("WINLINE_CARD_SWEEP_SKIP_PROPS", "0")
+    page = _blast_duel_page()
+
+    context = bk._winline_matched_card_context(
+        page["text"], "Aurora Gaming", "1win", html=page["html"], map_num=3
+    )
+    _, extract = _dom_odds(page, "Aurora Gaming", "1win", 3)
+
+    assert _duel_leaks(context)
+    assert extract.market_closed is True
+
+
+def test_map_2_real_card_survives_the_prop_filter():
+    page = _blast_duel_page()
+
+    odds, _ = _dom_odds(page, "Aurora Gaming", "1win", 2)
+    context = bk._winline_matched_card_context(
+        page["text"], "Aurora Gaming", "1win", html=page["html"], map_num=2
+    )
+
+    assert odds == [1.61, 2.22]
+    assert not _duel_leaks(context)

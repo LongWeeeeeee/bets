@@ -1,0 +1,6 @@
+{
+  "captured_at": "2026-10-08 18:34:37 MSK",
+  "source": "serv1:/root/main/runtime/winline_overview_snapshot.json (written by prod cyberscore Winline overview poll, file mtime 2026-10-08 18:34:37 MSK; scp ran ~18:36 MSK)",
+  "capture_command": "scp -q serv1:/root/main/runtime/winline_overview_snapshot.json base/tests/fixtures/winline_overview_snapshot_20261008_blast_duel_cards.json",
+  "why": "Live series BLAST Slam, our names Aurora Gaming vs 1win (bridge key sourcetv:league:19102|id:9255039|id:9467224|map2|Aurora Gaming|1win, 1win team_id 9467224). Winline card text: 'BLAST Slam 2карта TEAM AURORA 1W ... Победитель 2 карта 1.61 2.22'. Prod Winline current-map price for this key was missing 17:01-18:35 on 2026-10-08 (no alias 1win<->1W). The same snapshot holds player-duel cards 'SKITER (TEAM AURORA) PURE (1W)', 'MIKOTO (TEAM AURORA) BZM (1W)', 'WS (TEAM AURORA) 33 (1W)' that must not donate odds."
+}

@@ -20935,6 +20935,59 @@ WINLINE_CARD_SWEEP_POLL_INTERVAL_S = float(
     os.getenv("WINLINE_CARD_SWEEP_POLL_INTERVAL_S", "60") or 60)
 
 
+# Карточки-пропы листинга («BLAST Slam. Дуэль игроков. Убийства»: «WS (TEAM
+# AURORA)» против «33 (1W)») — не матчи. Sweep заводил для них опросы текущей
+# карты с ключами `winline:league:...дуэль игроков...|map2` (08.10.2026: 491 из
+# 1 802 строк истории Winline за сутки на serv1 = 27 %), они занимали слоты
+# WINLINE_CARD_SWEEP_MAX_CARDS и писали фиктивные «open»-цены в историю.
+# Откат: WINLINE_CARD_SWEEP_SKIP_PROPS=0.
+# Правило (маркеры + флаг) живёт в bookmaker_selenium_odds и общее с выбором
+# карточки матча (`_winline_matched_card_context`): дуэль не должна быть ни
+# опросом sweep, ни контекстом матча.
+_WINLINE_PROP_LEAGUE_MARKERS = ("дуэль игроков",)  # зеркало, если импорт недоступен
+_winline_prop_skip_logged_lock = threading.Lock()
+_winline_prop_skip_logged_keys: set = set()
+
+
+def _winline_card_sweep_skip_props_enabled() -> bool:
+    try:
+        from bookmaker_selenium_odds import winline_prop_skip_enabled  # type: ignore
+        return bool(winline_prop_skip_enabled())
+    except Exception:
+        pass
+    return str(os.getenv("WINLINE_CARD_SWEEP_SKIP_PROPS", "1")).strip().lower() \
+        not in {"0", "false", "off", "no", "n"}
+
+
+def _winline_card_is_prop_duel(card: Any) -> bool:
+    """Карточка листинга — проп-секция (дуэль игроков), а не матч команд."""
+    try:
+        league = re.sub(r"\s+", " ", str((card or {}).get("league") or "")).lower()
+    except Exception:
+        return False
+    try:
+        from bookmaker_selenium_odds import winline_league_is_prop_duel  # type: ignore
+        return bool(winline_league_is_prop_duel(league))
+    except Exception:
+        pass
+    return any(marker in league for marker in _WINLINE_PROP_LEAGUE_MARKERS)
+
+
+def _log_winline_prop_card_skipped_once(card: Any) -> None:
+    """Одна строка на ключ карточки: sweep пропустил проп-карточку."""
+    try:
+        league = str(card.get("league") or "")
+        key = (_winline_card_series_key(league, card.get("team1"), card.get("team2"))
+               or f"{league}|{card.get('team1')}|{card.get('team2')}")
+    except Exception:
+        return
+    with _winline_prop_skip_logged_lock:
+        if key in _winline_prop_skip_logged_keys:
+            return
+        _winline_prop_skip_logged_keys.add(key)
+    print(f"🧹 Winline card sweep: проп-карточка пропущена (не матч) — {key}")
+
+
 def _winline_card_series_key(league: Any, team1: Any, team2: Any) -> str:
     """Ключ серии карточного опроса: титул лиги + нормализованная пара."""
     try:
@@ -21218,6 +21271,17 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
         dltv_series = None
     if not isinstance(dltv_series, dict):
         dltv_series = None
+    if _winline_card_sweep_skip_props_enabled():
+        # До лимита max_cards: проп-карточки не должны вытеснять матчи из слотов
+        # и ни ключа серии, ни опроса для них создаваться не должно.
+        kept_cards = []
+        for card in (cards or []):
+            if _winline_card_is_prop_duel(card):
+                summary["skipped_props"] = int(summary.get("skipped_props") or 0) + 1
+                _log_winline_prop_card_skipped_once(card)
+                continue
+            kept_cards.append(card)
+        cards = kept_cards
     for card in (cards or [])[:max_cards]:
         try:
             summary["cards"] += 1
