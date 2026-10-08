@@ -565,3 +565,212 @@ def test_player_duel_prop_cards_do_not_consume_the_event_budget():
     # 'all' puts live cards first; the three live cards here are all duels.
     selected = collector.select_cards(_duel_overview_cards(), "all", 1)
     assert [(c["team1"], c["team2"]) for c in selected] == [("PARIVISION", "TEAM YANDEX")]
+
+
+class QuickPage(FakePage):
+    """Only tab interaction is synthetic; default markets use captured bodies."""
+    def __init__(self, quick_present=True, full_markets=True):
+        super().__init__()
+        self.quick_present = quick_present
+        self.full_markets = full_markets
+        self.quick = False
+        self.tab_calls = 0
+        self.gotos = []
+        self.default_text = body() if full_markets else (
+            FIXTURES / "winline_live_no_kills_totals_maddogs_20261005.txt").read_text()
+        # A fake tab body, never used as a parser fixture.
+        self.quick_text = "Быстрые\nFAKE QUICK TAB BODY"
+        self.before_click = None
+
+    def goto(self, url, **kwargs):
+        self.gotos.append(url)
+        self.quick = False
+        super().goto(url, **kwargs)
+
+    def inner_text(self, **kwargs):
+        if not self.event:
+            return super().inner_text(**kwargs)
+        assert kwargs["timeout"] == 20000
+        return self.quick_text if self.quick else self.default_text
+
+    def wait_for_function(self, script, *args, **kwargs):
+        if script == collector.FULL_MARKETS_JS and not self.full_markets:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            raise PlaywrightTimeoutError(PROXY + EXIT)
+
+    def evaluate(self, script, event_id=None):
+        if event_id is None and script == getattr(collector, "QUICK_TAB_JS", None):
+            self.tab_calls += 1
+            if self.before_click:
+                self.before_click()
+            self.quick = self.quick_present
+            tabs = ["Все"] if self.full_markets else []
+            if self.quick_present:
+                tabs.append("бЫсТрЫе")
+            return dict(tabs=tabs, clicked=self.quick)
+        return super().evaluate(script, event_id)
+
+
+@pytest.mark.parametrize("quick_present,full_markets", [
+    (True, True), (False, True), (True, False), (False, False),
+])
+def test_quick_dump_capture(monkeypatch, tmp_path, capsys, quick_present, full_markets):
+    page = QuickPage(quick_present, full_markets)
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(live=True)])
+    waits = []
+    monkeypatch.setattr(collector.time, "sleep", waits.append)
+    dump_dir = tmp_path / "quick"
+    history = tmp_path / "h.jsonl"
+
+    def before_click():
+        assert len(list(dump_dir.glob("*_all.txt"))) == 1
+        assert not list(dump_dir.glob("*_quick.txt"))
+    page.before_click = before_click
+    assert collector.main(["--history", str(history), "--kinds", "live", "--max-loads", "2",
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    files = sorted(dump_dir.glob("*.txt"))
+    assert len(files) == (2 if quick_present else 1)
+    assert all(re.fullmatch(r"16855431_\d{8}T\d{6}Z_(all|quick)\.txt", f.name) for f in files)
+    all_file, = dump_dir.glob("*_all.txt")
+    assert all_file.read_text() == page.default_text
+    if quick_present:
+        quick_file, = dump_dir.glob("*_quick.txt")
+        assert quick_file.read_text() == page.quick_text
+        assert waits[-1] == 3.0
+    assert not list(dump_dir.glob("*.tmp"))
+    index_lines = (dump_dir / "index.jsonl").read_text().splitlines()
+    assert len(index_lines) == 1
+    entry = json.loads(index_lines[0])
+    assert set(entry) == {"ts_utc", "event_id", "team1", "team2", "live", "full_markets",
+                          "tabs", "quick_clicked", "chars_all", "chars_quick"}
+    assert re.fullmatch(r"\d{8}T\d{6}Z", entry["ts_utc"])
+    assert entry == dict(ts_utc=entry["ts_utc"], event_id="16855431", team1="TEAM YANDEX",
+                         team2="LGD GAMING", live=True, full_markets=full_markets,
+                         tabs=(["Все"] if full_markets else []) + (["бЫсТрЫе"] if quick_present else []),
+                         quick_clicked=quick_present, chars_all=len(page.default_text),
+                         chars_quick=len(page.quick_text) if quick_present else 0)
+    output = capsys.readouterr()
+    assert "loads=2" in output.out and "status=0 error=-" in output.out
+    assert page.gotos == [collector.IP_ECHO, collector.LIST_URL]
+    if full_markets:
+        rows = [json.loads(line) for line in history.read_text().splitlines()]
+        assert len(rows) == 3 and rows[0]["kills_t1_line"] == 31.5
+    else:
+        assert not history.exists()
+        assert "events_unrendered=1 rows_written=0" in output.out
+    captured = "".join(f.read_text() for f in dump_dir.iterdir()) + output.out + output.err
+    assert all(secret not in captured for secret in (PROXY, EXIT, DIRECT, "proxy.invalid"))
+
+
+def test_quick_dump_masks_private_values(monkeypatch, tmp_path, capsys):
+    page = QuickPage()
+    secrets = (PROXY, EXIT, DIRECT, "proxy.invalid", "test-user", "test-password")
+    page.default_text += "\n" + "\n".join(secrets)
+    page.quick_text += "\n" + "\n".join(secrets)
+    offline_browser(monkeypatch, page)
+    event = card(live=True)
+    event["team1"] += " " + PROXY
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [event])
+    original_evaluate = page.evaluate
+    def evaluate(script, event_id=None):
+        result = original_evaluate(script, event_id)
+        if isinstance(result, dict):
+            result["tabs"] += [EXIT, "proxy.invalid"]
+        return result
+    page.evaluate = evaluate
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    output = capsys.readouterr()
+    captured = "".join(f.read_text() for f in dump_dir.iterdir()) + output.out + output.err
+    assert all(secret not in captured for secret in secrets)
+    assert "FAKE QUICK TAB BODY" in captured
+
+
+def test_quick_dump_environment_and_cli_override(monkeypatch, tmp_path):
+    page = QuickPage(quick_present=False)
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(live=True)])
+    env_dir, cli_dir = tmp_path / "env", tmp_path / "cli"
+    monkeypatch.setenv("WINLINE_QUICK_DUMP_DIR", str(env_dir))
+    args = ["--history", str(tmp_path / "h.jsonl"), "--kinds", "live"]
+    assert collector.main(args) == 0
+    assert (env_dir / "index.jsonl").is_file()
+    before = (env_dir / "index.jsonl").read_text()
+    assert collector.main(args + ["--quick-dump-dir", str(cli_dir)]) == 0
+    assert (cli_dir / "index.jsonl").is_file()
+    assert (env_dir / "index.jsonl").read_text() == before
+
+
+def test_quick_dump_disabled_leaves_outputs_unchanged(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv("WINLINE_QUICK_DUMP_DIR", raising=False)
+    page = QuickPage()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(live=True)])
+    dump_dir = tmp_path / "quick"
+    dump_dir.mkdir()
+    history = tmp_path / "h.jsonl"
+    monkeypatch.setattr(collector.time, "time", lambda: 123.0)
+    assert collector.main(["--history", str(history), "--kinds", "live"]) == 0
+    assert list(dump_dir.iterdir()) == []
+    assert page.tab_calls == 0
+    assert capsys.readouterr().out == (
+        "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
+        "loads=2 country=DE status=0 error=-\n")
+    expected = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n"
+                       for row in collector.build_rows(card(live=True), page.default_text, wall=123.0))
+    assert history.read_text() == expected
+
+
+def test_quick_dump_browser_ip_fail_closed(monkeypatch, tmp_path, capsys):
+    page = QuickPage()
+    page.browser_ip = DIRECT
+    offline_browser(monkeypatch, page)
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"),
+                           "--quick-dump-dir", str(dump_dir)]) == 2
+    assert page.gotos == [collector.IP_ECHO]
+    assert page.tab_calls == 0 and not dump_dir.exists()
+    output = capsys.readouterr()
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT))
+
+
+def test_quick_dump_tab_error_masks_exception_message(monkeypatch, tmp_path, capsys):
+    page = QuickPage()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(live=True)])
+    original_evaluate = page.evaluate
+    def evaluate(script, event_id=None):
+        if event_id is None and script == getattr(collector, "QUICK_TAB_JS", None):
+            print(PROXY + EXIT)
+            raise RuntimeError(PROXY + EXIT)
+        return original_evaluate(script, event_id)
+    page.evaluate = evaluate
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--quick-dump-dir", str(dump_dir)]) == 5
+    output = capsys.readouterr()
+    assert "status=5 error=RuntimeError" in output.out
+    assert len(list(dump_dir.glob("*_all.txt"))) == 1
+    assert not (dump_dir / "index.jsonl").exists()
+    captured = "".join(f.read_text() for f in dump_dir.iterdir()) + output.out + output.err
+    assert all(secret not in captured for secret in (PROXY, EXIT, DIRECT))
+
+
+@pytest.mark.parametrize("max_loads,expected_ids", [(2, ["16855431"]), (4, ["16855431", "16855432"])])
+def test_quick_dump_each_event_with_existing_load_budget(monkeypatch, tmp_path, capsys,
+                                                        max_loads, expected_ids):
+    page = QuickPage()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards",
+                        lambda html: [card("16855431", True), card("16855432", True)])
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--max-loads", str(max_loads), "--quick-dump-dir", str(dump_dir)]) == 0
+    entries = [json.loads(line) for line in (dump_dir / "index.jsonl").read_text().splitlines()]
+    assert [entry["event_id"] for entry in entries] == expected_ids
+    assert all(entry["quick_clicked"] for entry in entries)
+    assert len(list(dump_dir.glob("*.txt"))) == 2 * len(expected_ids)
+    assert page.opened == expected_ids and page.tab_calls == len(expected_ids)
+    assert "loads=%d" % max_loads in capsys.readouterr().out

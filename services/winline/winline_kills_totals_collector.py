@@ -59,6 +59,27 @@ EVENT_READY_JS = """([listing, team1, team2]) => {
   return location.href !== listing && names.includes(normalize(team1))
     && names.includes(normalize(team2)) && text.includes('КАРТА');
 }"""
+QUICK_TAB_JS = """() => {
+  const text = el => (el.innerText || '').trim();
+  const visible = el => el.getClientRects().length > 0
+    && getComputedStyle(el).visibility !== 'hidden';
+  const elements = Array.from(document.querySelectorAll(
+    'button,[role=button],[role=tab],a,div,span')).filter(visible);
+  const children = el => el && el.parentElement
+    ? Array.from(el.parentElement.children).filter(visible) : [];
+  const isQuick = el => text(el).toLowerCase() === 'быстрые';
+  const allTabs = elements.filter(el => text(el) === 'Все');
+  const all = allTabs.find(el => children(el).some(isQuick)) || allTabs[0];
+  let strip = children(all);
+  let quick = strip.find(isQuick);
+  if (!quick) {
+    quick = elements.find(isQuick);
+    if (quick) strip = children(quick);
+  }
+  const tabs = strip.map(text).filter(t => t && t.length <= 20);
+  if (quick) quick.click();
+  return {tabs: tabs, clicked: Boolean(quick)};
+}"""
 
 
 # The event page first renders only the "Популярные на матч/карту" block; the full list (a line
@@ -345,6 +366,54 @@ class Loads:
         self.last = time.monotonic()
 
 
+def _write_dump(path, text):
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(str(tmp), str(path))
+
+
+def capture_quick_tab(page, directory, card, body_text, full_markets, private_values,
+                      check_connection):
+    """Capture default and optional quick view on the verified page, never parse quick markets."""
+    secrets = sorted({str(value) for value in private_values if value}, key=len, reverse=True)
+
+    def safe(text):
+        for secret in secrets:
+            text = text.replace(secret, "[redacted]")
+        return text
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    ts_utc = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    event_id = safe(str(card["event_id"]))
+    # Listing IDs are numeric in production; keep any unexpected card text inside DIR.
+    stem = "%s_%s" % (re.sub(r"[^A-Za-z0-9_-]", "_", event_id), ts_utc)
+    all_text = safe(body_text)
+    _write_dump(directory / (stem + "_all.txt"), all_text)
+    result = page.evaluate(QUICK_TAB_JS)
+    quick_clicked = bool(result.get("clicked"))
+    quick_text = ""
+    if quick_clicked:
+        time.sleep(3.0)
+        quick_text = safe(page.locator("body").inner_text(timeout=20000))
+        check_connection()
+        _write_dump(directory / (stem + "_quick.txt"), quick_text)
+    else:
+        check_connection()
+    entry = dict(ts_utc=ts_utc, event_id=event_id,
+                 team1=safe(card["team1"]), team2=safe(card["team2"]),
+                 live=bool(card.get("live")), full_markets=full_markets,
+                 tabs=[safe(tab) for tab in result.get("tabs", [])],
+                 quick_clicked=quick_clicked, chars_all=len(all_text), chars_quick=len(quick_text))
+    with (directory / "index.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def _cycle(args, stats):
     # No browser factory call, let alone Winline, before the requests checks pass.
     try:
@@ -364,6 +433,10 @@ def _cycle(args, stats):
         return 2
     url, country, exit_ip = chosen
     stats["country"] = country
+    if args.quick_dump_dir:
+        parsed_proxy = urlparse(url)
+        private_values = (url, parsed_proxy.hostname, parsed_proxy.username, parsed_proxy.password,
+                          unquote(parsed_proxy.username), unquote(parsed_proxy.password), direct_ip, exit_ip)
     loads = Loads(args.max_loads)
     winline_started = False
     writer = None
@@ -431,19 +504,25 @@ def _cycle(args, stats):
                     page.wait_for_function(EVENT_READY_JS,
                                            arg=[LIST_URL, card["team1"], card["team2"]], timeout=30000)
                     time.sleep(4.0)
-                    if not wait_full_markets(page):
+                    full_markets = wait_full_markets(page)
+                    if not full_markets:
                         # Only the "Популярные" block rendered: nulls would be indistinguishable
-                        # from "market absent", so this event writes nothing this cycle.
+                        # from "market absent", so this event writes no history rows this cycle.
                         check_connection()
                         stats["events_unrendered"] = stats.get("events_unrendered", 0) + 1
-                        continue
-                    if page.evaluate(EXPAND_JS):
+                        if not args.quick_dump_dir:
+                            continue
+                    elif page.evaluate(EXPAND_JS):
                         time.sleep(1.5)
                     body_text = page.locator("body").inner_text(timeout=20000)
                     check_connection()
-                    for row in build_rows(card, body_text):
-                        if writer.write(row):
-                            stats["rows_written"] += 1
+                    if full_markets:
+                        for row in build_rows(card, body_text):
+                            if writer.write(row):
+                                stats["rows_written"] += 1
+                    if args.quick_dump_dir:
+                        capture_quick_tab(page, args.quick_dump_dir, card, body_text, full_markets,
+                                          private_values, check_connection)
         return 0
     except Exception as exc:
         # Class name only: messages of third-party errors may carry proxy credentials.
@@ -484,6 +563,8 @@ def main(argv=None):
     parser.add_argument("--max-loads", type=int, default=20)
     parser.add_argument("--pool-index", type=int, default=None,
                         help="BOOKMAKER_PROXY_POOL index, inventory-verified; default: at most two candidates")
+    parser.add_argument("--quick-dump-dir", default=os.getenv("WINLINE_QUICK_DUMP_DIR"),
+                        help="opt-in default/Быстрые event body capture directory (WINLINE_QUICK_DUMP_DIR)")
     args = parser.parse_args(argv)
     if args.max_events < 0 or args.max_loads < 1:
         parser.error("--max-events must be >=0 and --max-loads must be >=1")
