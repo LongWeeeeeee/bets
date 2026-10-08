@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -27,7 +28,10 @@ def test_snapshot_is_promoted_only_after_successful_rebase(tmp_path, rebase_stat
     stubs = {
         commands / "systemctl": 'echo "systemctl $*" >> "$EVENT_LOG"\n',
         commands / "sleep": "exit 0\n",
+        # the chain bounds the rebase with `timeout -k N SECONDS cmd...`; macOS has none
+        commands / "timeout": 'while [ "${1#-}" != "$1" ]; do shift 2; done\nshift\nexec "$@"\n',
         root / "venv/bin/python3": '''case "$1" in
+  -c) exec "$STUB_REAL_PY" "$@" ;;   # the writer-lock probe (flock) runs for real
   ELO/rebase_runtime_model_state.py)
     test "$(cat ELO/output/live_team_elo_snapshot.json)" = old || exit 20
     test "$2" = --snapshot || exit 21
@@ -52,17 +56,16 @@ esac
     result = subprocess.run(
         ["bash", "-s", "--", "1"], input=remote, text=True, capture_output=True,
         env={**os.environ, "PATH": str(commands) + os.pathsep + os.environ["PATH"],
-             "EVENT_LOG": str(event_log), "REBASE_STATUS": str(rebase_status)},
+             "EVENT_LOG": str(event_log), "REBASE_STATUS": str(rebase_status),
+             "STUB_REAL_PY": sys.executable},
     )
     events = event_log.read_text().splitlines()
     assert events[:2] == ["systemctl stop cyberscore.service", "rebase"]
-    if rebase_status not in (0, 1):
-        assert result.returncode == rebase_status
-        assert snapshot.read_text() == "old"
-        assert staged.read_text() == "new"
-        assert checked.read_text() == "seen map"
-        assert events[2:] == []
-    elif rebase_status:
+    # Since d9eac8f0 any nonzero rebase code with UNCHANGED runtime ELO files (the stub
+    # writes none) restarts prod on the old snapshot and exits 1; the stale expectation
+    # for 2/137 ("prod stays stopped, exit = rebase code") only holds when the files
+    # changed, which tests/test_pro_chain_rebuild_shell.py covers (kill-state & co).
+    if rebase_status:
         assert result.returncode == 1
         assert checked.read_text() == ""
         assert snapshot.read_text() == "old"

@@ -33,24 +33,132 @@ GUARD. Если база УЖЕ совпадает со снимком, файл
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ELO import live_team_strength as lts  # noqa: E402
+# Только stdlib-модуль с путями: live_team_strength (секунды импорта) здесь НЕ импортируется
+# до тех пор, пока не взяты замки, иначе `timeout` мог бы убить процесс посреди импорта,
+# пока шаг 8 уже видит свободный замок и неизменные отпечатки.
+from ELO import runtime_paths  # noqa: E402
+
+REBASE_LOCK_NAME = "live_elo_rebase.lock"
+
+
+def _read_lock_pid(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return "?"
+    first = text.splitlines()[0].strip() if text else ""
+    return first if first.isdigit() else "?"
+
+
+def _lock_dirs(args: argparse.Namespace) -> list[Path]:
+    """Каталоги всего, что перебазировка может записать (state, progress, live-дельта).
+
+    `os.replace` пишет путь КАК ЗАДАН: если выходной файл — символическая ссылка, новый
+    обычный файл появляется в каталоге самой ссылки, а resolve() называет каталог цели.
+    Поэтому для каждого выхода берутся ОБА: resolve().parent и абсолютный, но не
+    разрешённый p.parent. Один и тот же каталог под двумя написаниями (ссылка на каталог)
+    сводится к одному по (st_dev, st_ino); у ещё не созданного каталога ключ — его путь.
+    Результат отсортирован: порядок один у всех писателей."""
+    outputs = [Path(p) for p in (args.state, args.progress, runtime_paths.live_delta_path())]
+    candidates = [p.resolve().parent for p in outputs]                     # настоящие имена — первыми
+    candidates += [(p if p.is_absolute() else Path.cwd() / p).parent for p in outputs]
+    found: dict[object, Path] = {}
+    for directory in candidates:
+        try:
+            st = os.stat(directory)
+            key: object = (st.st_dev, st.st_ino)
+        except OSError:
+            key = str(directory)
+        found.setdefault(key, directory)
+    return sorted(found.values(), key=str)
+
+
+def _take_rebase_locks(dirs: list[Path]) -> tuple[list[int], int]:
+    """Эксклюзивные замки писателя во всех каталогах вывода. ([fd...], 0) — взяты все;
+    ([], rc) — отказ до любой записи (взятые к этому моменту отпущены).
+
+    Файл открывается БЕЗ O_TRUNC: до получения замка чужой pid в нём затирать нельзя.
+    pid пишется только когда взяты ВСЕ замки. fd не наследуются дочерними процессами
+    (PEP 446), так что замки живут ровно столько, сколько этот процесс.
+    """
+    fds: list[int] = []
+    seen: set[tuple[int, int]] = set()
+
+    def release() -> None:
+        for held in fds:
+            os.close(held)
+
+    for directory in dirs:
+        lock_path = directory / REBASE_LOCK_NAME
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError as exc:
+            print(f"ОШИБКА: не удалось открыть замок перебазировки {lock_path} ({exc})",
+                  file=sys.stderr)
+            release()
+            return [], 1
+        try:
+            st = os.fstat(fd)
+            if (st.st_dev, st.st_ino) in seen:   # тот же файл по другому пути (ссылка): второй flock занял бы сам себя
+                os.close(fd)
+                continue
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(fd)
+            release()
+            if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                print(f"ОШИБКА: перебазировка уже выполняется (замок {lock_path}, "
+                      f"pid {_read_lock_pid(lock_path)})", file=sys.stderr)
+                return [], 3
+            print(f"ОШИБКА: не удалось взять замок перебазировки {lock_path} ({exc})",
+                  file=sys.stderr)
+            return [], 1
+        seen.add((st.st_dev, st.st_ino))
+        fds.append(fd)
+    for fd in fds:
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+        except OSError:
+            pass  # замок взят; pid в файле нужен только для диагностики и SIGKILL-охранника
+    return fds, 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--snapshot", type=Path, default=lts.DEFAULT_SNAPSHOT_PATH)
-    parser.add_argument("--state", type=Path, default=lts.DEFAULT_RUNTIME_MODEL_STATE_PATH)
-    parser.add_argument("--progress", type=Path, default=lts.DEFAULT_RUNTIME_PROGRESS_PATH)
+    parser.add_argument("--snapshot", type=Path, default=runtime_paths.DEFAULT_SNAPSHOT_PATH)
+    parser.add_argument("--state", type=Path, default=runtime_paths.DEFAULT_RUNTIME_MODEL_STATE_PATH)
+    parser.add_argument("--progress", type=Path, default=runtime_paths.DEFAULT_RUNTIME_PROGRESS_PATH)
     parser.add_argument("--force", action="store_true",
                         help="перебазировать даже если база уже совпадает "
                              "(пересобрать из снимка и live-ledger)")
     args = parser.parse_args(argv)
+
+    # Замки раньше всего (и раньше импорта live_team_strength): ни чтения снимка, ни
+    # записи, пока писатель не единственный во ВСЕХ каталогах вывода.
+    lock_fds, lock_rc = _take_rebase_locks(_lock_dirs(args))
+    if lock_rc:
+        return lock_rc
+    try:
+        return _rebase(args)
+    finally:
+        for fd in lock_fds:
+            os.close(fd)
+
+
+def _rebase(args: argparse.Namespace) -> int:
+    global lts
+    from ELO import live_team_strength as lts  # noqa: PLC0415  (только под замками)
 
     if not args.snapshot.exists():
         print(f"ОШИБКА: снимок не найден: {args.snapshot}", file=sys.stderr)

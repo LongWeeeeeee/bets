@@ -335,18 +335,42 @@ case "$writer_wait" in
   ''|*[!0-9]*) writer_wait=60 ;;
   *) if [ "${#writer_wait}" -gt 4 ]; then writer_wait=60; else writer_wait=$((10#$writer_wait)); fi ;;
 esac
-# Живой писатель = процесс python с ELO/rebase_runtime_model_state.py в argv.
-# Скобка в первой букве не даёт pgrep совпасть с собственной командной строкой.
-# Шаблон привязан к НАЧАЛУ argv: первое слово — интерпретатор python (путь и
-# версия любые), затем только его опции, затем сам скрипт. Так не совпадают ни
-# редактор или less с этим файлом, ни CLI агента, чей аргумент-запрос цитирует
-# команду («codex exec ... python3 ELO/rebase_runtime_model_state.py ...»; такой
-# процесс на Маке совпадал со старым шаблоном и был бы убит SIGKILL'ом), ни
-# родитель `timeout -k 60 N venv/bin/python3 ...` (его argv начинается с timeout).
-# pgrep -f сверяет ERE с argv, склеенным пробелами, и в BSD, и в GNU procps.
-# Один шаблон на pgrep и pkill. Сам cyberscore перебазирует in-process
-# (live_team_strength.py:3424/3689), процессом с этим именем он не является.
-writer_pattern='^[^ ]*[p]ython[0-9.]*( -[^ ]+)* [^ ]*rebase_runtime_model_state\.py'
+# Живой писатель = процесс, держащий эксклюзивный flock на runtime/live_elo_rebase.lock
+# (его берёт сам ELO/rebase_runtime_model_state.py первым делом, пишет туда свой pid
+# и отпускает вместе со смертью процесса, в том числе от SIGKILL). Раньше писателя
+# искали pgrep по шаблону над argv, и каждый разбор находил форму, которую шаблон
+# читает неверно: `-uX dev` и `-BW ignore` (настоящий писатель пропущен),
+# `python3 -X dev tools/check_rebase_runtime_model_state.py`, `...state.py.bak`
+# (чужой процесс принят за писателя: отказ ночной перебазировки или SIGKILL
+# постороннему процессу), `-X ELO/rebase...py tool.py`. Любое регулярное выражение
+# над argv имеет такие дыры; замок, которым владеет сам писатель, их не имеет.
+# Сам cyberscore перебазирует in-process (live_team_strength.py:3424/3689) и замок
+# не берёт — так и задумано: шаг 8 останавливает его раньше, чем идёт сюда
+# перебазировка. Файл замка НИКОГДА не удаляется (удаление занятого файла дало бы
+# следующему писателю новый inode и обошло бы исключение).
+# Проба замка: открыть существующий файл и взять LOCK_EX|LOCK_NB. Код 0 = свободен
+# (файла нет или замок взят и тут же отпущен при выходе пробы), 1 = занят, любой
+# другой = неизвестно (каталог вместо файла, нет python, нет прав). Любая ошибка
+# внутри пробы даёт код 2, а не 1: необработанное исключение Python тоже выходит
+# с 1 и было бы принято за «занят».
+lock_file=runtime/live_elo_rebase.lock
+lock_probe_code='import sys
+try:
+    import fcntl, os
+    try:
+        fd = os.open(sys.argv[1], os.O_RDWR)
+    except FileNotFoundError:
+        sys.exit(0)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(1)
+except Exception:
+    sys.exit(2)
+sys.exit(0)'
+rebase_lock_state() {
+  venv/bin/python3 -c "$lock_probe_code" "$lock_file" 2>/dev/null
+}
 # Всё, что перебазировка может записать (live_team_strength.py:1777-1802):
 # состояние, progress и — только при pending_overlay_commit — live-дельта.
 # Путь дельты читает _live_delta_path() (live_team_strength.py:1823): env
@@ -383,49 +407,192 @@ fingerprint_runtime_elo() {
     echo "$f $crc"
   done
 }
-# Код 0 = писатель жив, 1 = процессов нет, иное = pgrep не смог ответить.
-# «Нет» доказано только кодом 1: ошибка pgrep не считается отсутствием.
-rebase_writer_gone() {
-  local rc=0
-  pgrep -f "$writer_pattern" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 1 ]
+# Охранник SIGKILL: pid из файла замка принимается за писателя, только если
+# (1) среди слов его командной строки есть ТОЧНО скрипт перебазировки: слово равно
+# rebase_runtime_model_state.py или оканчивается на /rebase_runtime_model_state.py
+# (`...py.bak` и `check_rebase_runtime_model_state.py` не подходят); `ps -ww` без
+# усечения по ширине; пути с пробелами не распознаются — отказ в пользу «не трогать»;
+# (2) на Linux ядро подтверждает, что именно этот pid держит FLOCK на файле замка:
+# /proc/locks строки `N: FLOCK  ADVISORY  WRITE <pid> <maj:min:inode> 0 EOF`
+# (maj:min hex, inode десятичный, после `->` стоят заблокированные ожидающие — они
+# замок не держат); совпасть должны pid, устройство И inode.
+# Нет /proc/locks (macOS) — проверка (2) пропускается; есть, но pid не найден —
+# не убиваем (прод остаётся остановленным). Путь переопределяется для тестов.
+proc_locks="${PRO_CHAIN_PROC_LOCKS:-/proc/locks}"
+cmd_names_rebase_script() {
+  local word rc=1
+  set -f
+  for word in $1; do
+    case "$word" in
+      rebase_runtime_model_state.py|*/rebase_runtime_model_state.py) rc=0; break ;;
+    esac
+  done
+  set +f
+  return "$rc"
 }
-# rc 124/137 говорят о timeout, а не о python: убитый timeout оставляет python
-# жить, и тот может дописать state после нашего сравнения отпечатков. Поэтому
-# перед любым рестартом после аварийного выхода доказываем, что писателя нет.
-stop_rebase_writer() {
-  local waited=0
-  if rebase_writer_gone; then return 0; fi
-  echo 'ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO; посылаю SIGKILL'
-  pkill -9 -f "$writer_pattern" >/dev/null 2>&1 || true
-  while [ "$waited" -lt "$writer_wait" ]; do
-    if rebase_writer_gone; then return 0; fi
+# "maj:min:inode" файла замка в том же виде, что печатает /proc/locks: major и minor в hex
+# без ведущих нулей, inode десятичный. GNU stat даёт st_dev ОДНИМ десятичным числом
+# (`%d`; `%t`/`%T` — это st_rdev специальных файлов, для обычного файла 0:0), его
+# раскладывают так же, как glibc major()/minor(). BSD/macOS: dev_t = major<<24 | minor.
+lock_file_devino() {
+  local out dev ino
+  if out="$(stat -c '%d:%i' "$lock_file" 2>/dev/null)"; then
+    dev="${out%%:*}"; ino="${out##*:}"
+    case "$dev$ino" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%x:%x:%s\n' $(( ((dev >> 8) & 4095) | ((dev >> 32) & 4294963200) )) \
+      $(( (dev & 255) | ((dev >> 12) & 4294967040) )) "$ino"
+    return 0
+  fi
+  if out="$(stat -f '%d:%i' "$lock_file" 2>/dev/null)"; then
+    dev="${out%%:*}"; ino="${out##*:}"
+    case "$dev$ino" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%x:%x:%s\n' $(( (dev >> 24) & 255 )) $(( dev & 16777215 )) "$ino"
+    return 0
+  fi
+  return 1
+}
+# 0 — подтверждено или проверять нечем (нет /proc/locks); 1 — не подтверждено.
+# Сравниваются pid, УСТРОЙСТВО и inode: одинаковый номер inode на другой файловой системе
+# — другой файл.
+kernel_confirms_lock_holder() {
+  local pid="$1" want=''
+  [ -e "$proc_locks" ] || return 0
+  want="$(lock_file_devino)" || return 1
+  case "$want" in ''|*[!0-9a-f:]*) return 1 ;; esac
+  awk -v pid="$pid" -v want="$want" '
+    function norm(x) { sub(/^0+/, "", x); return x == "" ? "0" : tolower(x) }
+    $2 == "FLOCK" && $5 == pid {
+      n = split($6, part, ":")
+      if (n == 3 && norm(part[1]) ":" norm(part[2]) ":" norm(part[3]) == want) found = 1
+    }
+    END { exit found ? 0 : 1 }' "$proc_locks" 2>/dev/null
+}
+# Осиротевший ДОЧЕРНИЙ процесс этой цепочки до flock. Если `timeout` убит SIGKILL, пока
+# python ещё стартует (импорты, до замка), замок свободен, а процесс жив и потом допишет
+# state. Поэтому pid ребёнка записывается ДО старта python: обёртка `bash -c` пишет свой
+# `$$` в runtime/live_elo_rebase.child.pid и делает exec (pid тот же). После любого
+# ненулевого выхода: жив pid и его команда называет скрипт перебазировки (тот же точный
+# токен) -> наш осиротевший писатель, SIGKILL и ожидание до writer_wait; pid не читается
+# (перед запуском в файле заглушка 0000000000) или процесс не умер -> прод остаётся остановленным.
+# Дополняет замок, не заменяет его. `ps -p <pid>` — запрос одного pid, не поиск.
+child_pid_file=runtime/live_elo_rebase.child.pid
+stop_own_child() {
+  local pid='' cmd='' waited=0
+  { read -r pid < "$child_pid_file"; } 2>/dev/null || pid=''
+  case "$pid" in ''|*[!0-9]*) pid='' ;; esac
+  if [ -n "$pid" ] && { [ "${#pid}" -gt 10 ] || [ "$((10#$pid))" -le 1 ]; }; then pid=''; fi
+  if [ -z "$pid" ]; then
+    echo "ВНИМАНИЕ: pid дочернего процесса перебазировки не записан в $child_pid_file; осиротевший писатель до замка не исключён"
+    return 1
+  fi
+  pid=$((10#$pid))
+  kill -0 "$pid" 2>/dev/null || return 0
+  cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)" || cmd=''
+  if ! cmd_names_rebase_script "$cmd"; then
+    if [ -z "$cmd" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "ВНИМАНИЕ: pid $pid из $child_pid_file жив, но его команда не читается; осиротевший писатель не исключён"
+      return 1
+    fi
+    return 0   # номер перешёл постороннему процессу (или зомби): наш ребёнок уже мёртв
+  fi
+  echo "ВНИМАНИЕ: после прерывания жив дочерний процесс перебазировки ELO (pid $pid); посылаю SIGKILL"
+  kill -9 "$pid" >/dev/null 2>&1 || true
+  while :; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    cmd="$(ps -ww -p "$pid" -o command= 2>/dev/null)" || cmd=''
+    cmd_names_rebase_script "$cmd" || return 0   # зомби/чужой процесс: писать он уже не может
+    [ "$waited" -lt "$writer_wait" ] || break
     sleep 1
     waited=$((waited + 1))
   done
-  rebase_writer_gone
+  echo "ВНИМАНИЕ: дочерний процесс перебазировки (pid $pid) не умер за ${writer_wait} с"
+  return 1
 }
-# Нет timeout или pgrep/pkill — не трогаем прод вообще: без предела вернётся
-# ночной простой 08.10, а без доказательства смерти писателя рестарт опасен.
+# rc 124/137 говорят о timeout, а не о python: убитый timeout оставляет python
+# жить, и тот может дописать state после нашего сравнения отпечатков. Поэтому
+# перед любым рестартом после аварийного выхода доказываем, что замок свободен.
+# Занятый замок -> pid из файла -> SIGKILL только если у этого pid в командной
+# строке сам скрипт перебазировки (охранник от повторного использования pid:
+# замок мог отпустить писатель, а его pid занять чужой процесс). `ps -p <pid>` —
+# запрос ОДНОГО pid, а не поиск по таблице процессов. Потом до writer_wait секунд
+# ждём, пока замок освободится; занят или неизвестен — прод остаётся остановленным.
+stop_rebase_writer() {
+  local waited=0 lock_rc=0 holder='' holder_cmd=''
+  stop_own_child || return 1
+  rebase_lock_state || lock_rc=$?
+  if [ "$lock_rc" -eq 0 ]; then return 0; fi
+  if [ "$lock_rc" -eq 1 ]; then
+    { read -r holder < "$lock_file"; } 2>/dev/null || holder=''
+    case "$holder" in ''|*[!0-9]*) holder='' ;; esac
+    if [ -n "$holder" ]; then
+      holder_cmd="$(ps -ww -p "$holder" -o command= 2>/dev/null)" || holder_cmd=''
+      if ! cmd_names_rebase_script "$holder_cmd"; then
+        echo "ВНИМАНИЕ: замок перебазировки держит pid '$holder' (команда: '$holder_cmd'), это не скрипт перебазировки; не трогаю"
+      elif ! kernel_confirms_lock_holder "$holder"; then
+        echo "ВНИМАНИЕ: pid $holder назван в $lock_file, но $proc_locks не показывает, что он держит FLOCK на этом файле; не трогаю"
+      else
+        echo "ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO (pid $holder); посылаю SIGKILL"
+        kill -9 "$holder" >/dev/null 2>&1 || true
+      fi
+    else
+      echo "ВНИМАНИЕ: замок перебазировки занят, а pid в $lock_file не читается; не трогаю"
+    fi
+  else
+    echo "ВНИМАНИЕ: состояние замка перебазировки неизвестно (проба вернула $lock_rc)"
+  fi
+  while [ "$waited" -lt "$writer_wait" ]; do
+    lock_rc=0
+    rebase_lock_state || lock_rc=$?
+    if [ "$lock_rc" -eq 0 ]; then return 0; fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  lock_rc=0
+  rebase_lock_state || lock_rc=$?
+  [ "$lock_rc" -eq 0 ]
+}
+# Нет timeout — не трогаем прод вообще: без предела вернётся ночной простой 08.10.
 if ! command -v timeout >/dev/null 2>&1; then
   echo 'ОШИБКА: нет команды timeout; перебазировка без предела по времени запрещена, прод не остановлен'
   exit 1
 fi
-if ! command -v pgrep >/dev/null 2>&1 || ! command -v pkill >/dev/null 2>&1; then
-  echo 'ОШИБКА: нет pgrep/pkill; доказать отсутствие писателя нельзя, прод не остановлен'
+# Второй писатель запрещён: замок занят — перебазировка уже идёт; неизвестен —
+# доказать отсутствие писателя нельзя. В обоих случаях прод не останавливаем.
+pre_lock_rc=0
+rebase_lock_state || pre_lock_rc=$?
+if [ "$pre_lock_rc" -eq 1 ]; then
+  echo "ОШИБКА: перебазировка ELO уже выполняется (замок $lock_file занят); второй писатель запрещён, прод не остановлен"
+  exit 1
+elif [ "$pre_lock_rc" -ne 0 ]; then
+  echo "ОШИБКА: не удалось проверить замок перебазировки $lock_file (проба вернула $pre_lock_rc); отсутствие писателя не доказано, прод не остановлен"
   exit 1
 fi
-if ! rebase_writer_gone; then
-  echo 'ОШИБКА: перебазировка ELO уже выполняется (или pgrep не ответил); второй писатель запрещён, прод не остановлен'
+# Файл pid ребёнка перезаписывается (не удаляется) заглушкой 0000000000 ДО остановки прода:
+# заглушка после ненулевого выхода значит «ребёнок не записан» -> прод остаётся остановленным.
+# Обёртка пишет свой pid ПОВЕРХ заглушки (`1<>`, без усечения, %010d = те же 11 байт): место
+# под запись выделено ещё до stop, поэтому полный диск (ENOSPC; serv1 08.10 занят на 92 %)
+# не может сорвать запись pid уже ПОСЛЕ остановки прода (astra r7 P1).
+if ! { mkdir -p "$(dirname "$child_pid_file")" && printf '%s\n' 0000000000 > "$child_pid_file"; }; then
+  echo "ОШИБКА: не удалось подготовить файл pid перебазировки $child_pid_file; прод не остановлен"
   exit 1
 fi
 systemctl stop cyberscore.service
 elo_before="$(fingerprint_runtime_elo)"
 rebase_started="$(date +%s)"
 rebase_status=0
-timeout -k 60 "$rebase_timeout" venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot" || rebase_status=$?
+# exec сохраняет pid, так что код возврата python доходит до timeout без искажений;
+# `$$`/`$1` ниже — внутри одинарных кавычек, а делимитер heredoc тоже в кавычках.
+timeout -k 60 "$rebase_timeout" bash -c 'printf "%010d\n" "$$" 1<> "$1" || exit 125; shift; exec "$@"' \
+  _ "$child_pid_file" venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot" || rebase_status=$?
 if [ "$rebase_status" -ne 0 ]; then
   rebase_seconds=$(( $(date +%s) - rebase_started ))
+  # Код 3 CLI = замок перебазировки уже держал другой писатель; pid берём из файла
+  # ДО stop_rebase_writer (тот может убить писателя, но pid в файле остаётся).
+  busy_pid=''
+  if [ "$rebase_status" -eq 3 ]; then
+    { read -r busy_pid < "$lock_file"; } 2>/dev/null || busy_pid=''
+    case "$busy_pid" in ''|*[!0-9]*) busy_pid='?' ;; esac
+  fi
   # Отпечатки имеют смысл только когда писателя точно нет: берём их ПОСЛЕ.
   if ! stop_rebase_writer; then
     echo "ОШИБКА: процесс перебазировки ELO не остановлен (rc=$rebase_status, ${rebase_seconds} с); сервис оставлен остановленным"
@@ -446,12 +613,20 @@ if [ "$rebase_status" -ne 0 ]; then
     # Таймаут (124/137), OOM-убийство (137), падение интерпретатора, код 2 самой
     # перебазировки с откатом: ни один runtime-файл не изменился, база прежняя,
     # и прод безопасно поднять на прежнем снимке.
-    echo "ОШИБКА: перебазировка ELO прервана (rc=$rebase_status, ${rebase_seconds} с, лимит ${rebase_timeout} с); runtime ELO не изменён, прод поднят на прежнем снимке"
+    if [ "$rebase_status" -eq 3 ]; then
+      echo "ОШИБКА: перебазировка ELO уже выполняется другим процессом (rc=3, pid $busy_pid в $lock_file); runtime ELO не изменён, прод поднят на прежнем снимке"
+    else
+      echo "ОШИБКА: перебазировка ELO прервана (rc=$rebase_status, ${rebase_seconds} с, лимит ${rebase_timeout} с); runtime ELO не изменён, прод поднят на прежнем снимке"
+    fi
     : > /root/.local/state/ingame/map_id_check.txt
     systemctl start cyberscore.service
     exit 1
   fi
-  echo "ОШИБКА: целостность runtime ELO не подтверждена (rc=$rebase_status, ${rebase_seconds} с); runtime ELO изменён; сервис оставлен остановленным"
+  busy_note=''
+  if [ "$rebase_status" -eq 3 ]; then
+    busy_note="; перебазировка уже выполняется другим процессом (pid $busy_pid в $lock_file)"
+  fi
+  echo "ОШИБКА: целостность runtime ELO не подтверждена (rc=$rebase_status, ${rebase_seconds} с)${busy_note}; runtime ELO изменён; сервис оставлен остановленным"
   exit "$rebase_status"
 fi
 # Упавший mv: runtime ELO уже перебазирован на НОВЫЙ снимок, а на месте лежит

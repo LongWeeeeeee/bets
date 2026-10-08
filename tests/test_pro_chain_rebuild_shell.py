@@ -43,6 +43,12 @@ KV3_REL = "scripts/ops/build_kv3_state.sh"
 LIB_REL = "scripts/run/lib_pro_chain.sh"
 
 OLD_ARTIFACT = b"old-artifact\n"
+# The chain starts the CLI as `timeout -k 60 N bash -c WRAPPER _ CHILD_PID_FILE venv/bin/python3 ...`:
+# the wrapper records its own pid, then exec()s the CLI (same pid), so the chain knows the
+# child's pid before python starts (a pre-flock orphan holds no lock yet).
+CHILD_PID_REL = "runtime/live_elo_rebase.child.pid"
+PID_WRAPPER = 'printf "%010d\\n" "$$" 1<> "$1" || exit 125; shift; exec "$@"'
+CHILD_PID_PLACEHOLDER = b"0000000000\n"   # written before `systemctl stop`; the wrapper overwrites it in place
 REBASE_TIMEOUT_DEFAULT = 1800   # seconds; 4.2 x the whole 06.10.2026 outage window (430 s)
 BUILT = {
     "artifact": b"artifact-v3-hybrid\n",
@@ -254,14 +260,39 @@ if [ "${1:-}" = ELO/rebase_runtime_model_state.py ]; then
     reject-state) printf 'rebased-then-crashed\n' > runtime/live_elo_model_state.json; exit 1;;
     reject-env-delta) printf '{}' > "$STUB_DELTA_FILE"; exit 1;;
     rollback-clean) exit 2;;
-    orphan-writer)
-      # the python writer outlives its `timeout` wrapper: ignores SIGTERM, rewrites
-      # the state STUB_ORPHAN_DELAY seconds later; the foreground part just hangs
+    lock-refused)
+      # the CLI lost the flock race to another writer: it exits 3 and the file
+      # still names that writer
+      printf '4242\n' > runtime/live_elo_rebase.lock; exit 3;;
+    lock-refused-touched)
+      # as lock-refused, but a state file was already rewritten before the exit
+      printf '4242\n' > runtime/live_elo_rebase.lock
+      printf 'rebased\n' > runtime/live_elo_model_state.json; exit 3;;
+    pre-lock-orphan)
+      # a real python (STUB_HOLDER_SCRIPT, argv names the script) that is still "starting":
+      # it takes the flock and rewrites the state only STUB_ORPHAN_DELAY seconds from now
+      exec "$STUB_REAL_PY" "$STUB_HOLDER_SCRIPT" runtime/live_elo_rebase.lock \
+        "${STUB_ORPHAN_DELAY:-0}" runtime/live_elo_model_state.json;;
+    lock-orphan)
+      # a real python (STUB_REAL_PY) takes the flock on the lock file and outlives the
+      # `timeout` wrapper: it ignores SIGTERM and rewrites the state STUB_ORPHAN_DELAY
+      # seconds later. STUB_HOLDER_SCRIPT decides what its argv looks like. The foreground
+      # part waits until the lock is really held, then hangs.
       ( trap '' TERM
-        exec -a "venv/bin/python3 ELO/rebase_runtime_model_state.py --orphan" /bin/bash -c \
-          '/bin/sleep "$1"; printf late-write > runtime/live_elo_model_state.json' orphan \
-          "${STUB_ORPHAN_DELAY:-3}" ) </dev/null >/dev/null 2>&1 &
+        exec "$STUB_REAL_PY" "$STUB_HOLDER_SCRIPT" runtime/live_elo_rebase.lock \
+          "${STUB_ORPHAN_DELAY:-0}" runtime/live_elo_model_state.json \
+          ) </dev/null >"$STUB_ORPHAN_PIDFILE.ready" 2>/dev/null &
       echo $! > "$STUB_ORPHAN_PIDFILE"
+      for _ in $(seq 1 200); do
+        grep -q LOCKED "$STUB_ORPHAN_PIDFILE.ready" 2>/dev/null && break
+        /bin/sleep 0.05
+      done
+      if [ -n "${STUB_PROC_LOCKS_FILE:-}" ]; then
+        "$STUB_REAL_PY" -c "$STUB_PROC_LOCKS_WRITER" "$STUB_PROC_LOCKS_FILE" "$(cat "$STUB_ORPHAN_PIDFILE")" \
+          "$("$STUB_REAL_PY" -c 'import os,sys;print(os.stat(sys.argv[1]).st_ino)' runtime/live_elo_rebase.lock)" \
+          "${STUB_PROC_LOCKS_MODE:-match}" \
+          "${STUB_PROC_LOCKS_DEV:-$("$STUB_REAL_PY" -c 'import os,sys;d=os.stat(sys.argv[1]).st_dev;print("%02x:%02x" % (os.major(d), os.minor(d)))' runtime/live_elo_rebase.lock)}"
+      fi
       exec /bin/sleep 600;;
   esac
 fi
@@ -273,6 +304,53 @@ if { [ "${1:-}" = ELO/convert_state_to_delta.py ] && [ "${STUB_CONVERT:-}" = han
 fi
 exit 0
 '''
+
+# A rebase writer as the kernel sees it: opens the lock file WITHOUT O_TRUNC, takes
+# flock(LOCK_EX|LOCK_NB), writes its pid, says LOCKED. With a delay it writes the state
+# file when the delay ends (a late write the chain must prevent), else it sleeps.
+HOLDER_PY = """import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+os.ftruncate(fd, 0)
+os.write(fd, (str(os.getpid()) + chr(10)).encode())
+print("LOCKED", flush=True)
+delay = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
+if delay:
+    time.sleep(delay)
+    with open(sys.argv[3], "w") as fh:
+        fh.write("late-write")
+else:
+    time.sleep(600)
+"""
+# /proc/locks as Linux writes it (fs/locks.c lock_get_status: `%d: ` id, type FLOCK|POSIX,
+# ADVISORY, READ|WRITE, pid, `%02x:%02x:%ld` = hex major:minor + DECIMAL inode, start, end;
+# a `->` after the id marks a BLOCKED waiter, which holds nothing). Real lines, captured
+# read-only on serv1 by the lead on 08.10.2026 (/root/main/runtime is local ext4):
+#   1: POSIX  ADVISORY  WRITE 298297 fd:02:398966 1073741826 1073742335
+#   N: FLOCK  ADVISORY  WRITE <pid> fd:02:<inode> 0 EOF      (a python fcntl.flock holder)
+# The stub writes such a file for its orphan; the mode picks what the file claims.
+PROC_LOCKS_WRITER = """import sys
+path, pid, ino, mode = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+dev = sys.argv[5]    # the lock file's own "maj:min" (hex), as the kernel prints it
+lines = ["1: POSIX  ADVISORY  WRITE 298297 fd:02:398966 1073741826 1073742335"]
+fl = "FLOCK  ADVISORY  WRITE"
+if mode == "match":
+    lines.append(f"2: {fl} {pid} {dev}:{ino} 0 EOF")
+elif mode == "other-pid":      # the inode is flocked, but by somebody else
+    lines.append(f"2: {fl} {pid + 7} {dev}:{ino} 0 EOF")
+elif mode == "other-inode":    # the pid flocks something else
+    lines.append(f"2: {fl} {pid} {dev}:{ino + 1} 0 EOF")
+elif mode == "other-dev":      # same pid, same inode number, ANOTHER filesystem
+    major, minor = dev.split(":")
+    lines.append(f"2: {fl} {pid} {int(major, 16) + 1:02x}:{minor}:{ino} 0 EOF")
+elif mode == "waiter":         # blocked waiter: holds nothing
+    lines.append(f"2: -> {fl} {pid} {dev}:{ino} 0 EOF")
+elif mode == "posix":          # a POSIX record lock is not the flock the writer takes
+    lines.append(f"2: POSIX  ADVISORY  WRITE {pid} {dev}:{ino} 0 EOF")
+open(path, "w").write("\\n".join(lines) + "\\n")
+"""
+RELEVANT_HOLDER = "rebase_runtime_model_state.py"   # argv names the rebase script
+OTHER_HOLDER = "some_other_tool.py"                 # argv does not
 
 TOPUP_STUB = '#!/bin/bash\necho "TOPUP $*" >> "$STUB_EVENTS"\nexit 0\n'
 
@@ -488,7 +566,10 @@ def test_remote_mode_matches_original(make_env):
         if l.startswith("SCP-UP ") and l.endswith(".tmp"):
             assert any(x.startswith("SSH sha1sum ") and l.split(" ", 1)[1] in x for x in lines[i + 1:]), l
     # the resulting prod trees are identical
-    assert new.prod_tree() == orig.prod_tree()
+    # (the one deliberate addition: runtime/live_elo_rebase.child.pid, the recorded rebase child pid)
+    new_tree = {k: v for k, v in new.prod_tree().items() if k != f"prod/{CHILD_PID_REL}"}
+    assert len(new.prod_tree()) - len(new_tree) == 1
+    assert new_tree == orig.prod_tree()
     for rel, key in DELIVERIES.items():
         assert (new.prod / rel).read_bytes() == BUILT[key], rel
     # notification: no shadow prefix in remote non-shadow mode
@@ -755,7 +836,10 @@ def test_chain_gate_waits_for_empty_live_state(make_env, mode):
 echo GATE-SLEEP >> "$STUB_EVENTS"
 printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
 ''', exe=True)
-    r = _run_library(e, 'wait_no_live_map 2 test-gate; echo PROCEEDED',
+    # Event-driven: the sleep stub clears the live state on its first call, so the
+    # wait ends in milliseconds whatever the budget; 60 s only keeps a loaded machine
+    # (first remote probe overran the old 2 s budget) from exhausting it first.
+    r = _run_library(e, 'wait_no_live_map 60 test-gate; echo PROCEEDED',
                      extra={"PRO_CHAIN_LIVE_POLL_SECONDS": "0.01"})
     assert r.returncode == 0, (r.stdout, r.stderr)
     assert "жду окончания живой карты" in r.stdout and "PROCEEDED" in r.stdout
@@ -812,9 +896,11 @@ def test_chain_gate_restart_wait_or_bound_under_errexit(make_env, mode, clears, 
     )
     _write(e.stubs / "python3", text, exe=True)
     # Observe the CHAIN/prod boundary before bash -s executes any transaction text.
+    # Only the live-state read counts: the transaction's own `python3 -c` helpers
+    # (rebase lock probe, delta expanduser) are not live reads.
     _write(e.prod / "venv/bin/python3", PRODPY_STUB.replace(
         'then exec "$STUB_REAL_PY" "$@"; fi',
-        'then echo LIVE-READ >> "$STUB_EVENTS"; '
+        'then case "$*" in *sourcetv_matches.json*) echo LIVE-READ >> "$STUB_EVENTS";; esac; '
         'exec "$STUB_REAL_PY" "$@"; fi',
     ), exe=True)
     transaction_stdin = e.base / "transaction.stdin"
@@ -836,7 +922,9 @@ echo RESTART-GATE-SLEEP >> "$STUB_EVENTS"
 printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
 ''', exe=True)
     r = e.run(REBUILD_REL, extra={
-        "PRO_CHAIN_RESTART_WAIT_SECONDS": "2" if clears else "0",
+        # clears: event-driven (the sleep stub clears the state), 60 s is only headroom
+        # against load; not clears: 0 s is deterministic (exhausted before any read).
+        "PRO_CHAIN_RESTART_WAIT_SECONDS": "60" if clears else "0",
         "PRO_CHAIN_LIVE_POLL_SECONDS": "0.01",
         "D1_TRANSACTION_STDIN": str(transaction_stdin),
     })
@@ -883,9 +971,10 @@ printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
 
 
 def _memory_probe(e, *, live=True, available=1, descendant=0.6):
-    # MemAvailable starts HIGH and the probe stub itself writes `available` right
-    # after PROBE-BEGIN: the watchdog (0.05 s poll) can only fire while the probe and
-    # its background descendant run. Writing the low value from t=0 let a loaded
+    # MemAvailable starts HIGH and the probe stub itself writes `available` only AFTER
+    # it has spawned the background descendant and logged PROBE-CHILD: the watchdog
+    # (0.05 s poll) can only fire while the probe and its descendant both exist, so
+    # "descendant not finished" really proves the descendant was killed. Writing the low value from t=0 let a loaded
     # machine kill the group before pro_corpus_extract.py started (3/3 red on HEAD).
     _write(e.prod / "runtime/sourcetv_matches.json", '{"map": 1}' if live else "{}")
     meminfo = e.base / "meminfo"
@@ -899,10 +988,10 @@ exec /bin/sleep "$@"
         'echo "PY $* |$note |@$here" >> "$EV"\n'
         'if [ "$1" = scripts/pro_chain/pro_corpus_extract.py ]; then\n'
         '  echo PROBE-BEGIN >> "$EV"\n'
-        f'  printf \'MemAvailable: {available} kB\\n\' > "$PRO_CHAIN_MEMINFO_PATH.new"\n'
-        '  mv "$PRO_CHAIN_MEMINFO_PATH.new" "$PRO_CHAIN_MEMINFO_PATH"\n'
         f'  (/bin/sleep {descendant}; echo PROBE-DESCENDANT-FINISHED >> "$EV") &\n'
         '  echo "PROBE-CHILD $!" >> "$EV"\n'
+        f'  printf \'MemAvailable: {available} kB\\n\' > "$PRO_CHAIN_MEMINFO_PATH.new"\n'
+        '  mv "$PRO_CHAIN_MEMINFO_PATH.new" "$PRO_CHAIN_MEMINFO_PATH"\n'
         '  wait $!\n'
         '  echo PROBE-FINISHED >> "$EV"\n'
         'fi',
@@ -929,8 +1018,12 @@ def test_chain_gate_watchdog_kills_group_and_prevents_delivery(make_env, shadow)
     # Wait beyond the stub's sleep: killing only the shell PID would leave the
     # background descendant alive to append its marker. No ps dependency.
     time.sleep(1.6)
-    assert "PROBE-BEGIN" in e.events_lines() and "PROBE-FINISHED" not in e.events_lines()
-    assert "PROBE-DESCENDANT-FINISHED" not in e.events_lines()
+    events = e.events_lines()
+    assert "PROBE-BEGIN" in events and "PROBE-FINISHED" not in events
+    # The descendant existed when the kill fired (its pid line precedes the low
+    # MemAvailable write), so its missing marker means it was killed, not never born.
+    assert any(l.startswith("PROBE-CHILD ") for l in events)
+    assert "PROBE-DESCENDANT-FINISHED" not in events
     assert e.prod_tree() == before
     assert e.ops(("SYSTEMCTL", "PRODPY", "BASH-S")) == []
     assert not e.summary.exists()
@@ -997,7 +1090,11 @@ def test_chain_gate_bounds_a_blocked_live_state_read(make_env, read_timeout):
         "PRO_CHAIN_READ_TIMEOUT_SECONDS": read_timeout, "PRO_CHAIN_LIVE_POLL_SECONDS": "0.01",
     })
     assert r.returncode == 0, (r.stdout, r.stderr)
-    assert 0.8 <= time.monotonic() - start < 3
+    # Wall-time assertion: a blocked read must neither return at once nor hang. The read
+    # budget here is 1 s; lib_pro_chain.sh falls back to a 15 s default when the env
+    # knob is ignored, so the upper bound has to sit BELOW 15 s or a regression to the
+    # default would pass. 10 s = 10x the 0.8-1.0 s measured locally (load jitter room).
+    assert 0.8 <= time.monotonic() - start < 10
     assert "ВНИМАНИЕ: blocked-read" in r.stdout and "PROCEEDED" in r.stdout
 
 
@@ -1008,16 +1105,16 @@ def test_chain_gate_caps_fractional_poll_at_remaining_wait(make_env):
 echo "GATE-SLEEP $1" >> "$STUB_EVENTS"
 printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
 ''', exe=True)
-    # A 3 s bound: SECONDS ticks on whole wall-clock seconds, so with a 1 s bound a
-    # tick during the first live-state read (~4% of runs) exhausted the wait before
-    # any sleep. The poll must still be capped at the remaining wait, never 100.5.
-    r = _run_library(e, 'set -e; wait_no_live_map 3 capped-poll', extra={
+    # A 30 s bound: SECONDS ticks on whole wall-clock seconds, so a small bound lets
+    # a tick (or load) during the first live-state read exhaust the wait before any
+    # sleep. The poll must still be capped at the remaining wait, never 100.5.
+    r = _run_library(e, 'set -e; wait_no_live_map 30 capped-poll', extra={
         "PRO_CHAIN_LIVE_POLL_SECONDS": "100.5",
     })
     assert r.returncode == 0, (r.stdout, r.stderr)
     sleeps = e.ops(("GATE-SLEEP",))
     assert len(sleeps) == 1, sleeps
-    assert 1 <= float(sleeps[0].split()[1]) <= 3, sleeps
+    assert 1 <= float(sleeps[0].split()[1]) <= 30, sleeps
 
 
 def test_chain_gate_parent_signal_waits_for_shadow_rebuild(make_env):
@@ -1028,12 +1125,12 @@ def test_chain_gate_parent_signal_waits_for_shadow_rebuild(make_env):
     process = subprocess.Popen([BASH, str(e.build / REBUILD_REL)], cwd=e.build, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 30
         while "PROBE-BEGIN" not in e.events_lines() and time.monotonic() < deadline:
             time.sleep(0.01)
         assert "PROBE-BEGIN" in e.events_lines()
         process.send_signal(signal.SIGTERM)
-        out, err = process.communicate(timeout=5)
+        out, err = process.communicate(timeout=30)
         assert process.returncode == 143, (out, err)
         assert "PROBE-FINISHED" in e.events_lines(), "parent exited before rebuild finished"
         assert e.prod_tree() == before
@@ -1074,6 +1171,12 @@ def _run_rebase(e, outcome, **extra):
     return r, log
 
 
+def _rebase_launch() -> str:
+    """The command the chain hands to `timeout` (the stub logs its argv with spaces)."""
+    return (f"bash -c {PID_WRAPPER} _ {CHILD_PID_REL} "
+            "venv/bin/python3 ELO/rebase_runtime_model_state.py")
+
+
 def _map_id_check(e) -> bytes:
     return (e.state / "ingame/map_id_check.txt").read_bytes()
 
@@ -1100,7 +1203,7 @@ def test_local_transaction_runs_in_its_own_systemd_scope(make_env):
     assert events[transaction + 1] == "SCOPE-ENV 1"
     assert "ВНИМАНИЕ: systemd-run" not in log
     # rebase went through timeout with the kill-after grace and the unchanged argv
-    assert (f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} venv/bin/python3 ELO/rebase_runtime_model_state.py "
+    assert (f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} {_rebase_launch()} "
             "--snapshot ELO/output/live_team_elo_snapshot.json.tmp") in events
     assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
                                      "SYSTEMCTL start cyberscore.service",
@@ -1133,7 +1236,7 @@ def test_rebase_timeout_is_passed_as_a_positional_argument(make_env):
     e = _rebase_env(make_env)
     r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="777")
     assert r.returncode == 0, r.stdout + r.stderr + log
-    assert any(l.startswith("TIMEOUT -k 60 777 venv/bin/python3 ELO/rebase_runtime_model_state.py")
+    assert any(l.startswith(f"TIMEOUT -k 60 777 {_rebase_launch()}")
                for l in e.events_lines())
     assert any(l.startswith("BASH-S -- 1 777 ") for l in e.events_lines())
 
@@ -1219,6 +1322,11 @@ def _kill_pidfile(path: Path) -> None:
         pid = int(path.read_text().strip())
     except (OSError, ValueError):
         return
+    if pid <= 1:
+        # the child pid file holds the placeholder 0000000000 until the wrapper runs:
+        # os.kill(0, ...) would SIGKILL this whole process group (pytest included), and
+        # pid 1 is init (astra r7b P1)
+        return
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -1226,6 +1334,8 @@ def _kill_pidfile(path: Path) -> None:
 
 
 def _alive(pid: int) -> bool:
+    if pid <= 1:
+        return False   # 0 = "this process group", never a recorded child
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -1240,72 +1350,6 @@ def _wait_dead(pid: int, seconds: float = 5.0) -> bool:
             return True
         time.sleep(0.05)
     return not _alive(pid)
-
-
-def test_orphan_writer_is_killed_before_prod_restarts_on_unchanged_files(make_env):
-    e = _rebase_env(make_env)
-    pidfile = e.base / "orphan.pid"
-    delay = 3.0
-    t0 = time.monotonic()
-    try:
-        r, log = _run_rebase(e, "orphan-writer", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
-                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY=str(delay),
-                             STUB_REAL_SLEEP="1")
-        assert r.returncode == 1, r.stdout + r.stderr + log
-        pid = int(pidfile.read_text())
-        assert _wait_dead(pid), "the orphan writer must be dead when the script returns"
-        assert "START-WITH-WRITER-ALIVE" not in e.events_lines(), "prod started next to a live writer"
-        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
-                                         "SYSTEMCTL start cyberscore.service"]
-        assert "ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO; посылаю SIGKILL" in log
-        assert _map_id_check(e) == b""
-        # the point the orphan would have written at has passed: the file must be intact
-        time.sleep(max(0.0, delay + 0.7 - (time.monotonic() - t0)))
-        assert (e.prod / "runtime/live_elo_model_state.json").read_text() == \
-            "runtime/live_elo_model_state.json-v1\n"
-        assert "лимит 60 с); runtime ELO не изменён" in log
-    finally:
-        _kill_pidfile(pidfile)
-
-
-def test_orphan_writer_that_cannot_be_killed_keeps_prod_stopped(make_env):
-    e = _rebase_env(make_env)
-    pidfile = e.base / "orphan.pid"
-    _write(e.stubs / "pkill", '#!/bin/bash\necho "PKILL $*" >> "$STUB_EVENTS"\nexit 0\n', exe=True)
-    try:
-        r, log = _run_rebase(e, "orphan-writer", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
-                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
-                             STUB_REAL_SLEEP="1", PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1")
-        assert r.returncode == 124, r.stdout + r.stderr + log
-        assert _alive(int(pidfile.read_text())), "the stub kill must not have worked"
-        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
-        assert "START-WITH-WRITER-ALIVE" not in e.events_lines()
-        assert _map_id_check(e) == b"old-map\n"
-        assert "ОШИБКА: процесс перебазировки ELO не остановлен (rc=124" in log
-        assert "оставлен остановленным" in log
-        assert any(l.startswith("PKILL -9") for l in e.events_lines())
-        assert _prod_snapshot(e) == OLD_ARTIFACT
-    finally:
-        _kill_pidfile(pidfile)
-
-
-def test_second_writer_is_refused_before_prod_is_stopped(make_env):
-    e = _rebase_env(make_env)
-    manual = subprocess.Popen(
-        [BASH, "-c", "exec -a 'venv/bin/python3 ELO/rebase_runtime_model_state.py --manual' /bin/sleep 30"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        time.sleep(0.3)   # let exec -a take effect before pgrep looks
-        r, log = _run_rebase(e, "ok")
-        assert r.returncode == 1, r.stdout + r.stderr + log
-        assert not e.ops(("SYSTEMCTL",)), "prod must not be stopped next to a running writer"
-        assert not e.ops(("TIMEOUT",))
-        assert _map_id_check(e) == b"old-map\n"
-        assert "ОШИБКА: перебазировка ELO уже выполняется" in log
-        assert manual.poll() is None, "a foreign writer is not ours to kill"
-    finally:
-        manual.kill()
-        manual.wait()
 
 
 @pytest.mark.parametrize("env_value,stub_file", [
@@ -1353,7 +1397,7 @@ def test_invalid_rebase_limit_falls_back_to_1800_with_a_warning(make_env, bad):
     r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS=bad)
     assert r.returncode == 0, r.stdout + r.stderr + log
     assert f"ВНИМАНИЕ: лимит перебазировки '{bad}' недопустим" in log
-    assert any(l.startswith(f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} venv/bin/python3 ELO/rebase")
+    assert any(l.startswith(f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} {_rebase_launch()}")
                for l in e.events_lines()), e.events_lines()
 
 
@@ -1363,7 +1407,7 @@ def test_valid_rebase_limit_is_used_without_a_warning(make_env, good, used):
     r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS=good)
     assert r.returncode == 0, r.stdout + r.stderr + log
     assert "недопустим" not in log
-    assert any(l.startswith(f"TIMEOUT -k 60 {used} venv/bin/python3 ELO/rebase")
+    assert any(l.startswith(f"TIMEOUT -k 60 {used} {_rebase_launch()}")
                for l in e.events_lines()), e.events_lines()
 
 
@@ -1382,7 +1426,7 @@ def test_failed_snapshot_mv_keeps_prod_stopped_with_explicit_error(make_env):
 
 # ------------------------------------------------------------------ round 3 hardening
 # R1 rc=1 is fingerprinted too, R2 LIVE_ELO_DELTA resolved like Path.expanduser,
-# R3 the writer pattern is anchored to the argv start.
+# (R3, the argv-anchored writer pattern, was replaced by the flock in round 5.)
 
 def test_rebase_rc_1_after_touching_runtime_files_leaves_prod_stopped(make_env):
     # The rebase script prints and stat()s AFTER a successful write, outside any
@@ -1441,53 +1485,568 @@ def test_live_elo_delta_unresolvable_tilde_falls_back_with_a_warning(make_env):
     e = _rebase_env(make_env)
     _write(e.prod / "venv/bin/python3", PRODPY_REBASE_STUB.replace(
         'if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi',
-        'if [ "${1:-}" = "-c" ]; then exit 3; fi'), exe=True)
+        'if [ "${1:-}" = "-c" ]; then case "$2" in *expanduser*) exit 3;; esac; exec "$STUB_REAL_PY" "$@"; fi'),
+        exe=True)
     r, log = _run_rebase(e, "ok", LIVE_ELO_DELTA="~/elo_delta.json")
     assert r.returncode == 0, r.stdout + r.stderr + log
     assert "ВНИМАНИЕ: не удалось раскрыть путь LIVE_ELO_DELTA '~/elo_delta.json'" in log
     assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
 
 
-@pytest.mark.parametrize("outcome,rc", [("ok", 0), ("kill-clean", 1)])
-def test_agent_cli_quoting_the_rebase_command_is_neither_a_writer_nor_killed(make_env, outcome, rc):
-    # Seen on the Mac: `codex exec "... python3 ELO/rebase_runtime_model_state.py ..."`
-    # matched the unanchored pattern. On serv1 that refuses the nightly rebase or
-    # SIGKILLs an unrelated process (failure path: stop_rebase_writer's pkill).
-    e = _rebase_env(make_env)
-    quoted = subprocess.Popen(
-        [BASH, "-c", "exec -a 'codex exec please run venv/bin/python3 ELO/rebase_runtime_model_state.py "
-                     "--snapshot x and report' /bin/sleep 30"],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# ------------------------------------------------------------------ round 5 hardening
+# The writer is identified by the flock it owns (ELO/rebase_runtime_model_state.py takes
+# it first), not by an argv regex: three review rounds kept finding argv forms the
+# pgrep pattern misread (`-uX dev`, `-BW ignore`, `...state.py.bak`, `-X ELO/rebase...py
+# tool.py`). These tests no longer scan or depend on the machine-wide process table, so
+# they are safe to run in parallel with anything. The only process lookups left are the
+# script's own `ps -p <the pid from the lock file>` pid-reuse guard and `os.kill(pid, 0)`.
+
+LOCK_REL = "runtime/live_elo_rebase.lock"
+
+
+def _holder_script(e, name: str) -> Path:
+    path = e.base / "holders" / name
+    _write(path, HOLDER_PY)
+    return path
+
+
+def _start_lock_holder(e, name: str = RELEVANT_HOLDER, python_opts: tuple[str, ...] = ()):
+    """A real python holding the fake prod's rebase lock, started before the chain."""
+    script = _holder_script(e, name)
+    proc = subprocess.Popen([sys.executable, *python_opts, str(script), str(e.prod / LOCK_REL)],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True)
+    assert proc.stdout.readline().strip() == "LOCKED", "holder did not take the lock"
+    return proc
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.kill()
+    proc.wait()
+    if proc.stdout:
+        proc.stdout.close()
+
+
+def _lock_free(e) -> bool:
+    import fcntl
+    fd = os.open(str(e.prod / LOCK_REL), os.O_RDWR)
     try:
-        time.sleep(0.3)   # let exec -a take effect before pgrep looks
-        r, log = _run_rebase(e, outcome)
-        assert r.returncode == rc, r.stdout + r.stderr + log
-        assert "уже выполняется" not in log
-        assert e.ops(("SYSTEMCTL",))[:2] == ["SYSTEMCTL stop cyberscore.service",
-                                             "SYSTEMCTL start cyberscore.service"]
-        assert "посылаю SIGKILL" not in log
-        assert quoted.poll() is None, "an unrelated process quoting the command must not be killed"
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
     finally:
-        quoted.kill()
-        quoted.wait()
+        os.close(fd)
+    return True
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("python_opts", [(), ("-BW", "ignore"), ("-uX", "dev")])
+def test_held_rebase_lock_refuses_before_prod_is_stopped(make_env, mode, python_opts):
+    # The holder's argv names the script exactly as the old regex-missed forms did
+    # (`python -BW ignore ...rebase_runtime_model_state.py`); the lock does not care.
+    e = _rebase_env(make_env, mode=mode)
+    holder = _start_lock_holder(e, python_opts=python_opts)
+    try:
+        r, log = _run_rebase(e, "ok")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert not e.ops(("SYSTEMCTL",)), "prod must not be stopped next to a running writer"
+        assert not e.ops(("TIMEOUT",)) and not e.ops(("PRODPY ELO/rebase",))
+        assert _map_id_check(e) == b"old-map\n"
+        assert "ОШИБКА: перебазировка ELO уже выполняется" in log
+        assert holder.poll() is None, "a foreign writer is not ours to kill"
+    finally:
+        _stop(holder)
+
+
+def test_unprobeable_lock_refuses_before_prod_is_stopped(make_env):
+    # Unknown is not free: a lock path that cannot be flocked (here: a directory)
+    # proves nothing about the absence of a writer.
+    e = _rebase_env(make_env)
+    (e.prod / LOCK_REL).mkdir()
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert not e.ops(("SYSTEMCTL",)) and not e.ops(("TIMEOUT",))
+    assert _map_id_check(e) == b"old-map\n"
+    assert "ОШИБКА: не удалось проверить замок перебазировки" in log
+    assert "уже выполняется" not in log
 
 
 @pytest.mark.parametrize("argv0", [
-    "/root/main/venv/bin/python3.12 ELO/rebase_runtime_model_state.py --manual",
-    "venv/bin/python3 -u -B /root/main/ELO/rebase_runtime_model_state.py --manual",
+    "codex exec please run venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot x and report",
+    "venv/bin/python3 -X dev tools/check_rebase_runtime_model_state.py",
+    "venv/bin/python3 ELO/rebase_runtime_model_state.py.bak",
+    "venv/bin/python3 -X ELO/rebase_runtime_model_state.py tool.py",
+    "venv/bin/python3 ELO/rebase_runtime_model_state.py --manual",
 ])
-def test_second_writer_with_interpreter_options_or_abs_path_is_still_refused(make_env, argv0):
+@pytest.mark.parametrize("outcome,rc", [("ok", 0), ("kill-clean", 1)])
+def test_process_naming_the_script_but_holding_no_lock_is_neither_a_writer_nor_killed(
+        make_env, argv0, outcome, rc):
+    # Whatever the argv says, a process that holds no lock is not a writer: the rebase
+    # runs, and the failure path never kills it (the old regex refused the rebase for
+    # some of these forms and SIGKILLed others).
     e = _rebase_env(make_env)
-    manual = subprocess.Popen(
+    other = subprocess.Popen(
         [BASH, "-c", f"exec -a '{argv0}' /bin/sleep 30"],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        time.sleep(0.3)
-        r, log = _run_rebase(e, "ok")
-        assert r.returncode == 1, r.stdout + r.stderr + log
-        assert not e.ops(("SYSTEMCTL",))
-        assert "ОШИБКА: перебазировка ELO уже выполняется" in log
-        assert manual.poll() is None
+        deadline = time.monotonic() + 3.0   # the argv must really be visible, else this proves nothing
+        while time.monotonic() < deadline:
+            seen = subprocess.run(["ps", "-ww", "-p", str(other.pid), "-o", "command="],
+                                  capture_output=True, text=True).stdout
+            if "rebase_runtime_model_state" in seen:
+                break
+            time.sleep(0.05)
+        assert "rebase_runtime_model_state" in seen, seen
+        r, log = _run_rebase(e, outcome)
+        assert r.returncode == rc, r.stdout + r.stderr + log
+        assert "уже выполняется" not in log and "посылаю SIGKILL" not in log
+        assert e.ops(("SYSTEMCTL",))[:2] == ["SYSTEMCTL stop cyberscore.service",
+                                             "SYSTEMCTL start cyberscore.service"]
+        assert other.poll() is None, "an unrelated process quoting the command must not be killed"
     finally:
-        manual.kill()
-        manual.wait()
+        other.kill()
+        other.wait()
+
+
+def test_lock_holder_that_outlives_the_rebase_is_killed_before_prod_restarts(make_env):
+    # The python writer outlives its `timeout` wrapper (rc 124) and would rewrite the
+    # state at +3 s. The chain finds it by the lock, reads its pid from the lock file,
+    # checks that pid's command names the script, SIGKILLs it, waits for the lock.
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    script = _holder_script(e, RELEVANT_HOLDER)
+    delay = 3.0
+    t0 = time.monotonic()
+    try:
+        r, log = _run_rebase(e, "lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY=str(delay),
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        pid = int(pidfile.read_text())
+        assert _wait_dead(pid), "the lock holder must be dead when the script returns"
+        assert _lock_free(e)
+        assert "START-WITH-WRITER-ALIVE" not in e.events_lines(), "prod started next to a live writer"
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                         "SYSTEMCTL start cyberscore.service"]
+        assert f"ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO (pid {pid}); посылаю SIGKILL" in log
+        assert _map_id_check(e) == b""
+        # the point the holder would have written at has passed: the file must be intact
+        time.sleep(max(0.0, delay + 0.7 - (time.monotonic() - t0)))
+        assert (e.prod / "runtime/live_elo_model_state.json").read_text() == \
+            "runtime/live_elo_model_state.json-v1\n"
+        assert "лимит 60 с); runtime ELO не изменён" in log
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def test_lock_holder_that_is_not_the_rebase_script_is_not_killed_and_prod_stays_stopped(make_env):
+    # pid-reuse guard: the lock file's pid is alive but its command does not name the
+    # rebase script, so it is not ours to kill; the lock never frees, prod stays stopped.
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    script = _holder_script(e, OTHER_HOLDER)
+    try:
+        r, log = _run_rebase(e, "lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1",
+                             PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1")
+        assert r.returncode == 124, r.stdout + r.stderr + log
+        assert _alive(int(pidfile.read_text())), "the guard must not have killed it"
+        assert not _lock_free(e)
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+        assert "START-WITH-WRITER-ALIVE" not in e.events_lines()
+        assert _map_id_check(e) == b"old-map\n"
+        assert "посылаю SIGKILL" not in log and "это не скрипт перебазировки" in log
+        assert "ОШИБКА: процесс перебазировки ELO не остановлен (rc=124" in log
+        assert "оставлен остановленным" in log
+        assert _prod_snapshot(e) == OLD_ARTIFACT
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def test_unknown_lock_state_after_a_failed_rebase_keeps_prod_stopped(make_env):
+    # The pre-check passes, the rebase dies (rc 137), and now the lock probe cannot
+    # answer: without proof that no writer is left, prod must not start.
+    e = _rebase_env(make_env)
+    _write(e.prod / "venv/bin/python3", PRODPY_REBASE_STUB.replace(
+        'if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi',
+        'if [ "${1:-}" = "-c" ]; then [ -e runtime/.rebase_ran ] && exit 3; exec "$STUB_REAL_PY" "$@"; fi'
+    ).replace('  case "${STUB_REBASE:-ok}" in',
+              '  : > runtime/.rebase_ran\n  case "${STUB_REBASE:-ok}" in'), exe=True)
+    r, log = _run_rebase(e, "kill-clean", PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1", STUB_REAL_SLEEP="1")
+    assert r.returncode == 137, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "состояние замка перебазировки неизвестно" in log
+    assert "ОШИБКА: процесс перебазировки ELO не остановлен (rc=137" in log
+    assert _prod_snapshot(e) == OLD_ARTIFACT
+
+
+def test_rebase_lock_probe_does_not_create_the_lock_file(make_env):
+    # The probe only reads: a normal night leaves runtime/ exactly as the old script
+    # did except for the lock file the real rebase CLI creates (the stub CLI does not).
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert not (e.prod / LOCK_REL).exists()
+
+
+# ------------------------------------------------------------------ round 6 hardening
+
+@pytest.mark.parametrize("name", [
+    "rebase_runtime_model_state.py.bak",           # exact token, not substring
+    "check_rebase_runtime_model_state.py",          # suffix of the file NAME, not of a path part
+])
+def test_lock_holder_whose_argv_only_contains_the_script_name_is_not_killed(make_env, name):
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    script = _holder_script(e, name)
+    try:
+        r, log = _run_rebase(e, "lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1",
+                             PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1")
+        assert r.returncode == 124, r.stdout + r.stderr + log
+        assert _alive(int(pidfile.read_text())), "a lookalike holder must not be SIGKILLed"
+        assert "посылаю SIGKILL" not in log and "это не скрипт перебазировки" in log
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+        assert _map_id_check(e) == b"old-map\n"
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def _orphan_with_proc_locks(make_env, mode: str):
+    """The orphan holds the lock and carries the right script name; /proc/locks says `mode`."""
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    script = _holder_script(e, RELEVANT_HOLDER)
+    proc_locks = e.base / "proc_locks"
+    try:
+        r, log = _run_rebase(e, "lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1",
+                             PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1",
+                             PRO_CHAIN_PROC_LOCKS=str(proc_locks),
+                             STUB_PROC_LOCKS_FILE=str(proc_locks),
+                             STUB_PROC_LOCKS_WRITER=PROC_LOCKS_WRITER,
+                             STUB_PROC_LOCKS_MODE=mode)
+        pid = int(pidfile.read_text())
+        alive = _alive(pid)
+        return e, r, log, pid, alive
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def test_proc_locks_confirming_the_holder_allows_the_kill(make_env):
+    # The Linux branch (PRO_CHAIN_PROC_LOCKS overrides /proc/locks; macOS has none):
+    # a FLOCK line for this pid and this lock file's inode is what makes it a writer.
+    e, r, log, pid, alive = _orphan_with_proc_locks(make_env, "match")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert not alive and f"жив процесс перебазировки ELO (pid {pid}); посылаю SIGKILL" in log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                     "SYSTEMCTL start cyberscore.service"]
+
+
+@pytest.mark.parametrize("mode", ["other-pid", "other-inode", "other-dev", "waiter", "posix", "empty"])
+def test_proc_locks_not_listing_the_pid_for_the_lock_inode_means_no_kill(make_env, mode):
+    # Fail-safe: /proc/locks exists but does not show this pid holding this inode as an
+    # FLOCK (a reused pid, another file, a blocked waiter, a POSIX lock): do not kill,
+    # prod stays stopped.
+    e, r, log, pid, alive = _orphan_with_proc_locks(make_env, mode)
+    assert r.returncode == 124, r.stdout + r.stderr + log
+    assert alive, "the pid was not proven to hold the lock; it must not be killed"
+    assert "посылаю SIGKILL" not in log and "не показывает, что он держит FLOCK" in log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "оставлен остановленным" in log
+
+
+def test_cli_rc3_names_the_lock_file_pid_and_keeps_the_restore_behaviour(make_env):
+    # Another rebase held the lock when this CLI started: rc 3. Nothing was written, so
+    # prod is restored as before, but the message names the cause and the pid instead of
+    # the generic "interrupted" line.
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "lock-refused")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert "ОШИБКА: перебазировка ELO уже выполняется другим процессом (rc=3, pid 4242 в runtime/live_elo_rebase.lock)" in log
+    assert "перебазировка ELO прервана" not in log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                     "SYSTEMCTL start cyberscore.service"]
+    assert _map_id_check(e) == b""
+
+
+# ------------------------------------------------------------------ round 7 hardening
+# G1 pre-flock orphan of the chain's OWN child, G2 (ELO/tests) symlinked outputs, G3 the
+# /proc/locks binding compares the device too, L3 rc 3 message names the pid.
+
+# `timeout` that dies (rc 137, as after SIGKILL) while its child is still starting: the child
+# lives on as an orphan that holds NO lock yet.
+ORPHANING_TIMEOUT_STUB = r"""#!/bin/bash
+echo "TIMEOUT $*" >> "$STUB_EVENTS"
+shift 3
+"$@" </dev/null >/dev/null 2>&1 &
+# at most 3 s, well under the writer's 8 s "import" delay (test_pre_flock_orphan...): on a script
+# without the pid wrapper (round 6) the orphan is still lock-free when the chain decides, which is
+# the real hazard; 3 s (not 1 s) leaves room for a slow wrapper on a loaded host (Opus r7b P3)
+for _ in $(seq 1 60); do
+  p="$(cat runtime/live_elo_rebase.child.pid 2>/dev/null)"
+  [ -n "$p" ] && [ "$p" != 0000000000 ] && break
+  /bin/sleep 0.05
+done
+exit 137
+"""
+# `timeout` that dies before it ever started a child: the pid file stays empty
+DEAD_TIMEOUT_STUB = '#!/bin/bash\necho "TIMEOUT $*" >> "$STUB_EVENTS"\nexit 137\n'
+# `timeout` whose recorded child pid belongs to an unrelated live process (pid reuse)
+REUSED_PID_TIMEOUT_STUB = (
+    '#!/bin/bash\necho "TIMEOUT $*" >> "$STUB_EVENTS"\n'
+    "printf '%s\\n' \"$STUB_UNRELATED_PID\" > runtime/live_elo_rebase.child.pid\nexit 137\n")
+# a late rebase writer: sleeps (the "import" phase, no lock), THEN takes the flock and writes
+PRELOCK_HOLDER_PY = """import fcntl, os, sys, time
+if os.environ.get("STUB_HOLDER_SELFPID"):
+    # test-only record of the orphan, independent of the script's own pid file, so the
+    # systemctl stub can tell "prod started next to a live writer" on any script version
+    with open(os.environ["STUB_HOLDER_SELFPID"], "w") as fh:
+        fh.write(str(os.getpid()))
+time.sleep(float(sys.argv[2]))
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)
+fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+os.ftruncate(fd, 0)
+os.write(fd, (str(os.getpid()) + chr(10)).encode())
+with open(sys.argv[3], "w") as fh:
+    fh.write("late-write")
+time.sleep(600)
+"""
+
+
+def _prelock_orphan(make_env, timeout_stub: str, name: str = RELEVANT_HOLDER, delay: float = 8.0, **extra):
+    e = _rebase_env(make_env)
+    _write(e.stubs / "timeout", timeout_stub, exe=True)
+    script = e.base / "holders" / name
+    _write(script, PRELOCK_HOLDER_PY)
+    child_pid = e.prod / CHILD_PID_REL
+    selfpid = e.base / "prelock_holder.selfpid"
+    t0 = time.monotonic()
+    try:
+        r, log = _run_rebase(e, "pre-lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(selfpid), STUB_HOLDER_SELFPID=str(selfpid),
+                             STUB_ORPHAN_DELAY=str(delay),
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1", **extra)
+        return e, r, log, child_pid, t0
+    except BaseException:
+        _kill_prelock(e)
+        raise
+
+
+def _kill_prelock(e) -> None:
+    for f in (e.prod / CHILD_PID_REL, e.base / "prelock_holder.selfpid"):
+        try:
+            _kill_pidfile(f)
+        except (OSError, ValueError):
+            pass
+
+
+def test_pre_flock_orphan_of_our_own_child_is_killed_before_prod_restarts(make_env):
+    # The timeout wrapper dies (137) while the python child is still importing: it holds no
+    # flock, so the lock probe says "free" and, until round 7, prod was restored while the
+    # orphan went on to rewrite the state. The pid recorded by the wrapper before python
+    # started finds it; its command names the script, so it is SIGKILLed and awaited.
+    delay = 8.0
+    e, r, log, child_pid, t0 = _prelock_orphan(make_env, ORPHANING_TIMEOUT_STUB, delay=delay)
+    try:
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert "START-WITH-WRITER-ALIVE" not in e.events_lines(), "prod started next to a live writer"
+        pid = int(child_pid.read_text())
+        assert _wait_dead(pid), "the pre-lock orphan must be dead when the script returns"
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                         "SYSTEMCTL start cyberscore.service"]
+        assert f"жив дочерний процесс перебазировки ELO (pid {pid}); посылаю SIGKILL" in log
+        assert _map_id_check(e) == b""
+        time.sleep(max(0.0, delay + 0.7 - (time.monotonic() - t0)))   # the moment it would have written
+        assert (e.prod / "runtime/live_elo_model_state.json").read_text() == \
+            "runtime/live_elo_model_state.json-v1\n"
+        assert not (e.prod / LOCK_REL).exists() or _lock_free(e)
+    finally:
+        _kill_prelock(e)
+
+
+def test_unrecorded_child_pid_after_a_failed_rebase_keeps_prod_stopped(make_env):
+    # `timeout` died before any child pid was recorded (the file was emptied before the run):
+    # an orphan cannot be ruled out, so prod stays stopped (fail-safe).
+    e = _rebase_env(make_env)
+    _write(e.stubs / "timeout", DEAD_TIMEOUT_STUB, exe=True)
+    r, log = _run_rebase(e, "ok", STUB_REAL_SLEEP="1")
+    assert r.returncode == 137, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "pid дочернего процесса перебазировки не записан" in log
+    assert "ОШИБКА: процесс перебазировки ELO не остановлен (rc=137" in log and "оставлен остановленным" in log
+    assert (e.prod / CHILD_PID_REL).read_bytes() == CHILD_PID_PLACEHOLDER, "reset before the run, never deleted"
+
+
+def test_child_pid_file_is_overwritten_each_run_and_never_deleted(make_env):
+    e = _rebase_env(make_env)
+    _write(e.prod / CHILD_PID_REL, "stale-pid-from-last-night\n")
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    text = (e.prod / CHILD_PID_REL).read_text().strip()
+    assert text.isdigit() and text != "stale-pid-from-last-night", text
+
+
+def test_recorded_pid_of_an_unrelated_live_process_is_not_killed(make_env):
+    # pid reuse: the recorded child is gone and its number now belongs to someone else
+    e = _rebase_env(make_env)
+    _write(e.stubs / "timeout", REUSED_PID_TIMEOUT_STUB, exe=True)
+    other = subprocess.Popen(["/bin/sleep", "30"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        r, log = _run_rebase(e, "ok", STUB_UNRELATED_PID=str(other.pid), STUB_REAL_SLEEP="1")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert other.poll() is None, "an unrelated process must not be killed"
+        assert "посылаю SIGKILL" not in log
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                         "SYSTEMCTL start cyberscore.service"]
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_live_recorded_child_that_does_not_name_the_script_is_not_killed(make_env):
+    # the orphan stand-in is alive but its argv does not name the script: not ours to kill
+    e, r, log, child_pid, _ = _prelock_orphan(make_env, ORPHANING_TIMEOUT_STUB,
+                                              name=OTHER_HOLDER, delay=30.0)
+    try:
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert _alive(int(child_pid.read_text())), "must not be killed"
+        assert "посылаю SIGKILL" not in log
+    finally:
+        _kill_prelock(e)
+
+
+def _remote_heredoc() -> str:
+    text = (REPO / REBUILD_REL).read_text(encoding="utf-8")
+    m = re.search(r"<<'ELO_REBASE_REMOTE'\n(.*?)\nELO_REBASE_REMOTE\n", text, re.S)
+    assert m, "step-8 heredoc not found"
+    return m.group(1)
+
+
+def test_step8_heredoc_is_syntactically_valid_and_keeps_its_dollars_literal():
+    body = _remote_heredoc()
+    assert subprocess.run([BASH, "-n"], input=body, text=True, capture_output=True).returncode == 0
+    # the heredoc delimiter is quoted: `$$` and `$1` reach the remote bash untouched
+    assert f"bash -c '{PID_WRAPPER}' _ \"$child_pid_file\"" in re.sub(r"\s*\\\n\s*", " ", body)
+    assert "<<'ELO_REBASE_REMOTE'" in (REPO / REBUILD_REL).read_text(encoding="utf-8")
+
+
+def test_pid_wrapper_records_its_own_pid_and_passes_the_exit_code_through(tmp_path):
+    pidfile, seen = tmp_path / "child.pid", tmp_path / "seen"
+    for rc in (0, 1, 3, 124):
+        res = subprocess.run(
+            [BASH, "-c", PID_WRAPPER, "_", str(pidfile), BASH, "-c", f'echo $$ > "{seen}"; exit {rc}'],
+            capture_output=True, text=True)
+        assert res.returncode == rc, res
+        assert int(pidfile.read_text()) == int(seen.read_text()), "exec keeps the pid"
+    seen.unlink()
+    res = subprocess.run([BASH, "-c", PID_WRAPPER, "_", str(tmp_path / "no_dir" / "x"), BASH, "-c", f'echo ran > "{seen}"'],
+                         capture_output=True, text=True)
+    assert res.returncode == 125 and not seen.exists(), "an unrecordable pid means the CLI is not started"
+
+
+def test_pid_wrapper_overwrites_the_placeholder_in_place(tmp_path):
+    # astra r7 P1: the pid is written AFTER `systemctl stop`; on a full disk (ENOSPC) a write that
+    # needs a new block would fail (125) and, with no pid on record, keep prod stopped although
+    # python never ran. The placeholder is written BEFORE the stop and the wrapper overwrites the
+    # same 11 bytes without truncation (`1<>`), so the post-stop write needs no allocation.
+    pidfile, seen = tmp_path / "child.pid", tmp_path / "seen"
+    pidfile.write_bytes(CHILD_PID_PLACEHOLDER)
+    ino = pidfile.stat().st_ino
+    res = subprocess.run(
+        [BASH, "-c", PID_WRAPPER, "_", str(pidfile), BASH, "-c", f'echo $$ > "{seen}"'],
+        capture_output=True, text=True)
+    assert res.returncode == 0, res
+    raw = pidfile.read_bytes()
+    assert len(raw) == len(CHILD_PID_PLACEHOLDER) and raw.endswith(b"\n"), raw
+    assert pidfile.stat().st_ino == ino, "overwritten in place, not recreated"
+    assert int(raw) == int(seen.read_text()) and raw != CHILD_PID_PLACEHOLDER
+
+
+@pytest.mark.parametrize("content", [CHILD_PID_PLACEHOLDER, b"0\n", b"1\n", b"-1\n", b""])
+def test_kill_pidfile_never_signals_the_process_group_or_init(tmp_path, monkeypatch, content):
+    # astra r7b P1: the placeholder parses as pid 0, and os.kill(0, SIGKILL) kills the whole
+    # process group of the test run; pid 1 is init, -1 is every process we may signal
+    calls = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    f = tmp_path / "child.pid"
+    f.write_bytes(content)
+    _kill_pidfile(f)
+    assert calls == []
+    assert _alive(0) is False and calls == []
+
+
+@pytest.mark.parametrize("major,minor", [(0xFD, 0x2), (0x103, 0x1234), (0x12345, 0x12345678), (0, 0)])
+def test_lock_file_devino_matches_glibc_major_minor(major, minor):
+    # glibc gnu_dev_major/minor: major = (dev>>8 & 0xfff) | (dev>>32 & 0xfffff000),
+    # minor = (dev & 0xff) | (dev>>12 & 0xffffff00). Unbounded ~0xfff/~0xff masks leak major
+    # bits into minor (astra r7 P3: 0x12345/0x12345678 decoded as minor 0x1212345678).
+    dev = ((major & 0xFFF) << 8) | (minor & 0xFF) | ((minor & ~0xFF) << 12) | ((major & ~0xFFF) << 32)
+    text = (REPO / REBUILD_REL).read_text(encoding="utf-8")
+    fn = re.search(r"^lock_file_devino\(\) \{\n.*?^\}\n", text, re.S | re.M).group(0)
+    prog = (f'stat() {{ if [ "$1" = -c ]; then echo "{dev}:77"; return 0; fi; return 1; }}\n'
+            f"lock_file=x\n{fn}lock_file_devino\n")
+    out = subprocess.run([BASH, "-c", prog], capture_output=True, text=True)
+    assert out.returncode == 0, out
+    assert out.stdout.strip() == f"{major:x}:{minor:x}:77"
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+def test_wrapper_text_reaches_timeout_unexpanded_in_both_modes(make_env, mode):
+    e = _rebase_env(make_env, mode=mode)
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    line = next(l for l in e.events_lines() if l.startswith("TIMEOUT -k 60 1800 bash -c"))
+    assert PID_WRAPPER in line and "_ runtime/live_elo_rebase.child.pid venv/bin/python3 ELO/rebase" in line
+
+
+# --- L3: the integrity-unconfirmed message names the rc 3 holder as the other paths do
+def test_rc3_with_changed_files_names_the_lock_holder_in_the_error(make_env):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "lock-refused-touched")
+    assert r.returncode == 3, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert "ОШИБКА: целостность runtime ELO не подтверждена (rc=3" in log
+    assert "pid 4242 в runtime/live_elo_rebase.lock" in log
+
+
+# --- G3: GNU stat reports st_dev as ONE decimal number; /proc/locks prints hex major:minor
+GNU_STAT_STUB = r"""#!/bin/bash
+# GNU `stat -c '%d:%i'` for the lock file; a Linux-encoded st_dev (major 0x103, minor 0x1234)
+if [ "${1:-}" = -c ] && [ "${2:-}" = '%d:%i' ]; then
+  echo "$STUB_GNU_DEV:$("$STUB_REAL_PY" -c 'import os,sys;print(os.stat(sys.argv[1]).st_ino)' "$3")"; exit 0
+fi
+exec /usr/bin/stat "$@"
+"""
+
+
+@pytest.mark.parametrize("claimed,killed", [("103:1234", True), ("103:1235", False), ("104:1234", False)])
+def test_gnu_stat_device_is_decoded_the_way_proc_locks_prints_it(make_env, claimed, killed):
+    major, minor = 0x103, 0x1234
+    dev = ((major & 0xfff) << 8) | (minor & 0xff) | ((minor & ~0xff) << 12) | ((major & ~0xfff) << 32)
+    assert dev == 0x1210334
+    e = _rebase_env(make_env)
+    _write(e.stubs / "stat", GNU_STAT_STUB, exe=True)
+    pidfile = e.base / "orphan.pid"
+    script = _holder_script(e, RELEVANT_HOLDER)
+    proc_locks = e.base / "proc_locks"
+    try:
+        r, log = _run_rebase(e, "lock-orphan", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
+                             STUB_HOLDER_SCRIPT=str(script), STUB_REAL_SLEEP="1",
+                             PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1",
+                             PRO_CHAIN_PROC_LOCKS=str(proc_locks), STUB_PROC_LOCKS_FILE=str(proc_locks),
+                             STUB_PROC_LOCKS_WRITER=PROC_LOCKS_WRITER, STUB_PROC_LOCKS_MODE="match",
+                             STUB_PROC_LOCKS_DEV=claimed, STUB_GNU_DEV=str(dev))
+        alive = _alive(int(pidfile.read_text()))
+        assert (not alive) == killed, (r.returncode, log)
+        assert r.returncode == (1 if killed else 124)
+    finally:
+        _kill_pidfile(pidfile)

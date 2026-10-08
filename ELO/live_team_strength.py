@@ -26,6 +26,11 @@ from ELO.domain import LeagueTier, MatchRecord
 from ELO.models import (A_CONTRACT, A_SCHEMA_VERSION, K24_CONTRACT,
                         K24_SCHEMA_VERSION, HybridPlayerRosterEloModel)
 from ELO.replay import REPLAY_VERSION, replay_events, result_record
+# Один источник правды для путей по умолчанию: stdlib-модуль, чтобы CLI перебазировки
+# мог взять замки по этим каталогам ДО импорта этого (тяжёлого) модуля.
+from ELO.runtime_paths import (DEFAULT_LIVE_DELTA_PATH, DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                               DEFAULT_RUNTIME_PROGRESS_PATH, DEFAULT_SNAPSHOT_PATH)
+from ELO.runtime_paths import live_delta_path as _live_delta_path_from
 from ELO.series_data import build_series_bundles
 from ELO.team_identity import TEAM_ID_TO_ORG_KEY, resolve_org_key
 from ELO.tiering import attach_league_tiers_asof, get_known_team_tier
@@ -48,9 +53,6 @@ DEFAULT_DATA_DIR = (
     / "pro_heroes_data"
     / "json_parts_split_from_object"
 )
-DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_elo_snapshot.json"
-DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
-DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"
 _LOGGER = logging.getLogger(__name__)
 _A_MISSING_LOGGED = False
 _INVALID_COMPOSITION_LOGGED = False
@@ -117,7 +119,7 @@ REAL_ID_WINDOW_MARGIN_SECONDS = 24 * 60 * 60
 #: Прежнее полное состояние (`live_elo_model_state.json`, 519 МБ) перезаписывалось
 #: целиком после каждой карты ради ~70-100 изменившихся значений и требовало
 #: разбора (+1.28 ГБ) и словарной модели (+1.31 ГБ) в живом процессе.
-DEFAULT_LIVE_DELTA_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_delta.json"
+#: Путь дельты по умолчанию (DEFAULT_LIVE_DELTA_PATH) определён в ELO/runtime_paths.py.
 DEFAULT_RUNTIME_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_state.lock"
 DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_probability_segment_policy.json"
 
@@ -1821,8 +1823,7 @@ def rebase_runtime_model_state(
 
 
 def _live_delta_path() -> Path:
-    env = os.getenv("LIVE_ELO_DELTA")
-    return Path(env).expanduser() if env else DEFAULT_LIVE_DELTA_PATH
+    return _live_delta_path_from(DEFAULT_LIVE_DELTA_PATH)
 
 
 def _delta_is_usable(snapshot: dict[str, Any] | None, delta_path: Path) -> bool:
