@@ -919,12 +919,39 @@ def _write_json_atomic(path: Path, payload) -> None:
     os.replace(tmp_path, path)
 
 
+def _normalize_removed_telegram_chat_ids(items) -> list[str]:
+    """Надгробия без дублей и без админ-чата (его хоронить нельзя)."""
+    admin_chat_ids = set(_get_admin_telegram_chat_ids())
+    result: list[str] = []
+    if not isinstance(items, (list, tuple, set)):
+        return result
+    for item in items:
+        normalized = _telegram_normalize_chat_id(item)
+        if not normalized or normalized in admin_chat_ids or normalized in result:
+            continue
+        result.append(normalized)
+    return result
+
+
 def _load_telegram_subscribers_state() -> dict:
+    """Читает состояние подписчиков из обоих путей и подмешивает defaults.
+
+    Надгробия (`removed_chat_ids`) берутся из основного файла (legacy — только если
+    основного нет) и вычитаются и
+    из defaults (keys.Chat_id/Chat_ids, TELEGRAM_CHAT_IDS), и из загруженных
+    chat_ids: иначе чат, на который Telegram ответил `chat not found`, возвращался
+    бы из keys.Chat_ids при каждой загрузке. Вызывается под
+    TELEGRAM_SUBSCRIBERS_LOCK — блокировку здесь не брать (она не реентерабельна).
+    """
     defaults = _get_default_telegram_chat_ids()
     chat_ids = list(defaults)
     loaded_any = False
     needs_persist = False
     max_last_update_id = 0
+    removed_chat_ids: list[str] = []
+    primary_loaded = False
+    file_removed_sets: list[set] = []
+    file_chat_ids_all: set = set()
 
     for state_path in _iter_telegram_state_paths():
         try:
@@ -947,7 +974,10 @@ def _load_telegram_subscribers_state() -> dict:
         loaded_any = True
         raw_chat_ids: list[str] = []
         normalized_chat_ids: list[str] = []
-        for item in data.get("chat_ids", []):
+        file_chat_items = data.get("chat_ids")
+        if not isinstance(file_chat_items, list):
+            file_chat_items = []
+        for item in file_chat_items:
             normalized = _telegram_normalize_chat_id(item)
             if normalized:
                 raw_chat_ids.append(normalized)
@@ -959,6 +989,18 @@ def _load_telegram_subscribers_state() -> dict:
             needs_persist = True
         if state_path != TELEGRAM_SUBSCRIBERS_STATE_PATH:
             needs_persist = True
+        file_removed = _normalize_removed_telegram_chat_ids(data.get("removed_chat_ids", []))
+        file_removed_sets.append(set(file_removed))
+        file_chat_ids_all.update(normalized_chat_ids)
+        # The primary file (iterated first) is authoritative for tombstones once it exists;
+        # the legacy copy only seeds them when the primary is absent (ingame-6qzf, astra MED:
+        # a failed legacy write kept a stale tombstone that re-removed a restored chat).
+        if state_path == TELEGRAM_SUBSCRIBERS_STATE_PATH:
+            primary_loaded = True
+        if state_path == TELEGRAM_SUBSCRIBERS_STATE_PATH or not primary_loaded:
+            for chat_id in file_removed:
+                if chat_id not in removed_chat_ids:
+                    removed_chat_ids.append(chat_id)
         try:
             last_update_id = int(data.get("last_update_id") or 0)
         except (TypeError, ValueError):
@@ -966,14 +1008,36 @@ def _load_telegram_subscribers_state() -> dict:
         if last_update_id > max_last_update_id:
             max_last_update_id = last_update_id
 
+    # Надгробия вычитаются из defaults и из загруженных chat_ids; админ-чат
+    # сюда не попадает (`_normalize_removed_telegram_chat_ids` его отбрасывает).
+    if removed_chat_ids:
+        removed_set = set(removed_chat_ids)
+        chat_ids = [chat_id for chat_id in chat_ids if chat_id not in removed_set]
+        if file_chat_ids_all & removed_set:
+            needs_persist = True
+        if any(file_set != removed_set for file_set in file_removed_sets):
+            needs_persist = True
+
     if not loaded_any:
-        return {"chat_ids": chat_ids, "last_update_id": 0}
+        return {"chat_ids": chat_ids, "last_update_id": 0, "removed_chat_ids": []}
 
     return {
         "chat_ids": chat_ids,
         "last_update_id": max_last_update_id,
+        "removed_chat_ids": removed_chat_ids,
         "_needs_persist": needs_persist,
     }
+
+
+def _get_removed_telegram_chat_ids() -> set[str]:
+    """Надгробия из сохранённого состояния (читается под блокировкой подписчиков)."""
+    try:
+        with TELEGRAM_SUBSCRIBERS_LOCK:
+            state = _load_telegram_subscribers_state()
+    except Exception as exc:  # noqa: BLE001 - запасной путь не должен ронять рассылку
+        logger.warning("Failed to read Telegram subscriber tombstones: %s", exc)
+        return set()
+    return set(state.get("removed_chat_ids", []))
 
 
 def _save_telegram_subscribers_state(state: dict) -> None:
@@ -990,6 +1054,12 @@ def _save_telegram_subscribers_state(state: dict) -> None:
     except (TypeError, ValueError):
         last_update_id = 0
     payload = {"chat_ids": chat_ids, "last_update_id": last_update_id}
+    # Надгробия мёртвых подписчиков; ключ пишется только когда они есть, чтобы
+    # состояние без них осталось байт-в-байт прежним (старые читатели
+    # неизвестный ключ игнорируют, отсутствие ключа == пустой список).
+    removed_chat_ids = _normalize_removed_telegram_chat_ids(state.get("removed_chat_ids", []))
+    if removed_chat_ids:
+        payload["removed_chat_ids"] = removed_chat_ids
     _write_json_atomic(TELEGRAM_SUBSCRIBERS_STATE_PATH, payload)
     if LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH != TELEGRAM_SUBSCRIBERS_STATE_PATH:
         try:
@@ -1455,7 +1525,13 @@ def _send_message_to_chat_id(
         try:
             _desc = str((response.json() or {}).get("description") or "")
         except Exception:                                # noqa: BLE001
-            _desc = str(getattr(response, "text", "") or "")[:200]
+            # Telegram API errors are always JSON; a non-JSON body means an intermediary
+            # (proxy). Raw text goes to the log only: put in the exception message it would
+            # be classified by `_is_terminal_telegram_chat_error` ("Forbidden: access denied"
+            # would tombstone a live chat) (ingame-6qzf, Opus LOW-3).
+            _raw_body = str(getattr(response, "text", "") or "")[:200]
+            logger.error("Telegram send HTTP error, non-JSON body: %s | %s", exc, _raw_body)
+            _desc = "(non-JSON body)"
         logger.error("Telegram send HTTP error: %s | %s", exc, _desc or "без описания")
         return _telegram_raise_delivery_error(
             f"Telegram send failed: {exc}: {_desc}" if _desc
@@ -1575,7 +1651,16 @@ def _refresh_telegram_subscribers() -> list[str]:
             logger.warning("Failed to refresh Telegram subscribers from getUpdates: %s", exc)
             return chat_ids
 
+        removed_chat_ids = list(state.get("removed_chat_ids", []))
         for chat_id in extracted:
+            if chat_id in removed_chat_ids:
+                # Человек снова написал боту — снимаем надгробие и возвращаем чат.
+                removed_chat_ids.remove(chat_id)
+                changed = True
+                logger.warning(
+                    "Restoring Telegram subscriber %s: new update after terminal error",
+                    chat_id,
+                )
             if chat_id not in chat_ids:
                 chat_ids.append(chat_id)
                 changed = True
@@ -1583,6 +1668,7 @@ def _refresh_telegram_subscribers() -> list[str]:
             changed = True
         if changed:
             state["chat_ids"] = chat_ids
+            state["removed_chat_ids"] = removed_chat_ids
             state["last_update_id"] = max_update_id
             try:
                 _save_telegram_subscribers_state(state)
@@ -1600,7 +1686,11 @@ def _is_terminal_telegram_chat_error(exc: TelegramSendError) -> bool:
             "chat not found",
             "user is deactivated",
             "bot was kicked",
-            "forbidden",
+            # Telegram API descriptions read "Forbidden: <reason>". A bare "forbidden" also
+            # matched proxy/tunnel errors ("Tunnel connection failed: 403 Forbidden") that the
+            # network fallback embeds in the message; such a transient 403 must not tombstone
+            # a chat permanently (card ingame-6qzf, Opus LOW-2).
+            "forbidden:",
         )
     )
 
@@ -1608,13 +1698,31 @@ def _is_terminal_telegram_chat_error(exc: TelegramSendError) -> bool:
 def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
     if not chat_ids_to_remove:
         return
+    to_remove = {
+        normalized
+        for normalized in (_telegram_normalize_chat_id(item) for item in chat_ids_to_remove)
+        if normalized
+    }
+    # Админ-чат не хоронится никогда: ошибка, ошибочно принятая за терминальную,
+    # не должна заглушать владельца. Для него поведение прежнее (он выпадает из
+    # списка, но `_get_default_telegram_chat_ids` вернёт его на следующей загрузке).
+    admin_chat_ids = set(_get_admin_telegram_chat_ids())
     with TELEGRAM_SUBSCRIBERS_LOCK:
         state = _load_telegram_subscribers_state()
         existing = list(state.get("chat_ids", []))
-        filtered = [chat_id for chat_id in existing if chat_id not in set(chat_ids_to_remove)]
-        if filtered == existing:
+        filtered = [chat_id for chat_id in existing if chat_id not in to_remove]
+        # Надгробие: ключи из keys.Chat_ids / TELEGRAM_CHAT_IDS подмешиваются при
+        # каждой загрузке, поэтому одного удаления из chat_ids мало.
+        removed = list(state.get("removed_chat_ids", []))
+        new_tombstones = [
+            chat_id
+            for chat_id in sorted(to_remove)
+            if chat_id not in admin_chat_ids and chat_id not in removed
+        ]
+        if filtered == existing and not new_tombstones:
             return
         state["chat_ids"] = filtered
+        state["removed_chat_ids"] = removed + new_tombstones
         try:
             _save_telegram_subscribers_state(state)
         except OSError as exc:
@@ -1835,7 +1943,14 @@ def send_message(
     else:
         target_chat_ids = _refresh_telegram_subscribers()
         if not target_chat_ids:
-            target_chat_ids = _get_default_telegram_chat_ids()
+            # Тот же фильтр, что в `_load_telegram_subscribers_state`: умершие чаты
+            # из keys.Chat_ids / TELEGRAM_CHAT_IDS в запасной список не возвращаются.
+            removed_chat_ids = _get_removed_telegram_chat_ids()
+            target_chat_ids = [
+                chat_id
+                for chat_id in _get_default_telegram_chat_ids()
+                if chat_id not in removed_chat_ids
+            ]
         reply_markup = None
 
     delivered = []
@@ -1856,7 +1971,9 @@ def send_message(
             if result:
                 delivered.append(chat_id)
         except TelegramSendError as exc:
-            if _is_terminal_telegram_chat_error(exc):
+            # Only a Telegram API answer (delivery_uncertain=False) can prove a chat dead;
+            # a proxy/transport failure must never tombstone it (ingame-6qzf, astra HIGH).
+            if not exc.delivery_uncertain and _is_terminal_telegram_chat_error(exc):
                 terminal_chat_errors.append((chat_id, exc))
                 logger.warning("Removing Telegram subscriber %s after terminal error: %s", chat_id, exc)
                 continue
