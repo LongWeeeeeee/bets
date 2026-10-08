@@ -69,6 +69,24 @@ Question: do the ML heads know anything the market price does not? Delivered pri
 
 Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/scoreboard/{edge_bands,model_vs_price,late_price_vs_nw}.py runtime/artifacts/star-dispatch/scoreboard_20261008` (outputs `*_20261008.txt` in that directory). Where to look for errors: the price is the E-361 join (latest open row <=600 s before the decision), not the taken price; 1/price includes the bookmaker margin (the intercept absorbs it); the 22 % unpriced bets are excluded (their hit rate is no worse, see above).
 
+## Add-on 08.10 (3): on every logged map neither the heads nor ELO beat the Winline price
+Question: does the add-on 2 effect hold beyond delivered bets? Prediction: early_win/all at minute 10 add information beyond price, and ELO beats the first Winline quote (E-321: ELO is more accurate than the first quote by 3.6 pp). Both refuted.
+- All ticks (`ticks_vs_market.py`, worker run 1b4525ad, codex gpt-6.1-sol). 502 logged maps; the first verdict per map x head x phase; A = game time 540-900 s (320 priced maps), B = 1800-2100 s (70). The conf term beyond logit(1/price) is not significant for any head: A early_nw +0.40 (p 0.15), early_win +0.36 (p 0.15), late +0.56 (p 0.26), all +0.04 (p 0.95), lane -0.49 (p 0.19); B all p >= 0.23. Target-side ELO beyond price is +0.16..+0.18 per 100 at A (p 0.10-0.15 per head); the pooled p 0.0005 counts each map five times and does not stand. Betting every head's side at the market price returns -0.02..-0.22 per bet. Leave-one-map-out EV selection gives no CI above 0. So the conf effect on delivered win_single (p 0.016) is most likely a selection artefact. Idea ingame-92v0 stays deferred, now with a weaker prior.
+- Parameter-free ELO value bets (`elo_value.py`): p_elo = 1/(1+10^(-d/400)) from the served elo_diff; bet the side with p_elo x price - 1 > m, one per map per phase.
+
+| phase | side | m | n | hit | p_elo | implied | ROI [map bootstrap 95%] |
+|---|---|---|---|---|---|---|---|
+| P0 (<=420 s) | ELO favourite | 0.05 | 63 | 0.603 | 0.679 | 0.558 | +0.090 [-0.132, +0.318] |
+| P0 | ELO underdog | 0.05 | 42 | 0.214 | 0.371 | 0.280 | -0.374 [-0.731, +0.036] |
+| A (540-900 s) | ELO favourite | 0.00 | 130 | 0.531 | 0.654 | 0.487 | +0.029 [-0.149, +0.205] |
+| A | ELO underdog | 0.00 | 133 | 0.173 | 0.359 | 0.228 | -0.316 [-0.568, -0.026] |
+| B (1800-2100 s) | ELO favourite | 0.00 | 31 | 0.419 | 0.665 | 0.329 | +0.322 [-0.299, +1.081] |
+| B | ELO underdog | 0.00 | 34 | 0.088 | 0.363 | 0.184 | -0.645 [-1.000, -0.263] |
+
+Mechanism: when the market prices an ELO underdog longer than ELO does, the market is right. Those underdogs win less often than even the price implies, which is the same direction as the live E-351 block on WIN bets for ELO underdogs. ELO-favourite value bets are positive at every phase but never significant. The largest one, the minute-31 favourite that is behind (price ~4.2, hit 0.42 vs implied 0.33, n=31), belongs to the E-353 mirror check (card ingame-45eg). Decision: no new WIN bet type and no gate. Where edge against Winline is still possible but unmeasured: kills markets (kills_panel_window 64.3 %, kills30 >= 30 76.7 %). We have no prices for them, and the prematch ИТ collector covers only team totals.
+
+Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/scoreboard/{ticks_vs_market,elo_value}.py runtime/artifacts/star-dispatch/scoreboard_20261008` (outputs `ticks_vs_market_20261008.txt`, `elo_value_20261008.txt`). Where to look for errors: the price is the latest row within 600 s before the tick, so at P0 it can be a prematch quote; the outcome comes from the STRATZ cache (67-40 unresolved maps per phase); the 400 scale is the standard Elo scale, not fitted to the served variant A (calibration on these maps: favourite hit 0.70 vs p_elo 0.67 at P0).
+
 ## Decision
 No rule switch: every ROI interval crosses 0 and kills markets have no prices. The scoreboard is the shared instrument for the due re-checks (E-351 ~17.10, E-342/E-359 ~19.10, E-357 ~21.10): rerun extract_bets.py + scoreboard.py on fresh copies. kills_underdog_early_window 45.6 % supports its switch-off on 05.10. An ELO-role correction of kills30 waits for Winline individual-kills lines (idea card ingame-zc2h, defer 05.11).
 
