@@ -21,7 +21,7 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ELO.config import HybridEloConfig
-from ELO.data_loader import load_matches
+from ELO.data_loader import load_matches, load_supplement_matches
 from ELO.domain import LeagueTier, MatchRecord
 from ELO.models import (A_CONTRACT, A_SCHEMA_VERSION, K24_CONTRACT,
                         K24_SCHEMA_VERSION, HybridPlayerRosterEloModel)
@@ -53,6 +53,7 @@ DEFAULT_DATA_DIR = (
     / "pro_heroes_data"
     / "json_parts_split_from_object"
 )
+DEFAULT_SUPPLEMENT_DIR = Path(__file__).resolve().parents[1] / "data" / "elo_supplement"
 _LOGGER = logging.getLogger(__name__)
 _A_MISSING_LOGGED = False
 _INVALID_COMPOSITION_LOGGED = False
@@ -2580,12 +2581,55 @@ def _drain_pending_map_queue(
     return remaining, applied_updates
 
 
+def _align_supplement_team_names(
+    corpus: list[MatchRecord], supplement: list[MatchRecord],
+) -> tuple[list[MatchRecord], int]:
+    """Give supplement maps the corpus spelling of a team_id they share with the corpus.
+
+    For a team_id outside TEAM_ID_TO_ORG_KEY the org key comes from the team NAME, so a
+    different spelling of the same team_id would split its rating, lineup counts and
+    leaderboard row. The name is taken from the corpus map nearest in time: the latest at
+    or before the supplement map's start, else the earliest after. A team_id the corpus has
+    never seen keeps the supplement's own (validated, non-blank) name."""
+    names: dict[int, list[tuple[int, str]]] = {}
+    for match in corpus:  # ``corpus`` is sorted by (timestamp, match_id)
+        for team_id, name in ((match.radiant_team_id, match.radiant_team_name),
+                              (match.dire_team_id, match.dire_team_name)):
+            if isinstance(team_id, int) and isinstance(name, str) and name.strip():
+                names.setdefault(team_id, []).append((match.timestamp, name))
+    timestamps = {team_id: [ts for ts, _ in rows] for team_id, rows in names.items()}
+
+    def corpus_name(team_id: int | None, timestamp: int) -> str | None:
+        rows = names.get(team_id) if isinstance(team_id, int) else None
+        if not rows:
+            return None
+        index = bisect_right(timestamps[team_id], timestamp)
+        return rows[index - 1 if index else 0][1]
+
+    aligned: list[MatchRecord] = []
+    changed = 0
+    for match in supplement:
+        radiant = corpus_name(match.radiant_team_id, match.timestamp)
+        dire = corpus_name(match.dire_team_id, match.timestamp)
+        update = {}
+        if radiant is not None and radiant != match.radiant_team_name:
+            update["radiant_team_name"] = radiant
+        if dire is not None and dire != match.dire_team_name:
+            update["dire_team_name"] = dire
+        if update:
+            match = replace(match, **update)
+            changed += 1
+        aligned.append(match)
+    return aligned, changed
+
+
 def _build_snapshot_dict(
     *,
     data_dir: Path,
     active_cutoff_days: float,
     display_decay_half_life_days: float,
     config: HybridEloConfig,
+    supplement_dir: Path | None = None,
 ) -> dict[str, Any]:
     matches, load_summary = load_matches(data_dir)
     # Combined archives keep the same map in more than one file, so the raw
@@ -2594,8 +2638,8 @@ def _build_snapshot_dict(
     # also counts as an extra map win, which can close a Bo3 after two copies of
     # the same map. Drop copies before anything reads the stream.
     duplicate_records = 0
+    seen_match_ids: set[int] = set()
     if matches:
-        seen_match_ids: set[int] = set()
         unique_matches: list[MatchRecord] = []
         for match in matches:
             if match.match_id in seen_match_ids:
@@ -2607,12 +2651,45 @@ def _build_snapshot_dict(
         load_summary = dict(load_summary)
         load_summary["duplicate_records"] = duplicate_records
         load_summary["loaded_matches"] = len(matches)
+    supplement_dir = (
+        Path(supplement_dir) if supplement_dir is not None
+        else Path(os.environ.get("ELO_SUPPLEMENT_DIR") or DEFAULT_SUPPLEMENT_DIR)
+    )
+    supplement, supplement_summary = load_supplement_matches(supplement_dir)
+    supplement_meta: dict[str, Any] = {}
+    if supplement_summary:
+        supplement_meta = {"supplement_dir": str(supplement_dir), "load_summary": load_summary}
+        corpus_ids = seen_match_ids
+        supplement_ids: set[int] = set()
+        load_summary.update(supplement_loaded=0, supplement_skipped_in_corpus=0,
+                            supplement_invalid=(supplement_summary.get("skipped_invalid", 0)
+                                                + supplement_summary.get("skipped_non_dict", 0)),
+                            supplement_duplicate_records=0,
+                            supplement_skipped_files=supplement_summary.get("skipped_files", 0),
+                            supplement_team_names_aligned=0)
+        accepted: list[MatchRecord] = []
+        for match in supplement:
+            # Source clocks differ: sorting first cannot enforce corpus precedence.
+            if match.match_id in corpus_ids:
+                load_summary["supplement_skipped_in_corpus"] += 1
+            elif match.match_id in supplement_ids:
+                load_summary["supplement_duplicate_records"] += 1
+            else:
+                supplement_ids.add(match.match_id)
+                accepted.append(match)
+                load_summary["supplement_loaded"] += 1
+        accepted, load_summary["supplement_team_names_aligned"] = (
+            _align_supplement_team_names(matches, accepted))
+        matches.extend(accepted)
+        matches.sort(key=lambda match: (match.timestamp, match.match_id))
+        load_summary["loaded_matches"] = len(matches)
     if not matches:
         empty_model_state = None
         return {
             "meta": {
                 **_rating_replay_meta(),
                 "data_dir": str(data_dir),
+                **supplement_meta,
                 "reference_timestamp": None,
                 "reference_utc": None,
                 "active_cutoff_days": active_cutoff_days,
@@ -2798,6 +2875,7 @@ def _build_snapshot_dict(
     return {
         "meta": {
             "data_dir": str(data_dir),
+            **supplement_meta,
             "reference_timestamp": reference_timestamp,
             "reference_utc": _timestamp_to_iso(reference_timestamp),
             # Exact membership proof for the recent overlap between a stopped
@@ -2841,12 +2919,14 @@ def build_snapshot(
     active_cutoff_days: float = DEFAULT_ACTIVE_CUTOFF_DAYS,
     display_decay_half_life_days: float = DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS,
     config: HybridEloConfig | None = None,
+    supplement_dir: Path | None = None,
 ) -> dict[str, Any]:
     snapshot = _build_snapshot_dict(
         data_dir=data_dir,
         active_cutoff_days=active_cutoff_days,
         display_decay_half_life_days=display_decay_half_life_days,
         config=config or HybridEloConfig(),
+        supplement_dir=supplement_dir,
     )
     _write_json_atomic(snapshot_path, snapshot)
     global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_SIGNATURE

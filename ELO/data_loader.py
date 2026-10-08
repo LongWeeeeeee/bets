@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import gzip
 from collections import Counter
@@ -11,6 +12,7 @@ import ijson
 from ELO.domain import MatchRecord
 
 
+_LOGGER = logging.getLogger(__name__)
 _PATCH_FILE_RE = re.compile(r"^(\d+\.\d+[a-z]?)_part\d+$")
 
 
@@ -110,31 +112,82 @@ def _parse_match(raw_match: dict, *, source_patch: str | None = None) -> MatchRe
 def load_matches(
     data_dir: Path, *, progress: Callable[[Path, int], None] | None = None,
 ) -> tuple[list[MatchRecord], dict[str, int]]:
+    json_paths = sorted(list(data_dir.glob("*.json")) + list(data_dir.glob("*.json.gz")))
+    return _load_match_files(json_paths, progress=progress)
+
+
+def load_supplement_matches(data_dir: Path) -> tuple[list[MatchRecord], dict[str, int]]:
+    """Read ELO-only Stratz-shaped JSON objects; a missing directory is empty.
+
+    The supplement is optional input to the nightly snapshot build, so an unreadable or
+    malformed file is skipped (warning + ``skipped_files``) instead of failing the chain."""
+    return _load_match_files(sorted(data_dir.glob("*.json")), require_team_identity=True)
+
+
+def _valid_supplement_team(team: object) -> bool:
+    if not isinstance(team, dict):
+        return False
+    team_id, name = team.get("id"), team.get("name")
+    return (isinstance(team_id, int) and not isinstance(team_id, bool) and team_id > 0
+            and isinstance(name, str) and bool(name.strip())
+            and not name.strip().casefold().startswith("od-"))
+
+
+def _load_match_files(
+    json_paths: list[Path], *, progress: Callable[[Path, int], None] | None = None,
+    require_team_identity: bool = False,
+) -> tuple[list[MatchRecord], dict[str, int]]:
     summary: Counter[str] = Counter()
     matches: list[MatchRecord] = []
-    json_paths = sorted(list(data_dir.glob("*.json")) + list(data_dir.glob("*.json.gz")))
     for json_path in json_paths:
         summary["files"] += 1
-        json_name = json_path.name[:-3] if json_path.name.endswith(".gz") else json_path.name
-        patch_match = _PATCH_FILE_RE.match(Path(json_name).stem)
-        source_patch = patch_match.group(1) if patch_match else None
-        # A 500MB archive expands to several GB with json.load. Keep only one
-        # raw map in memory while retaining compact MatchRecords for sorting.
-        opener = gzip.open if json_path.name.endswith(".gz") else open
-        with opener(json_path, "rb") as fh:
-            for _, raw_match in ijson.kvitems(fh, "", use_float=True):
-                summary["raw_matches"] += 1
-                summary["seen_matches"] += 1
-                if not isinstance(raw_match, dict):
-                    summary["skipped_non_dict"] += 1
-                    continue
-                match = _parse_match(raw_match, source_patch=source_patch)
-                if match is None:
-                    summary["skipped_invalid"] += 1
-                    continue
-                matches.append(match)
-                summary["loaded_matches"] += 1
+        file_summary: Counter[str] = Counter()
+        file_matches: list[MatchRecord] = []
+        try:
+            _read_match_file(json_path, file_matches, file_summary, require_team_identity)
+        except Exception as exc:
+            if not require_team_identity:
+                raise
+            # A broken optional file must not fail the nightly chain, and a truncated
+            # file's already-parsed maps are not trusted either: drop the whole file.
+            summary["skipped_files"] += 1
+            _LOGGER.warning("skipping unreadable supplement file %s: %s: %s",
+                            json_path, type(exc).__name__, str(exc).strip()[:200])
+            continue
+        summary.update(file_summary)
+        matches.extend(file_matches)
         if progress is not None:
             progress(json_path, len(matches))
     matches.sort(key=lambda match: (match.timestamp, match.match_id))
     return matches, dict(summary)
+
+
+def _read_match_file(
+    json_path: Path, matches: list[MatchRecord], summary: Counter[str],
+    require_team_identity: bool,
+) -> None:
+    json_name = json_path.name[:-3] if json_path.name.endswith(".gz") else json_path.name
+    patch_match = _PATCH_FILE_RE.match(Path(json_name).stem)
+    source_patch = patch_match.group(1) if patch_match else None
+    # A 500MB archive expands to several GB with json.load. Keep only one
+    # raw map in memory while retaining compact MatchRecords for sorting.
+    opener = gzip.open if json_path.name.endswith(".gz") else open
+    with opener(json_path, "rb") as fh:
+        for _, raw_match in ijson.kvitems(fh, "", use_float=True):
+            summary["raw_matches"] += 1
+            summary["seen_matches"] += 1
+            if not isinstance(raw_match, dict):
+                summary["skipped_non_dict"] += 1
+                continue
+            if require_team_identity and any(
+                not _valid_supplement_team(raw_match.get(side))
+                for side in ("radiantTeam", "direTeam")
+            ):
+                summary["skipped_invalid"] += 1
+                continue
+            match = _parse_match(raw_match, source_patch=source_patch)
+            if match is None:
+                summary["skipped_invalid"] += 1
+                continue
+            matches.append(match)
+            summary["loaded_matches"] += 1

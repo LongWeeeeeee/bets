@@ -57,6 +57,40 @@
 Замер на 1 396 158 событиях и 1 150 370 аккаунтах: снимок +51,9 МБ, sidecar массивов +36,8 МБ, пик RSS при загрузке
 sidecar +85 МБ. На serv1 25.09 было доступно 5,6 ГБ.
 
+## Supplement maps
+Карты OpenDota, отсутствующие в Stratz-корпусе, читаются из tracked-файла
+`data/elo_supplement/opendota_maps.json` (Stratz-shaped dict-of-records, `source=opendota`).
+Конвертер `scripts/pro_chain/build_elo_supplement.py --input-dir <dir>` читает массивы
+`listing_*.json`/`players_*.json`; `--exclude-corpus-ids <processed_ids.txt>` исключает
+уже собранные ID из JSON-массива (формат корпуса); поддерживаются также ID по одному
+на строку. Требуются 10 разных неанонимных аккаунтов, по пять на сторону,
+boolean winner и положительная длительность. На каждой стороне обязательны
+положительный `radiant_team_id`/`dire_team_id` и непустое имя
+`radiant_name`/`dire_name` из OpenDota `teams`. При отсутствии любого из них карта
+пропускается и учитывается в счётчике конвертера `invalid_team`; пустые/пробельные
+имена и placeholders `od-*` (без учёта регистра) отклоняются, имена не синтезируются.
+Loader supplement повторяет проверку ID/имён, поэтому обход конвертера не создаёт
+фиктивных строк рейтинга и A rank map. Парсер основного корпуса не меняется.
+OpenDota tier (`professional`, `premium`, `excluded`, null) преобразуется в
+Stratz tier (`PROFESSIONAL`, `PREMIUM`, `EXCLUDED`, null). Числовой `series_type`
+0/1/2/3 преобразуется соответственно в `BEST_OF_ONE`/`BEST_OF_THREE`/
+`BEST_OF_FIVE`/`BEST_OF_TWO`; неизвестное значение остаётся null.
+Командные строки snapshot и hybrid state совпадают с эквивалентной Stratz-записью.
+Корпус всегда выигрывает по `match_id` независимо от разницы timestamp; supplement
+не обновляет остальные потребители pro-корпуса. Объединённый список сортируется по
+`(timestamp, match_id)` и участвует в recent membership для перебазировки live ledger.
+`build_snapshot` и `_build_snapshot_dict` принимают `supplement_dir=Path(...)`;
+приоритет: keyword → `ELO_SUPPLEMENT_DIR` → `<repo>/data/elo_supplement`.
+Пустой/отсутствующий каталог — побайтовый no-op относительно main, включая
+`model_config_signature`: supplement-поля в `meta` не добавляются.
+При наличии JSON-файлов supplement `meta.load_summary` содержит `supplement_loaded`,
+`supplement_skipped_in_corpus`, `supplement_invalid` (отказы существующего parser),
+`supplement_duplicate_records`, `supplement_skipped_files` (нечитаемый или битый JSON-файл целиком
+пропускается с `logger.warning`, ночная сборка не падает) и `supplement_team_names_aligned`
+(для `team_id`, который есть в корпусе, берётся имя с ближайшей по времени карты корпуса: последней
+не позже старта, иначе первой после; иначе имя-ключ организации раскололось бы на два ряда). Откат: удалить/опустошить файл либо установить
+`ELO_SUPPLEMENT_DIR=/nonexistent` и пересобрать snapshot; удаление требует разрешения.
+
 ## Проверки
 - `ELO/tests/test_variant_a.py`: формула A на реальных картах (`ELO/tests/variant_a_real_maps_20260925.json`)
   против исследовательского харнесса.
