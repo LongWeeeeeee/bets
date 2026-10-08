@@ -308,21 +308,73 @@ staged_snapshot="$snapshot"
 if [ "$1" = 1 ]; then
   staged_snapshot="$snapshot.tmp"
 fi
-rebase_timeout="${2:-1800}"
-case "$rebase_timeout" in
-  ''|*[!0-9]*|0) rebase_timeout=1800 ;;
+# Лимит — целое 60..7200 с. «00» и «0» раньше проходили проверку и превращались
+# в 0 = без лимита (именно то, что устроило простой 08.10), поэтому после
+# разбора число сравнивается как число, а любое иное значение заменяется на 1800.
+rebase_timeout_arg="${2:-1800}"
+rebase_timeout=1800
+timeout_valid=0
+case "$rebase_timeout_arg" in
+  ''|*[!0-9]*) ;;
+  *)
+    if [ "${#rebase_timeout_arg}" -le 6 ]; then
+      timeout_n=$((10#$rebase_timeout_arg))
+      if [ "$timeout_n" -ge 60 ] && [ "$timeout_n" -le 7200 ]; then
+        rebase_timeout="$timeout_n"
+        timeout_valid=1
+      fi
+    fi ;;
 esac
+if [ "$timeout_valid" = 0 ]; then
+  echo "ВНИМАНИЕ: лимит перебазировки '$rebase_timeout_arg' недопустим (нужно целое 60..7200 с); взято 1800 с"
+fi
+# Сколько секунд ждать смерти писателя после SIGKILL (тестовый хук: env через
+# ssh не ходит, на Маке всегда 60).
+writer_wait="${PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS:-60}"
+case "$writer_wait" in
+  ''|*[!0-9]*) writer_wait=60 ;;
+  *) if [ "${#writer_wait}" -gt 4 ]; then writer_wait=60; else writer_wait=$((10#$writer_wait)); fi ;;
+esac
+# Живой писатель = процесс python с ELO/rebase_runtime_model_state.py в argv.
+# Скобка в первой букве не даёт pgrep совпасть с собственной командной строкой.
+# Шаблон привязан к НАЧАЛУ argv: первое слово — интерпретатор python (путь и
+# версия любые), затем только его опции, затем сам скрипт. Так не совпадают ни
+# редактор или less с этим файлом, ни CLI агента, чей аргумент-запрос цитирует
+# команду («codex exec ... python3 ELO/rebase_runtime_model_state.py ...»; такой
+# процесс на Маке совпадал со старым шаблоном и был бы убит SIGKILL'ом), ни
+# родитель `timeout -k 60 N venv/bin/python3 ...` (его argv начинается с timeout).
+# pgrep -f сверяет ERE с argv, склеенным пробелами, и в BSD, и в GNU procps.
+# Один шаблон на pgrep и pkill. Сам cyberscore перебазирует in-process
+# (live_team_strength.py:3424/3689), процессом с этим именем он не является.
+writer_pattern='^[^ ]*[p]ython[0-9.]*( -[^ ]+)* [^ ]*rebase_runtime_model_state\.py'
 # Всё, что перебазировка может записать (live_team_strength.py:1777-1802):
 # состояние, progress и — только при pending_overlay_commit — live-дельта.
+# Путь дельты читает _live_delta_path() (live_team_strength.py:1823): env
+# LIVE_ELO_DELTA с expanduser, иначе runtime/live_elo_delta.json. Тот же env виден
+# и этому скрипту (scope наследует окружение), поэтому берём тот же путь.
 # Каждый файл пишется атомарно (tmp + fsync + os.replace), но три замены между
 # собой НЕ атомарны: убитый между ними процесс оставляет состояние новой базы
 # при progress старой. Поэтому «не изменён» проверяется по всем трём сразу.
 # cksum читает содержимое (тот же размер и mtime не обманут его), есть и в GNU,
 # и в BSD; ~220 МБ файла дают доли секунды.
+# Раскрытие '~' делает ТОТ ЖЕ os.path.expanduser, что и Path.expanduser в Python
+# (~, ~/x, ~user/x): путь отпечатка обязан совпасть с тем, что откроет процесс.
+# Не вышло — берём значение как есть, с ВНИМАНИЕМ; цепочку это не останавливает.
+delta_file="${LIVE_ELO_DELTA:-runtime/live_elo_delta.json}"
+case "$delta_file" in
+  '~'*)
+    delta_resolved=''
+    if delta_resolved="$(venv/bin/python3 -c 'import os,sys;print(os.path.expanduser(sys.argv[1]))' "$delta_file" 2>/dev/null)" \
+       && [ -n "$delta_resolved" ]; then
+      delta_file="$delta_resolved"
+    else
+      echo "ВНИМАНИЕ: не удалось раскрыть путь LIVE_ELO_DELTA '$delta_file'; отпечаток дельты считается по значению как есть"
+    fi ;;
+esac
 fingerprint_runtime_elo() {
   local f crc
   for f in runtime/live_elo_model_state.json runtime/live_elo_progress.json \
-           runtime/live_elo_delta.json; do
+           "$delta_file"; do
     if [ -e "$f" ]; then
       crc="$(cksum < "$f")" || crc="нечитаем-$RANDOM-$SECONDS"
     else
@@ -331,9 +383,40 @@ fingerprint_runtime_elo() {
     echo "$f $crc"
   done
 }
-# Нет timeout — не трогаем прод вообще: без предела вернётся ночной простой 08.10.
+# Код 0 = писатель жив, 1 = процессов нет, иное = pgrep не смог ответить.
+# «Нет» доказано только кодом 1: ошибка pgrep не считается отсутствием.
+rebase_writer_gone() {
+  local rc=0
+  pgrep -f "$writer_pattern" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 1 ]
+}
+# rc 124/137 говорят о timeout, а не о python: убитый timeout оставляет python
+# жить, и тот может дописать state после нашего сравнения отпечатков. Поэтому
+# перед любым рестартом после аварийного выхода доказываем, что писателя нет.
+stop_rebase_writer() {
+  local waited=0
+  if rebase_writer_gone; then return 0; fi
+  echo 'ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO; посылаю SIGKILL'
+  pkill -9 -f "$writer_pattern" >/dev/null 2>&1 || true
+  while [ "$waited" -lt "$writer_wait" ]; do
+    if rebase_writer_gone; then return 0; fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  rebase_writer_gone
+}
+# Нет timeout или pgrep/pkill — не трогаем прод вообще: без предела вернётся
+# ночной простой 08.10, а без доказательства смерти писателя рестарт опасен.
 if ! command -v timeout >/dev/null 2>&1; then
   echo 'ОШИБКА: нет команды timeout; перебазировка без предела по времени запрещена, прод не остановлен'
+  exit 1
+fi
+if ! command -v pgrep >/dev/null 2>&1 || ! command -v pkill >/dev/null 2>&1; then
+  echo 'ОШИБКА: нет pgrep/pkill; доказать отсутствие писателя нельзя, прод не остановлен'
+  exit 1
+fi
+if ! rebase_writer_gone; then
+  echo 'ОШИБКА: перебазировка ELO уже выполняется (или pgrep не ответил); второй писатель запрещён, прод не остановлен'
   exit 1
 fi
 systemctl stop cyberscore.service
@@ -341,34 +424,55 @@ elo_before="$(fingerprint_runtime_elo)"
 rebase_started="$(date +%s)"
 rebase_status=0
 timeout -k 60 "$rebase_timeout" venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot" || rebase_status=$?
-if [ "$rebase_status" -eq 0 ]; then
-  :
-elif [ "$rebase_status" -eq 1 ]; then
-  echo 'ОШИБКА: перебазировка ELO отклонена; новый снимок не установлен'
-  : > /root/.local/state/ingame/map_id_check.txt
-  systemctl start cyberscore.service
-  exit 1
-else
-  # Таймаут (124/137), OOM-убийство (137), падение интерпретатора, код 2 самой
-  # перебазировки. Если ни один runtime-файл не изменился, база прежняя, и прод
-  # безопасно поднять на прежнем снимке; иначе целостность не доказана.
+if [ "$rebase_status" -ne 0 ]; then
   rebase_seconds=$(( $(date +%s) - rebase_started ))
+  # Отпечатки имеют смысл только когда писателя точно нет: берём их ПОСЛЕ.
+  if ! stop_rebase_writer; then
+    echo "ОШИБКА: процесс перебазировки ELO не остановлен (rc=$rebase_status, ${rebase_seconds} с); сервис оставлен остановленным"
+    exit "$rebase_status"
+  fi
+  # Код 1 тоже ничего не доказывает: rebase_runtime_model_state.py печатает итог
+  # и читает stat() уже ПОСЛЕ успешной записи (вне обработчика), любое исключение
+  # там даёт код 1 при изменённой базе. Поэтому отпечатки сверяются при ЛЮБОМ
+  # ненулевом коде: прод на старом снимке с runtime, перебазированным на новый,
+  # считал бы ELO на смешанной базе (live_team_strength.py:829-833, 1571-1585).
   if [ "$(fingerprint_runtime_elo)" = "$elo_before" ]; then
+    if [ "$rebase_status" -eq 1 ]; then
+      echo 'ОШИБКА: перебазировка ELO отклонена; новый снимок не установлен'
+      : > /root/.local/state/ingame/map_id_check.txt
+      systemctl start cyberscore.service
+      exit 1
+    fi
+    # Таймаут (124/137), OOM-убийство (137), падение интерпретатора, код 2 самой
+    # перебазировки с откатом: ни один runtime-файл не изменился, база прежняя,
+    # и прод безопасно поднять на прежнем снимке.
     echo "ОШИБКА: перебазировка ELO прервана (rc=$rebase_status, ${rebase_seconds} с, лимит ${rebase_timeout} с); runtime ELO не изменён, прод поднят на прежнем снимке"
     : > /root/.local/state/ingame/map_id_check.txt
     systemctl start cyberscore.service
     exit 1
   fi
-  echo "ОШИБКА: целостность runtime ELO не подтверждена (rc=$rebase_status, ${rebase_seconds} с); сервис оставлен остановленным"
+  echo "ОШИБКА: целостность runtime ELO не подтверждена (rc=$rebase_status, ${rebase_seconds} с); runtime ELO изменён; сервис оставлен остановленным"
   exit "$rebase_status"
 fi
+# Упавший mv: runtime ELO уже перебазирован на НОВЫЙ снимок, а на месте лежит
+# прежний. Поднять прод на такой паре значит молча считать ELO на смешанной
+# базе (карты между старым и новым срезом выпадают) - хуже, чем стоящий прод.
+# Поэтому прод остаётся остановленным, явная ОШИБКА уходит в админ-чат через
+# notify_chain (rc != 0), .tmp остаётся для ручной установки.
 if [ "$1" = 1 ]; then
-  mv "$staged_snapshot" "$snapshot"
+  mv_status=0
+  mv "$staged_snapshot" "$snapshot" || mv_status=$?
+  if [ "$mv_status" -ne 0 ]; then
+    echo "ОШИБКА: не удалось установить новый снимок (mv rc=$mv_status); runtime ELO уже перебазирован на него, прод оставлен остановленным - установить $staged_snapshot вручную и запустить cyberscore"
+    exit "$mv_status"
+  fi
 fi
-venv/bin/python3 ELO/convert_state_to_delta.py --if-stale || \
-  echo 'ВНИМАНИЕ: обновление ELO-дельты не удалось; сохранено полное состояние'
-venv/bin/python3 ELO/build_state_arrays.py || \
-  echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался'
+# Прод ещё остановлен: оба шага ограничены (06.10 sidecar собирался 124 с;
+# 900 с = 7.3x). При таймауте остаётся ВНИМАНИЕ и прод всё равно поднимается.
+timeout -k 30 900 venv/bin/python3 ELO/convert_state_to_delta.py --if-stale || \
+  echo 'ВНИМАНИЕ: обновление ELO-дельты не удалось или превысило 900 с; сохранено полное состояние'
+timeout -k 30 900 venv/bin/python3 ELO/build_state_arrays.py || \
+  echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался или превысил 900 с'
 : > /root/.local/state/ingame/map_id_check.txt
 systemctl start cyberscore.service
 sleep 3

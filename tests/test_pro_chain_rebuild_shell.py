@@ -153,11 +153,23 @@ echo "scp stub: no serv1 side: $*" >&2; exit 1
 
 SYSTEMCTL_STUB = r'''#!/bin/bash
 echo "SYSTEMCTL $*" >> "$STUB_EVENTS"
+if [ "${1:-}" = start ] && [ -n "${STUB_ORPHAN_PIDFILE:-}" ] && [ -s "$STUB_ORPHAN_PIDFILE" ] \
+   && kill -0 "$(cat "$STUB_ORPHAN_PIDFILE")" 2>/dev/null; then
+  echo "START-WITH-WRITER-ALIVE" >> "$STUB_EVENTS"
+fi
 [ "${1:-}" = is-active ] && echo active
 exit 0
 '''
 
-SLEEP_STUB = "#!/bin/bash\nexit 0\n"
+SLEEP_STUB = '#!/bin/bash\n[ -n "${STUB_REAL_SLEEP:-}" ] && exec /bin/sleep "$@"\nexit 0\n'
+# mv: fails on demand (STUB_MV_FAIL=1) for the staged ELO snapshot, otherwise the real one.
+MV_STUB = r'''#!/bin/bash
+echo "MV $*" >> "$STUB_EVENTS"
+if [ -n "${STUB_MV_FAIL:-}" ]; then
+  case "$*" in *live_team_elo_snapshot.json.tmp*) echo "mv: stub failure" >&2; exit 1;; esac
+fi
+exec /bin/mv "$@"
+'''
 SHA1SUM_STUB = '#!/bin/bash\nexec shasum -a 1 "$@"\n'
 
 # `bash -s` is how a rebase script reaches the prod host (ssh `bash -s` remote,
@@ -200,11 +212,17 @@ TIMEOUT_STUB = r'''#!/bin/bash
 echo "TIMEOUT $*" >> "$STUB_EVENTS"
 exec "$STUB_REAL_PY" -I "$(dirname "$0")/timeout_impl.py" "$@"
 '''
-TIMEOUT_IMPL = '''import subprocess, sys
+# STUB_TIMEOUT_CAP="name=seconds,..." shortens the limit of the commands whose argv
+# mentions `name` (the validator keeps real limits >= 60 s; tests cannot wait that long).
+TIMEOUT_IMPL = '''import os, subprocess, sys
 a = sys.argv[1:]
 if a[0] == "-k":
     a = a[2:]
 secs, cmd = float(a[0]), a[1:]
+for pair in filter(None, os.environ.get("STUB_TIMEOUT_CAP", "").split(",")):
+    name, _, cap = pair.partition("=")
+    if name in " ".join(cmd):
+        secs = min(secs, float(cap))
 p = subprocess.Popen(cmd)
 try:
     rc = p.wait(timeout=secs)
@@ -231,9 +249,27 @@ if [ "${1:-}" = ELO/rebase_runtime_model_state.py ]; then
     kill-state) printf 'half-rebased\n' > runtime/live_elo_model_state.json; exit 137;;
     kill-progress) printf 'half-rebased\n' > runtime/live_elo_progress.json; exit 137;;
     kill-delta) printf '{}' > runtime/live_elo_delta.json; exit 137;;
+    kill-env-delta) printf '{}' > "$STUB_DELTA_FILE"; exit 137;;
     reject) exit 1;;
+    reject-state) printf 'rebased-then-crashed\n' > runtime/live_elo_model_state.json; exit 1;;
+    reject-env-delta) printf '{}' > "$STUB_DELTA_FILE"; exit 1;;
     rollback-clean) exit 2;;
+    orphan-writer)
+      # the python writer outlives its `timeout` wrapper: ignores SIGTERM, rewrites
+      # the state STUB_ORPHAN_DELAY seconds later; the foreground part just hangs
+      ( trap '' TERM
+        exec -a "venv/bin/python3 ELO/rebase_runtime_model_state.py --orphan" /bin/bash -c \
+          '/bin/sleep "$1"; printf late-write > runtime/live_elo_model_state.json' orphan \
+          "${STUB_ORPHAN_DELAY:-3}" ) </dev/null >/dev/null 2>&1 &
+      echo $! > "$STUB_ORPHAN_PIDFILE"
+      exec /bin/sleep 600;;
   esac
+fi
+# a stuck post-rebase step: finishes (and says so) only if nobody cuts it first
+if { [ "${1:-}" = ELO/convert_state_to_delta.py ] && [ "${STUB_CONVERT:-}" = hang ]; } \
+   || { [ "${1:-}" = ELO/build_state_arrays.py ] && [ "${STUB_BUILD:-}" = hang ]; }; then
+  /bin/sleep "${STUB_HANG_SECONDS:-600}"
+  echo "HANG-COMPLETED $1" >> "$STUB_EVENTS"
 fi
 exit 0
 '''
@@ -311,7 +347,8 @@ class Env:
         for name, text in (("python3", PY_STUB), ("ssh", SSH_STUB), ("scp", SCP_STUB),
                            ("systemctl", SYSTEMCTL_STUB), ("sleep", SLEEP_STUB),
                            ("sha1sum", SHA1SUM_STUB), ("bash", BASH_STUB),
-                           ("systemd-run", SYSTEMD_RUN_STUB), ("timeout", TIMEOUT_STUB)):
+                           ("systemd-run", SYSTEMD_RUN_STUB), ("timeout", TIMEOUT_STUB),
+                           ("mv", MV_STUB)):
             _write(self.stubs / name, text, exe=True)
         _write(self.stubs / "timeout_impl.py", TIMEOUT_IMPL)
         # build tree scripts
@@ -845,10 +882,14 @@ printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
     assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
 
 
-def _memory_probe(e, *, live=True, available=1):
+def _memory_probe(e, *, live=True, available=1, descendant=0.6):
+    # MemAvailable starts HIGH and the probe stub itself writes `available` right
+    # after PROBE-BEGIN: the watchdog (0.05 s poll) can only fire while the probe and
+    # its background descendant run. Writing the low value from t=0 let a loaded
+    # machine kill the group before pro_corpus_extract.py started (3/3 red on HEAD).
     _write(e.prod / "runtime/sourcetv_matches.json", '{"map": 1}' if live else "{}")
     meminfo = e.base / "meminfo"
-    _write(meminfo, f"MemAvailable: {available} kB\n")
+    _write(meminfo, "MemAvailable: 90000000 kB\n")
     _write(e.stubs / "sleep", '''#!/bin/bash
 [ "$1" = 3 ] && exit 0
 exec /bin/sleep "$@"
@@ -858,7 +899,9 @@ exec /bin/sleep "$@"
         'echo "PY $* |$note |@$here" >> "$EV"\n'
         'if [ "$1" = scripts/pro_chain/pro_corpus_extract.py ]; then\n'
         '  echo PROBE-BEGIN >> "$EV"\n'
-        '  (/bin/sleep 0.6; echo PROBE-DESCENDANT-FINISHED >> "$EV") &\n'
+        f'  printf \'MemAvailable: {available} kB\\n\' > "$PRO_CHAIN_MEMINFO_PATH.new"\n'
+        '  mv "$PRO_CHAIN_MEMINFO_PATH.new" "$PRO_CHAIN_MEMINFO_PATH"\n'
+        f'  (/bin/sleep {descendant}; echo PROBE-DESCENDANT-FINISHED >> "$EV") &\n'
         '  echo "PROBE-CHILD $!" >> "$EV"\n'
         '  wait $!\n'
         '  echo PROBE-FINISHED >> "$EV"\n'
@@ -877,7 +920,7 @@ exec /bin/sleep "$@"
 @pytest.mark.parametrize("shadow", [False, True])
 def test_chain_gate_watchdog_kills_group_and_prevents_delivery(make_env, shadow):
     e = make_env(kv3=False, target="new", mode="local", shadow=shadow)
-    extra = _memory_probe(e)
+    extra = _memory_probe(e, descendant=1.5)
     before = e.prod_tree()
     r = e.run(REBUILD_REL, extra=extra)
     log = e.log.read_text()
@@ -885,7 +928,7 @@ def test_chain_gate_watchdog_kills_group_and_prevents_delivery(make_env, shadow)
     assert "ОШИБКА: watchdog памяти" in log
     # Wait beyond the stub's sleep: killing only the shell PID would leave the
     # background descendant alive to append its marker. No ps dependency.
-    time.sleep(0.65)
+    time.sleep(1.6)
     assert "PROBE-BEGIN" in e.events_lines() and "PROBE-FINISHED" not in e.events_lines()
     assert "PROBE-DESCENDANT-FINISHED" not in e.events_lines()
     assert e.prod_tree() == before
@@ -1023,7 +1066,8 @@ def _rebase_env(make_env, mode="local", **kw):
 
 
 def _run_rebase(e, outcome, **extra):
-    env = {"STUB_REBASE": outcome, "PRO_CHAIN_RESTART_WAIT_SECONDS": "0"}
+    env = {"STUB_REBASE": outcome, "PRO_CHAIN_RESTART_WAIT_SECONDS": "0",
+           "STUB_TIMEOUT_CAP": "rebase_runtime_model_state=2"}
     env.update(extra)
     r = e.run(REBUILD_REL, extra=env)
     log = e.log.read_text() if e.log.exists() else ""
@@ -1100,7 +1144,7 @@ def test_rebase_failure_with_untouched_runtime_files_brings_prod_back(make_env, 
     e = _rebase_env(make_env, mode=mode)
     before = {rel: (e.prod / rel).read_bytes() for rel in RUNTIME_ELO}
     snapshot_before = _prod_snapshot(e)
-    r, log = _run_rebase(e, outcome, PRO_CHAIN_REBASE_TIMEOUT_SECONDS="1")
+    r, log = _run_rebase(e, outcome, PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60")
     assert r.returncode == 1, r.stdout + r.stderr + log
     # prod stopped, rebase attempted, prod started again on the old snapshot; never "active" polled
     assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
@@ -1111,7 +1155,7 @@ def test_rebase_failure_with_untouched_runtime_files_brings_prod_back(make_env, 
     assert not e.ops(("PRODPY ELO/convert_state_to_delta.py", "PRODPY ELO/build_state_arrays.py"))
     err = [l for l in log.splitlines() if l.startswith("ОШИБКА: перебазировка ELO прервана")]
     assert len(err) == 1, log
-    assert f"rc={rc}" in err[0] and "лимит 1 с" in err[0]
+    assert f"rc={rc}" in err[0] and "лимит 60 с" in err[0]
     assert "runtime ELO не изменён, прод поднят на прежнем снимке" in err[0]
 
 
@@ -1162,3 +1206,288 @@ def _path_without_timeout(e) -> str:
             if not link.exists() and not link.is_symlink():
                 link.symlink_to(p)
     return str(shim)
+
+
+# ------------------------------------------------------------------ round 2 hardening
+# F1 orphan writer, F2 LIVE_ELO_DELTA path, F3 bounded post-rebase steps, F4 limit
+# validator, F5 failed mv. Same delivery boundary as above: systemctl sequence,
+# map_id_check, exit code, snapshot bytes, admin-chat lines.
+
+def _kill_pidfile(path: Path) -> None:
+    """Leave no stub writer behind, whatever the test did."""
+    try:
+        pid = int(path.read_text().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_dead(pid: int, seconds: float = 5.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+def test_orphan_writer_is_killed_before_prod_restarts_on_unchanged_files(make_env):
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    delay = 3.0
+    t0 = time.monotonic()
+    try:
+        r, log = _run_rebase(e, "orphan-writer", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY=str(delay),
+                             STUB_REAL_SLEEP="1")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        pid = int(pidfile.read_text())
+        assert _wait_dead(pid), "the orphan writer must be dead when the script returns"
+        assert "START-WITH-WRITER-ALIVE" not in e.events_lines(), "prod started next to a live writer"
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                         "SYSTEMCTL start cyberscore.service"]
+        assert "ВНИМАНИЕ: после прерывания жив процесс перебазировки ELO; посылаю SIGKILL" in log
+        assert _map_id_check(e) == b""
+        # the point the orphan would have written at has passed: the file must be intact
+        time.sleep(max(0.0, delay + 0.7 - (time.monotonic() - t0)))
+        assert (e.prod / "runtime/live_elo_model_state.json").read_text() == \
+            "runtime/live_elo_model_state.json-v1\n"
+        assert "лимит 60 с); runtime ELO не изменён" in log
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def test_orphan_writer_that_cannot_be_killed_keeps_prod_stopped(make_env):
+    e = _rebase_env(make_env)
+    pidfile = e.base / "orphan.pid"
+    _write(e.stubs / "pkill", '#!/bin/bash\necho "PKILL $*" >> "$STUB_EVENTS"\nexit 0\n', exe=True)
+    try:
+        r, log = _run_rebase(e, "orphan-writer", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="60",
+                             STUB_ORPHAN_PIDFILE=str(pidfile), STUB_ORPHAN_DELAY="30",
+                             STUB_REAL_SLEEP="1", PRO_CHAIN_REBASE_WRITER_WAIT_SECONDS="1")
+        assert r.returncode == 124, r.stdout + r.stderr + log
+        assert _alive(int(pidfile.read_text())), "the stub kill must not have worked"
+        assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+        assert "START-WITH-WRITER-ALIVE" not in e.events_lines()
+        assert _map_id_check(e) == b"old-map\n"
+        assert "ОШИБКА: процесс перебазировки ELO не остановлен (rc=124" in log
+        assert "оставлен остановленным" in log
+        assert any(l.startswith("PKILL -9") for l in e.events_lines())
+        assert _prod_snapshot(e) == OLD_ARTIFACT
+    finally:
+        _kill_pidfile(pidfile)
+
+
+def test_second_writer_is_refused_before_prod_is_stopped(make_env):
+    e = _rebase_env(make_env)
+    manual = subprocess.Popen(
+        [BASH, "-c", "exec -a 'venv/bin/python3 ELO/rebase_runtime_model_state.py --manual' /bin/sleep 30"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.3)   # let exec -a take effect before pgrep looks
+        r, log = _run_rebase(e, "ok")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert not e.ops(("SYSTEMCTL",)), "prod must not be stopped next to a running writer"
+        assert not e.ops(("TIMEOUT",))
+        assert _map_id_check(e) == b"old-map\n"
+        assert "ОШИБКА: перебазировка ELO уже выполняется" in log
+        assert manual.poll() is None, "a foreign writer is not ours to kill"
+    finally:
+        manual.kill()
+        manual.wait()
+
+
+@pytest.mark.parametrize("env_value,stub_file", [
+    ("runtime/custom_delta.json", "runtime/custom_delta.json"),
+    ("~/elo_delta.json", "HOME/elo_delta.json"),
+])
+def test_live_elo_delta_env_path_is_fingerprinted(make_env, env_value, stub_file):
+    e = _rebase_env(make_env)
+    target = stub_file.replace("HOME", str(e.base / "home"))
+    r, log = _run_rebase(e, "kill-env-delta", LIVE_ELO_DELTA=env_value, STUB_DELTA_FILE=target)
+    assert r.returncode == 137, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], \
+        "a changed LIVE_ELO_DELTA file is a changed runtime ELO: prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "ОШИБКА: целостность runtime ELO не подтверждена" in log
+
+
+@pytest.mark.parametrize("hang_in", ["convert", "build"])
+def test_post_rebase_steps_are_bounded_and_prod_still_starts(make_env, hang_in):
+    e = _rebase_env(make_env)
+    extra = {"STUB_HANG_SECONDS": "4",
+             "STUB_TIMEOUT_CAP": f"{'convert_state_to_delta' if hang_in == 'convert' else 'build_state_arrays'}=1"}
+    extra["STUB_CONVERT" if hang_in == "convert" else "STUB_BUILD"] = "hang"
+    r, log = _run_rebase(e, "ok", **extra)
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    events = e.events_lines()
+    conv = "TIMEOUT -k 30 900 venv/bin/python3 ELO/convert_state_to_delta.py --if-stale"
+    build = "TIMEOUT -k 30 900 venv/bin/python3 ELO/build_state_arrays.py"
+    assert conv in events and build in events, events
+    assert events.index(conv) < events.index(build) < events.index("SYSTEMCTL start cyberscore.service")
+    time.sleep(4.5)   # past the stub's own 4 s: only an unbounded step gets to say it completed
+    assert not [l for l in e.events_lines() if l.startswith("HANG-COMPLETED")], \
+        "the stuck step must be cut at its limit, not left to run"
+    marker = ("ВНИМАНИЕ: обновление ELO-дельты не удалось или превысило 900 с" if hang_in == "convert"
+              else "ВНИМАНИЕ: sidecar массивов ELO не собрался или превысил 900 с")
+    assert marker in log
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+    assert _map_id_check(e) == b""
+    assert _prod_snapshot(e) == BUILT["elo"]
+
+
+@pytest.mark.parametrize("bad", ["00", "0", "59", "7201", "1e3", "-5", "abc", "99999999999"])
+def test_invalid_rebase_limit_falls_back_to_1800_with_a_warning(make_env, bad):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS=bad)
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert f"ВНИМАНИЕ: лимит перебазировки '{bad}' недопустим" in log
+    assert any(l.startswith(f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} venv/bin/python3 ELO/rebase")
+               for l in e.events_lines()), e.events_lines()
+
+
+@pytest.mark.parametrize("good,used", [("60", 60), ("7200", 7200), ("0090", 90)])
+def test_valid_rebase_limit_is_used_without_a_warning(make_env, good, used):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS=good)
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert "недопустим" not in log
+    assert any(l.startswith(f"TIMEOUT -k 60 {used} venv/bin/python3 ELO/rebase")
+               for l in e.events_lines()), e.events_lines()
+
+
+def test_failed_snapshot_mv_keeps_prod_stopped_with_explicit_error(make_env):
+    # Runtime ELO is already rebased onto the NEW snapshot when mv fails, so
+    # starting prod on the old snapshot would mix bases silently: stay stopped,
+    # exit nonzero (notify_chain alerts), leave the .tmp for manual install.
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok", STUB_MV_FAIL="1")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"]
+    assert _prod_snapshot(e) == OLD_ARTIFACT, "the old snapshot must stay in place"
+    assert "ОШИБКА: не удалось установить новый снимок (mv rc=1); runtime ELO уже перебазирован на него, прод оставлен остановленным" in log
+    assert not e.ops(("PRODPY ELO/convert_state_to_delta.py", "PRODPY ELO/build_state_arrays.py"))
+
+
+# ------------------------------------------------------------------ round 3 hardening
+# R1 rc=1 is fingerprinted too, R2 LIVE_ELO_DELTA resolved like Path.expanduser,
+# R3 the writer pattern is anchored to the argv start.
+
+def test_rebase_rc_1_after_touching_runtime_files_leaves_prod_stopped(make_env):
+    # The rebase script prints and stat()s AFTER a successful write, outside any
+    # handler: an exception there exits 1 with a changed base. Prod on the old
+    # snapshot next to a rebased runtime ELO would count on a mixed base.
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "reject-state")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n", "map_id_check must not be touched"
+    assert _prod_snapshot(e) == OLD_ARTIFACT
+    assert "ОШИБКА: целостность runtime ELO не подтверждена (rc=1" in log
+    assert "runtime ELO изменён" in log and "оставлен остановленным" in log
+    assert "отклонена" not in log and "прод поднят" not in log
+
+
+def test_rebase_rc_1_after_touching_env_delta_leaves_prod_stopped(make_env):
+    e = _rebase_env(make_env)
+    target = e.base / "home/elo_delta.json"
+    r, log = _run_rebase(e, "reject-env-delta", LIVE_ELO_DELTA="~/elo_delta.json",
+                         STUB_DELTA_FILE=str(target))
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"]
+    assert "ОШИБКА: целостность runtime ELO не подтверждена (rc=1" in log
+
+
+def _pw_home() -> tuple[str, str]:
+    import pwd
+    pw = pwd.getpwuid(os.getuid())
+    return pw.pw_name, pw.pw_dir
+
+
+def test_live_elo_delta_tilde_user_path_is_fingerprinted(make_env):
+    # Python opens Path(env).expanduser(): '~user/x' is user's home from the passwd
+    # database, not $HOME. The fingerprint must follow the same file. The path goes
+    # from that home up and into the test's temp dir, so nothing is written to the
+    # real home directory.
+    name, home = _pw_home()
+    e = _rebase_env(make_env)
+    target = e.base / "tilde_user_delta.json"
+    rel = os.path.relpath(target, home)
+    value = f"~{name}/{rel}"
+    assert Path(os.path.expanduser(value)).resolve() == target.resolve()
+    r, log = _run_rebase(e, "kill-env-delta", LIVE_ELO_DELTA=value,
+                         STUB_DELTA_FILE=os.path.expanduser(value))
+    assert r.returncode == 137, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], \
+        "a changed '~user/' LIVE_ELO_DELTA file is a changed runtime ELO: prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "ОШИБКА: целостность runtime ELO не подтверждена" in log
+    assert "ВНИМАНИЕ: не удалось раскрыть путь LIVE_ELO_DELTA" not in log
+
+
+def test_live_elo_delta_unresolvable_tilde_falls_back_with_a_warning(make_env):
+    # The resolver python failing must not abort the chain: literal value + warning.
+    e = _rebase_env(make_env)
+    _write(e.prod / "venv/bin/python3", PRODPY_REBASE_STUB.replace(
+        'if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi',
+        'if [ "${1:-}" = "-c" ]; then exit 3; fi'), exe=True)
+    r, log = _run_rebase(e, "ok", LIVE_ELO_DELTA="~/elo_delta.json")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert "ВНИМАНИЕ: не удалось раскрыть путь LIVE_ELO_DELTA '~/elo_delta.json'" in log
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+
+
+@pytest.mark.parametrize("outcome,rc", [("ok", 0), ("kill-clean", 1)])
+def test_agent_cli_quoting_the_rebase_command_is_neither_a_writer_nor_killed(make_env, outcome, rc):
+    # Seen on the Mac: `codex exec "... python3 ELO/rebase_runtime_model_state.py ..."`
+    # matched the unanchored pattern. On serv1 that refuses the nightly rebase or
+    # SIGKILLs an unrelated process (failure path: stop_rebase_writer's pkill).
+    e = _rebase_env(make_env)
+    quoted = subprocess.Popen(
+        [BASH, "-c", "exec -a 'codex exec please run venv/bin/python3 ELO/rebase_runtime_model_state.py "
+                     "--snapshot x and report' /bin/sleep 30"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.3)   # let exec -a take effect before pgrep looks
+        r, log = _run_rebase(e, outcome)
+        assert r.returncode == rc, r.stdout + r.stderr + log
+        assert "уже выполняется" not in log
+        assert e.ops(("SYSTEMCTL",))[:2] == ["SYSTEMCTL stop cyberscore.service",
+                                             "SYSTEMCTL start cyberscore.service"]
+        assert "посылаю SIGKILL" not in log
+        assert quoted.poll() is None, "an unrelated process quoting the command must not be killed"
+    finally:
+        quoted.kill()
+        quoted.wait()
+
+
+@pytest.mark.parametrize("argv0", [
+    "/root/main/venv/bin/python3.12 ELO/rebase_runtime_model_state.py --manual",
+    "venv/bin/python3 -u -B /root/main/ELO/rebase_runtime_model_state.py --manual",
+])
+def test_second_writer_with_interpreter_options_or_abs_path_is_still_refused(make_env, argv0):
+    e = _rebase_env(make_env)
+    manual = subprocess.Popen(
+        [BASH, "-c", f"exec -a '{argv0}' /bin/sleep 30"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(0.3)
+        r, log = _run_rebase(e, "ok")
+        assert r.returncode == 1, r.stdout + r.stderr + log
+        assert not e.ops(("SYSTEMCTL",))
+        assert "ОШИБКА: перебазировка ELO уже выполняется" in log
+        assert manual.poll() is None
+    finally:
+        manual.kill()
+        manual.wait()
