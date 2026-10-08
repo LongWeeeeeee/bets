@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,11 @@ def _cfg(**env):
     # underdog_late_after_wait_delivered tick trails by 13227 NW, so switch it off here
     # (it is tested in test_ml_dispatch_late_nw_gate.py).
     env.setdefault("ML_DISPATCH_LATE_WAIT_NW_GATE", "0")
+    # 08.10.2026 realized-underdog release is a different gate: the captured
+    # underdog_single_model_delivered tick (629 s, Radiant ahead +1706 NW) is released by
+    # it, so switch it off here to keep these tests on the 03.10 block itself. The release
+    # is tested below with production defaults (``_prod_cfg``).
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE", "0")
     return md.Config.from_env(env)
 
 
@@ -334,3 +340,281 @@ def test_zero_threshold_blocks_strictly_lower_elo_only():
     cfg = _cfg(ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF="0")
     assert len(_wins(md.evaluate(_ctx(name, elo_radiant=1800.0, elo_dire=1800.0), cfg))) == 1
     assert _wins(md.evaluate(_ctx(name, elo_radiant=1800.0, elo_dire=1800.5), cfg)) == []
+
+
+# ---------------------------------------------------------------------------
+# Owner decision 08.10.2026 (E-365): the underdog block is released while the
+# underdog is realizing the edge (game_time >= 300 s AND target NW lead > 0).
+# Inputs: 4 verbatim serv1 journal ticks, fixtures/ml_dispatch_underdog_release_ticks_20261008.jsonl
+# (see its README). Assertions are on what ``evaluate`` returns; cyberscore sends only
+# the ``timing == "now"`` decisions of it.
+# ---------------------------------------------------------------------------
+
+RELEASE_ROWS = [
+    json.loads(line)
+    for line in (Path(__file__).parent / "fixtures"
+                 / "ml_dispatch_underdog_release_ticks_20261008.jsonl").read_text().splitlines()
+    if line.strip()
+]
+# file order == source order: 0 Aurora/PARIVISION, 1 Blasterbl/LEGION, 2 Yangon/InterActive, 3 Cloud Dawning/Yangon
+AURORA, BLASTERBL, YANGON, CLOUD = 0, 1, 2, 3
+RULE_SINGLE = "win_single_model_confirm"
+RULE_LATE = "win_late_after_wait"
+RELEASE_MARK = "underdog_realized_release"
+
+
+def _prod_cfg(**env):
+    """Production defaults (``from_env`` of an empty environment) plus overrides."""
+    return md.Config.from_env(dict(env))
+
+
+def _rctx(index, **overrides):
+    record = RELEASE_ROWS[index]
+    kills30 = record["verdicts"].get("kills30") or {}
+    kwargs = dict(
+        match_key=record["match_key"], base_url=record["base_url"],
+        map_num=record["map_num"], game_time=record["game_time"],
+        radiant_team=record["teams"]["radiant"], dire_team=record["teams"]["dire"],
+        heroes=record["heroes"], elo_radiant=record["elo_r"], elo_dire=record["elo_d"],
+        early_nw=_verdict(record, "early_nw"), early_win=_verdict(record, "early_win"),
+        late=_verdict(record, "late"), all=_verdict(record, "all"),
+        lane=_verdict(record, "lane"), prematch=None, already_sent=set(),
+        radiant_networth_lead=record.get("radiant_networth_lead"),
+        lane_adv_dict=record.get("lane_adv_dict"),
+        kills30_radiant=kills30.get("radiant"), kills30_dire=kills30.get("dire"),
+    )
+    kwargs.update(overrides)
+    return md.Ctx(**kwargs)
+
+
+def _released_marks(decision):
+    return [r for r in decision.reasons if r.startswith(RELEASE_MARK)]
+
+
+def test_release_fixture_rows_are_what_they_claim():
+    assert len(RELEASE_ROWS) == 4
+    names = [(r["teams"]["radiant"], r["teams"]["dire"], r["game_time"], r["radiant_networth_lead"])
+             for r in RELEASE_ROWS]
+    assert names == [
+        ("Aurora Gaming", "PARIVISION", 613.0, -2638.0),
+        ("Blasterbl", "LEGION", 1861.0, -7438.0),
+        ("Yangon Galacticos", "InterActive Philippines", 604.0, 81.0),
+        ("Cloud Dawning", "Yangon Galacticos", -79.0, 0.0),
+    ]
+    # every tick was journaled as blocked by the 03.10 gate and produced no win decision
+    for index in (AURORA, BLASTERBL, YANGON, CLOUD):
+        record = RELEASE_ROWS[index]
+        assert [d for d in record["decisions"] if d["market"] == "win"] == [], index
+        assert any(s["market"] == "win" and s["reason"] == REASON_AGAINST_ELO
+                   for s in record["skipped"]), index
+
+
+def test_yangon_realized_underdog_is_released_on_the_single_model_path():
+    # Radiant (YG) is the ELO underdog by 159.0 and leads +81 NW at 604 s.
+    result = md.evaluate(_rctx(YANGON), _prod_cfg())
+    wins = _wins(result)
+    assert [(d.target_side, d.rule, d.timing) for d in wins] == [("Radiant", RULE_SINGLE, "now")]
+    assert wins[0].target_team == "Yangon Galacticos"
+    assert wins[0].models_for == ["late", "all"]
+    assert _released_marks(wins[0]) == [f"{RELEASE_MARK}: deficit=159.0 lead=81 game_time=604"]
+    assert _win_skips(result, REASON_AGAINST_ELO) == []
+    assert [s.side for s in _win_skips(result, "below_threshold")] == ["Dire"]
+
+
+def test_blasterbl_realized_underdog_is_released_on_the_late_after_wait_path():
+    # Dire (LEGION) is the ELO underdog by 134.5; Radiant lead -7438 = Dire ahead by 7438.
+    result = md.evaluate(_rctx(BLASTERBL), _prod_cfg())
+    wins = _wins(result)
+    assert [(d.target_side, d.rule, d.timing) for d in wins] == [("Dire", RULE_LATE, "now")]
+    assert wins[0].target_team == "LEGION"
+    assert _released_marks(wins[0]) == [f"{RELEASE_MARK}: deficit=134.5 lead=7438 game_time=1861"]
+    assert _win_skips(result, REASON_AGAINST_ELO) == []
+    # the early side is still resolved away by the wait, never resurrected
+    assert [s.side for s in _win_skips(result, md.REASON_VETO)] == ["Radiant"]
+
+
+def test_aurora_underdog_trailing_at_the_tick_stays_blocked():
+    # Radiant (Aurora) underdog by 155.7, Radiant lead -2638 at 613 s -> not realized.
+    result = md.evaluate(_rctx(AURORA), _prod_cfg())
+    assert _wins(result) == []
+    skips = _win_skips(result, REASON_AGAINST_ELO)
+    assert [s.side for s in skips] == ["Radiant"]
+    assert "deficit=155.7" in skips[0].detail
+
+
+def test_cloud_dawning_lane_star_at_00_stays_blocked_before_300_seconds():
+    # Radiant (Cloud Dawning) underdog by 262.5 at game_time -79: below the 300 s floor.
+    result = md.evaluate(_rctx(CLOUD), _prod_cfg())
+    assert _wins(result) == []
+    skips = _win_skips(result, REASON_AGAINST_ELO)
+    assert [s.side for s in skips] == ["Radiant"]
+    assert "deficit=262.5" in skips[0].detail
+    # even a positive NW lead does not release it at 00 / before 300 s
+    for game_time in (-79.0, 0.0, 299.0):
+        blocked = md.evaluate(_rctx(CLOUD, game_time=game_time, radiant_networth_lead=5000.0), _prod_cfg())
+        assert _wins(blocked) == [], game_time
+
+
+@pytest.mark.parametrize("off", ["0", "false", "off", "OFF"])
+@pytest.mark.parametrize("index", [YANGON, BLASTERBL])
+def test_rollback_env_restores_the_old_block(index, off):
+    result = md.evaluate(_rctx(index), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE=off))
+    assert _wins(result) == []
+    side = "Radiant" if index == YANGON else "Dire"
+    assert [s.side for s in _win_skips(result, REASON_AGAINST_ELO)] == [side]
+
+
+def test_block_off_still_wins_over_the_release_switch():
+    # With the whole 03.10 gate off nothing is blocked and nothing is marked as released.
+    result = md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_BLOCK="0"))
+    wins = _wins(result)
+    assert len(wins) == 1 and _released_marks(wins[0]) == []
+
+
+def test_config_defaults_and_env_parsing():
+    assert md.Config().win_underdog_realized_release is False
+    cfg = md.Config.from_env({})
+    assert cfg.win_underdog_realized_release is True
+    assert (cfg.win_underdog_realized_min_time, cfg.win_underdog_realized_min_lead) == (300.0, 0.0)
+    cfg = _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME="450",
+                    ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD="1500")
+    assert (cfg.win_underdog_realized_min_time, cfg.win_underdog_realized_min_lead) == (450.0, 1500.0)
+    for raw in ("nan", "inf", "-inf", "-5", "garbage", ""):
+        cfg = _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME=raw,
+                        ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD=raw)
+        assert (cfg.win_underdog_realized_min_time, cfg.win_underdog_realized_min_lead) == (
+            300.0, 0.0), raw
+
+
+def test_env_is_read_from_the_process_environment(monkeypatch):
+    # Isolate from the machine: any ML_DISPATCH_* knob in the shell (e.g.
+    # ML_DISPATCH_WIN_UNDERDOG_BLOCK=0) would change the expected outcome.
+    for name in list(os.environ):
+        if name.startswith("ML_DISPATCH_"):
+            monkeypatch.delenv(name, raising=False)
+    assert len(_wins(md.evaluate(_rctx(YANGON), md.Config.from_env()))) == 1
+    monkeypatch.setenv("ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE", "0")
+    assert _wins(md.evaluate(_rctx(YANGON), md.Config.from_env())) == []
+
+
+def test_hand_built_config_keeps_the_block_even_when_realized():
+    cfg = md.Config(win_underdog_block=True)
+    assert cfg.win_underdog_realized_release is False
+    assert _wins(md.evaluate(_rctx(YANGON), cfg)) == []
+    on = md.Config(win_underdog_block=True, win_underdog_realized_release=True)
+    assert len(_wins(md.evaluate(_rctx(YANGON), on))) == 1
+
+
+def test_game_time_floor_is_inclusive_300_and_a_release_before_600_is_wait_600():
+    cfg = _prod_cfg()
+    # 299.9 s: still blocked; 300 s: released but not sent yet (cyberscore sends only "now")
+    assert _wins(md.evaluate(_rctx(YANGON, game_time=299.9), cfg)) == []
+    for game_time in (300.0, 450.0, 599.0):
+        wins = _wins(md.evaluate(_rctx(YANGON, game_time=game_time), cfg))
+        assert [(d.rule, d.timing) for d in wins] == [(RULE_SINGLE, "wait_600")], game_time
+        assert len(_released_marks(wins[0])) == 1
+    # at 600 s the ordinary timing rule sends it
+    assert [d.timing for d in _wins(md.evaluate(_rctx(YANGON, game_time=600.0), cfg))] == ["now"]
+
+
+@pytest.mark.parametrize("bad", [None, float("nan"), float("inf"), float("-inf")])
+def test_missing_or_nonfinite_nw_keeps_the_block(bad):
+    for index in (YANGON, BLASTERBL):
+        result = md.evaluate(_rctx(index, radiant_networth_lead=bad), _prod_cfg())
+        assert _wins(result) == [], index
+        assert len(_win_skips(result, REASON_AGAINST_ELO)) == 1, index
+
+
+@pytest.mark.parametrize("bad", [None, float("nan"), float("inf")])
+def test_missing_or_nonfinite_game_time_keeps_the_block(bad):
+    result = md.evaluate(_rctx(YANGON, game_time=bad), _prod_cfg())
+    assert _wins(result) == []
+    assert len(_win_skips(result, REASON_AGAINST_ELO)) == 1
+
+
+def test_min_lead_boundary_is_strict_for_both_sides():
+    cfg = _prod_cfg()
+    # Radiant target (YG): lead 0 -> blocked, lead 1 -> released
+    assert _wins(md.evaluate(_rctx(YANGON, radiant_networth_lead=0.0), cfg)) == []
+    assert len(_wins(md.evaluate(_rctx(YANGON, radiant_networth_lead=1.0), cfg))) == 1
+    assert _wins(md.evaluate(_rctx(YANGON, radiant_networth_lead=-1.0), cfg)) == []
+    # Dire target (Blasterbl/LEGION): Radiant lead 0 -> blocked, -1 (Dire +1) -> released,
+    # +7438 (Radiant ahead = the Dire underdog trails) -> blocked (sign trap)
+    assert _wins(md.evaluate(_rctx(BLASTERBL, radiant_networth_lead=0.0), cfg)) == []
+    assert len(_wins(md.evaluate(_rctx(BLASTERBL, radiant_networth_lead=-1.0), cfg))) == 1
+    assert _wins(md.evaluate(_rctx(BLASTERBL, radiant_networth_lead=7438.0), cfg)) == []
+
+
+def test_threshold_knobs_move_the_boundaries():
+    # YG leads +81 at 604 s
+    assert _wins(md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD="81"))) == []
+    assert len(_wins(md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD="80")))) == 1
+    assert _wins(md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME="605"))) == []
+    assert len(_wins(md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME="604")))) == 1
+
+
+def test_a_released_decision_equals_the_gate_off_decision_except_for_the_reason():
+    # the release must not touch side, rule, timing, models or the price floor
+    released = _wins(md.evaluate(_rctx(YANGON), _prod_cfg()))[0]
+    gate_off = _wins(md.evaluate(_rctx(YANGON), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_BLOCK="0")))[0]
+    assert released.reasons[:-1] == gate_off.reasons
+    assert released.reasons[-1].startswith(RELEASE_MARK)
+    for field_name in ("market", "target_side", "target_team", "rule", "models_for", "models_against",
+                       "timing", "expected_wr", "expected_wr_raw", "min_odds"):
+        assert getattr(released, field_name) == getattr(gate_off, field_name), field_name
+    assert released.min_odds is not None and released.min_odds > 1.0
+
+
+def test_late_conflict_released_decision_equals_the_gate_off_decision_except_for_the_reason():
+    released = _wins(md.evaluate(_rctx(BLASTERBL), _prod_cfg()))[0]
+    gate_off = _wins(md.evaluate(_rctx(BLASTERBL), _prod_cfg(ML_DISPATCH_WIN_UNDERDOG_BLOCK="0")))[0]
+    assert released.reasons[:-1] == gate_off.reasons
+    for field_name in ("target_side", "rule", "models_for", "models_against", "timing",
+                       "expected_wr", "expected_wr_raw", "min_odds"):
+        assert getattr(released, field_name) == getattr(gate_off, field_name), field_name
+
+
+def test_dedup_early_solo_and_veto_still_apply_to_a_realized_underdog():
+    cfg = _prod_cfg()
+    # dedup: the key was already sent -> dedup skip, no decision, no against-ELO skip
+    key = (RELEASE_ROWS[YANGON]["base_url"], RELEASE_ROWS[YANGON]["map_num"], "win", "Radiant")
+    result = md.evaluate(_rctx(YANGON, already_sent={key}), cfg)
+    assert _wins(result) == [] and len(_win_skips(result, md.REASON_DEDUP)) == 1
+    assert _win_skips(result, REASON_AGAINST_ELO) == []
+    # early-solo: only Early Win supports Radiant (E-291) -> early_solo_blocked, not released
+    early_only = _rctx(YANGON, late=None, all=None,
+                       early_win=md.ModelVerdict(side="Radiant", confidence=0.70))
+    result = md.evaluate(early_only, cfg)
+    assert _wins(result) == []
+    assert len(_win_skips(result, md.REASON_EARLY_SOLO_BLOCKED)) == 1
+    # veto: Late votes Dire at 0.70 -> the Radiant side is vetoed, the release resurrects nothing
+    vetoed = _rctx(YANGON, late=md.ModelVerdict(side="Dire", confidence=0.70))
+    result = md.evaluate(vetoed, cfg)
+    assert _wins(result) == []
+    assert _win_skips(result, md.REASON_VETO)
+
+
+def test_realized_release_does_not_touch_elo_favorites_or_small_diffs():
+    cfg = _prod_cfg()
+    # YG made the ELO favorite: ordinary decision, no release mark
+    wins = _wins(md.evaluate(_rctx(YANGON, elo_radiant=2300.0, elo_dire=2129.0), cfg))
+    assert len(wins) == 1 and _released_marks(wins[0]) == []
+    # a 49-point underdog is not blocked by the 03.10 gate, so there is nothing to release
+    wins = _wins(md.evaluate(_rctx(YANGON, elo_radiant=2100.0, elo_dire=2149.0), cfg))
+    assert len(wins) == 1 and _released_marks(wins[0]) == []
+
+
+def test_dire_underdog_on_the_single_model_path_uses_the_dire_sign():
+    # captured Dire-target win (journal 03.10), ratings moved so Dire is the underdog by 118,
+    # game_time 651 s; Dire leads when the Radiant lead is negative.
+    name = "favorite_single_model_delivered"
+    record = _record(name)
+    assert record["decisions"][0]["target_side"] == "Dire"
+    cfg = _prod_cfg()
+    rating = dict(elo_radiant=2313.7, elo_dire=2195.6)
+    ahead = md.evaluate(_ctx(name, radiant_networth_lead=-500.0, **rating), cfg)
+    assert [(d.target_side, d.rule) for d in _wins(ahead)] == [("Dire", RULE_SINGLE)]
+    assert _released_marks(_wins(ahead)[0])
+    behind = md.evaluate(_ctx(name, radiant_networth_lead=500.0, **rating), cfg)
+    assert _wins(behind) == []
+    assert len(_win_skips(behind, REASON_AGAINST_ELO)) == 1

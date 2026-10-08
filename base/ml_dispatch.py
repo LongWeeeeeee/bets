@@ -98,6 +98,24 @@ Rules implemented (owner decisions, 12.09.2026 — see
   Missing/nonfinite ELO or a smaller diff keeps the old behavior.
   ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=0`` (also ``false``/``off``) disables the
   gate. The dataclass default is off (hand-built ``Config()``); ``from_env`` is on.
+- Owner decision 08.10.2026 (E-365, ``_win_underdog_realized``): the block above is
+  released for an ELO underdog that is REALIZING the models' edge at the tick:
+  ``game_time >= ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME`` (default 300 s) AND the
+  target side's net worth lead is STRICTLY greater than
+  ``ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD`` (default 0). The target's lead is
+  ``+ctx.radiant_networth_lead`` for Radiant and ``-lead`` for Dire. Measured on the
+  all7m journal (live NW at the send tick): underdog WIN rows with the target ahead
+  11W/2L, priced ROI +17.8..+23.6%; rows trailing 7W/15L, ROI -38..-55%. Missing or
+  nonfinite ``game_time`` / ``radiant_networth_lead`` keeps the block. Applies at BOTH
+  win construction sites (``win_single_model_confirm``, ``win_late_after_wait``) and
+  changes nothing else: the price floor, the E-357 late-wait NW gate, dedup,
+  ``early_solo_blocked``, timing (a release at game_time in [300, 600) is still
+  ``wait_600`` unless a timing release applies) and veto/conflict resolution stay as
+  they were. A released decision carries ``"underdog_realized_release: deficit=<ELO
+  deficit> lead=<target NW lead> game_time=<t>"`` in ``Decision.reasons``. Garbage
+  threshold values (nonfinite/negative) fall back to the defaults.
+  ``ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE=0`` (also ``false``/``off``) restores
+  the 03.10 block exactly; the dataclass default is off, ``from_env`` is on.
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -469,6 +487,13 @@ class Config:
     # default off (hand-built ``Config()`` keeps the old behavior); ``from_env`` on.
     win_underdog_block: bool = False
     win_underdog_block_min_diff: float = 50.0
+    # Owner decision 08.10.2026 (E-365): the underdog block above is released while the
+    # underdog is REALIZING the models' edge at the tick: game_time >= min_time AND the
+    # target's net worth lead > min_lead. Dataclass default off (same convention as
+    # ``win_underdog_block``); ``from_env`` on.
+    win_underdog_realized_release: bool = False
+    win_underdog_realized_min_time: float = 300.0
+    win_underdog_realized_min_lead: float = 0.0
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
@@ -572,6 +597,13 @@ class Config:
             ).strip().lower() not in ("0", "false", "off"),
             win_underdog_block_min_diff=_win_underdog_min_diff(
                 _float("ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF", 50.0)),
+            win_underdog_realized_release=str(
+                env.get("ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            win_underdog_realized_min_time=_win_underdog_realized_threshold(
+                _float("ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME", 300.0), 300.0),
+            win_underdog_realized_min_lead=_win_underdog_realized_threshold(
+                _float("ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD", 0.0), 0.0),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
@@ -848,9 +880,50 @@ def _win_underdog_min_diff(value: float) -> float:
     return float(value) if math.isfinite(value) and value >= 0 else 50.0
 
 
-def _win_against_elo(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
-    """Owner decision 03.10.2026: audit detail when ``target_side`` is the ELO
-    underdog of a ``win`` decision, else ``None``.
+def _win_underdog_realized_threshold(value: float, default: float) -> float:
+    """Env threshold for the 08.10.2026 realized-underdog release: a nonfinite or
+    negative value falls back to ``default`` (mirrors :func:`_win_underdog_min_diff`).
+    Disable the release with ``ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE=0``."""
+    return float(value) if math.isfinite(value) and value >= 0 else float(default)
+
+
+def _win_underdog_realized(ctx: Ctx, cfg: Config, target_side: str) -> Optional[Tuple[float, float]]:
+    """Owner decision 08.10.2026 (E-365): ``(target NW lead, game_time)`` when the
+    target is realizing the models' edge at this tick, else ``None``.
+
+    Realized = ``game_time >= cfg.win_underdog_realized_min_time`` AND the target's
+    net worth lead is STRICTLY greater than ``cfg.win_underdog_realized_min_lead``.
+    ``ctx.radiant_networth_lead`` > 0 means Radiant is ahead, so the target's lead is
+    ``+lead`` for Radiant and ``-lead`` for Dire. Missing/nonfinite game time or lead
+    returns ``None`` (the block stays).
+    """
+    if not cfg.win_underdog_realized_release or target_side not in SIDES:
+        return None
+    try:
+        game_time = float(ctx.game_time)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(game_time) or game_time < float(cfg.win_underdog_realized_min_time):
+        return None
+    deficit = _late_side_nw_deficit(ctx, target_side)  # > 0 = target behind
+    if deficit is None:
+        return None
+    lead = -deficit
+    if not lead > float(cfg.win_underdog_realized_min_lead):
+        return None
+    return lead, game_time
+
+
+def _win_against_elo_state(
+    ctx: Ctx, cfg: Config, target_side: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Owner decisions 03.10.2026 (block) and 08.10.2026 (realized release).
+
+    Returns ``(block_detail, release_detail)``. ``block_detail`` is the audit text
+    when ``target_side`` is the ELO underdog of a ``win`` decision and the block
+    applies, else ``None``. ``release_detail`` is set (and ``block_detail`` is
+    ``None``) when the target is an ELO underdog but is realizing the edge at the
+    tick (:func:`_win_underdog_realized`); it goes into ``Decision.reasons``.
 
     Blocks when both ratings are finite and the target's ELO is lower than the
     opponent's by >= ``cfg.win_underdog_block_min_diff``. The sign is computed
@@ -858,20 +931,30 @@ def _win_against_elo(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
     threshold is the kills knob). Missing/nonfinite ELO fails open (no block).
     """
     if not cfg.win_underdog_block or target_side not in SIDES:
-        return None
+        return None, None
     try:
         elo_r, elo_d = float(ctx.elo_radiant), float(ctx.elo_dire)
     except (TypeError, ValueError):
-        return None
+        return None, None
     if not (math.isfinite(elo_r) and math.isfinite(elo_d)):
-        return None
+        return None, None
     deficit = (elo_d - elo_r) if target_side == "Radiant" else (elo_r - elo_d)
     # Strictly lower ELO only: equal ratings are never an underdog, even at 0.
     if deficit <= 0 or deficit < float(cfg.win_underdog_block_min_diff):
-        return None
+        return None, None
+    realized = _win_underdog_realized(ctx, cfg, target_side)
+    if realized is not None:
+        lead, game_time = realized
+        return None, (f"underdog_realized_release: deficit={deficit:.1f} "
+                      f"lead={lead:.0f} game_time={game_time:.0f}")
     return (f"target {target_side} is ELO underdog: elo_radiant={elo_r:.1f} "
             f"elo_dire={elo_d:.1f} deficit={deficit:.1f} "
-            f">= {float(cfg.win_underdog_block_min_diff):.1f}")
+            f">= {float(cfg.win_underdog_block_min_diff):.1f}"), None
+
+
+def _win_against_elo(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
+    """Block detail of :func:`_win_against_elo_state` (``None`` = not blocked)."""
+    return _win_against_elo_state(ctx, cfg, target_side)[0]
 
 
 def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
@@ -939,6 +1022,7 @@ def _evaluate_win_late_conflict(
         reasons = reasons + ["nw=unknown"]
 
     key = _dedup_key(ctx, "win", side_b)
+    against_elo_state = _win_against_elo_state(ctx, cfg, side_b)
     if ctx.already_sent is not None and key in ctx.already_sent:
         skipped.append(Skipped("win", side_b, REASON_DEDUP, f"key={key} already sent"))
     elif nw_deficit is not None and nw_deficit >= cfg.late_wait_nw_gate:
@@ -946,10 +1030,12 @@ def _evaluate_win_late_conflict(
             "win", side_b, REASON_LATE_CONFLICT_NW_GATE,
             f"{side_b} nw_deficit={nw_deficit:.0f} >= gate={cfg.late_wait_nw_gate:.0f}; {detail}",
         ))
-    elif (against_elo := _win_against_elo(ctx, cfg, side_b)):
+    elif (against_elo := against_elo_state[0]):
         skipped.append(Skipped("win", side_b, REASON_WIN_AGAINST_ELO,
                                f"{against_elo}; {detail}"))
     else:
+        if against_elo_state[1]:
+            reasons = reasons + [against_elo_state[1]]
         expected_wr, expected_wr_raw = _floor_expected_wr(ctx, cfg, late_conflict.models_for_b)
         decisions.append(Decision(
             market="win",
@@ -1052,7 +1138,7 @@ def _evaluate_win(
             ))
             continue
 
-        against_elo = _win_against_elo(ctx, cfg, side)
+        against_elo, realized_release = _win_against_elo_state(ctx, cfg, side)
         if against_elo:
             skipped.append(Skipped(
                 "win", side, REASON_WIN_AGAINST_ELO,
@@ -1062,6 +1148,8 @@ def _evaluate_win(
 
         expected_wr, expected_wr_raw = _floor_expected_wr(ctx, cfg, models_for)
         reasons = [f"{name}>= {cfg.min_conf} for {side}" for name in models_for]
+        if realized_release:
+            reasons.append(realized_release)
         lane_hit = (ctx.lane is not None and ctx.lane.side == side
                     and ctx.lane.confidence >= cfg.min_conf)
         if not lane_hit and _early_nw_release(ctx, cfg, side):
