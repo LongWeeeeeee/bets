@@ -21359,6 +21359,12 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                 continue
             kept_cards.append(card)
         cards = kept_cards
+    # Live-first (stable) ПЕРЕД лимитом: живая карточка в хвосте ленты (например
+    # герой обзора, слитый с поздней карточкой) не должна вытесняться предматчами.
+    cards = sorted(
+        (cards or []),
+        key=lambda c: 0 if isinstance(c, dict) and c.get("live") else 1,
+    )
     for card in (cards or [])[:max_cards]:
         try:
             summary["cards"] += 1

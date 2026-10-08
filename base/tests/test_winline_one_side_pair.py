@@ -1199,6 +1199,23 @@ def test_idless_block_with_a_start_time_does_not_merge_into_the_live_feed_card()
     assert all(node.get("id") == "eventId-99999800" for node in live[0]["nodes"])
 
 
+def test_idless_dated_block_next_to_the_live_feed_card_gives_no_price(no_aliases):
+    """Тот же снимок на уровне цены (Opus r6, LOW): живая карточка ленты и live-центр с датой начала -
+    два события одной пары, цены нет. Если дату не проверять при слиянии (мутант X1), блок
+    прилипает к ленте и цена ленты [1.61, 2.22] уходит в мост как цена одной стороны."""
+    page = _live_feed_copies(_aurora_with_feed_copies(1))
+    soup = BeautifulSoup(page["html"], "html.parser")
+    for node in soup.select("ww-pinned-card"):
+        node.decompose()
+    soup.select_one(".event-live-center__header").append(soup.new_string(" Сегодня 13:00 "))
+    page = _without_block_ids({"text": "", "html": str(soup)})
+
+    extract = _extract(page, "Aurora Gaming", "1win", 2)
+
+    assert list(extract.odds) == []
+    assert "one_side_pair=refused:multi_card" in (extract.miss_fingerprint or "")
+
+
 def test_idless_pinned_card_and_a_dated_live_center_are_two_events():
     """Закреплённая (живая, без даты) и live-центр с датой начала, оба без id: разные события."""
     soup = BeautifulSoup(_aurora()["html"], "html.parser")

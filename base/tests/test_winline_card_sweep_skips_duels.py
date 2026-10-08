@@ -51,6 +51,11 @@ FIXTURE = (Path(__file__).parent / "fixtures"
 REAL_LEAGUE = "BLAST Slam"
 REAL_PAIR = ("PARIVISION", "TEAM YANDEX")
 REAL_MAP = 1
+# Since card ingame-fgbt the enumerator also returns the live match shown in the page's
+# top "hero" block (TEAM AURORA vs 1W, map 2, captured prices 1.61 / 2.22): a real live
+# match, so the sweep prices it in addition to the pre-match card marked live below.
+HERO_SWEPT = ("TEAM AURORA", "1W", 2)
+HERO_SERIES = "winline:league:blast slam|1w|team aurora"
 
 
 @pytest.fixture
@@ -72,7 +77,7 @@ def sweep(monkeypatch):
     def enumerate_with_real_card_live(html):
         cards = real_enumerate(html)
         for card in cards:  # the real match card was pre-match at capture time
-            if card.get("league") == REAL_LEAGUE:
+            if (card.get("team1"), card.get("team2")) == REAL_PAIR:
                 card["live"] = True
         return cards
 
@@ -102,7 +107,8 @@ def test_fixture_contains_duel_cards_and_real_match_card():
     snapshot = json.loads(FIXTURE.read_text(encoding="utf-8"))
     cards = odds_mod.winline_enumerate_live_cards(snapshot["html"])
     duels = [c for c in cards if "дуэль игроков" in str(c["league"]).lower()]
-    real = [c for c in cards if c["league"] == REAL_LEAGUE]
+    real = [c for c in cards
+            if c["league"] == REAL_LEAGUE and (c["team1"], c["team2"]) == REAL_PAIR]
     assert len(duels) == 4 and len(real) == 1
     assert (real[0]["team1"], real[0]["team2"]) == REAL_PAIR
 
@@ -116,8 +122,9 @@ def test_duel_cards_never_become_sweep_series_or_pollers(sweep):
                 if "(" in c["team1"] or "(" in c["team2"]], _pairs(created)
     assert summary.get("skipped_props") == 4, summary
     # The real BLAST Slam match card is still swept, exactly this key.
-    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP)]
-    assert _series(created) == [
+    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP), HERO_SWEPT]
+    assert sorted(_series(created)) == [
+        HERO_SERIES,
         "winline:league:blast slam|parivision|team yandex"], _series(created)
 
 
@@ -127,7 +134,7 @@ def test_duel_cards_do_not_crowd_real_match_out_of_the_card_cap(sweep, monkeypat
     run, created = sweep
     monkeypatch.setattr(C, "WINLINE_CARD_SWEEP_MAX_CARDS", 4)
     run()
-    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP)]
+    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP), HERO_SWEPT]
 
 
 def test_flag_off_restores_old_behaviour_and_proves_the_test_sees_duels(
@@ -279,7 +286,8 @@ def test_p3_sweep_keeps_real_card_in_headerless_container_after_duels(sweep, mon
     summary = run()
     assert summary.get("skipped_props") == 4, summary
     assert not [c for c in created if "(" in c["team1"] or "(" in c["team2"]], _pairs(created)
-    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP)], (moved, summary, _pairs(created))
+    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP), HERO_SWEPT], (
+        moved, summary, _pairs(created))
 
 
 def test_r2_card_without_any_tournament_container_is_not_a_duel():

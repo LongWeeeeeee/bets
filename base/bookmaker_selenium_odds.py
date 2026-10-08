@@ -2243,6 +2243,293 @@ def _winline_class_contains(*names: str):
     return _match
 
 
+_WINLINE_HERO_EVENT_ID_RE = re.compile(r"/api/cls/event/\d+/(\d+)")
+_WINLINE_HERO_LEAGUE_RE = re.compile(
+    r"^\s*DOTA\s*2\s*[|,]\s*(.+?)\s*$", re.I | re.S)
+# Дата/день старта у предматчевого блока: `Сегодня 13:00`, `Завтра 04:00`,
+# `08.10.26 05:00`. Живое табло их не показывает.
+_WINLINE_HERO_START_DATE_RE = re.compile(
+    r"\b(?:завтра|сегодня|tomorrow|today)\b"
+    r"|(?<![\d.])\d{1,2}\.\d{2}\.\d{2,4}(?![\d.])",
+    re.I,
+)
+_WINLINE_NAME_GENERIC_WORDS = frozenset(
+    {"team", "club", "gaming", "esports", "esport"})
+
+
+def _winline_name_core(name: str) -> str:
+    """Ядро имени команды: без регистра, пунктуации и слов `team/club/gaming`."""
+    text = _norm(str(name or ""))
+    words = [w for w in text.split() if w not in _WINLINE_NAME_GENERIC_WORDS]
+    core = " ".join(words) or text
+    return core or re.sub(r"\s+", " ", str(name or "")).strip().casefold()
+
+
+def _winline_pair_key(team1: str, team2: str) -> Tuple[str, str]:
+    """Неупорядоченный ключ пары (по ядрам имён) для слияния карточек одного события."""
+    a = _winline_name_core(team1)
+    b = _winline_name_core(team2)
+    return (a, b) if a <= b else (b, a)
+
+
+def _winline_league_core(league: Any) -> str:
+    return _norm(str(league or ""))
+
+
+def _winline_hero_event_id(node: Any, names: List[str], league: str,
+                           logo_ids: set) -> Optional[str]:
+    """Единый id события героя по ВСЕМ источникам или None, если признаки спорят.
+
+    Источники id — логотипы команд и ссылки виджета (iframe `l1`/`l2`). Возвращает
+    `""`, когда id нет ни в одном источнике, и сам id, когда он известен из любого
+    (раунд 3: id только в виджете — всё равно известный id, путь «без id» закрыт).
+    None — собственные признаки героя противоречат друг другу: разные id в
+    логотипах/виджете, любое присутствующее имя виджета (`n1`/`n2`) не из табло,
+    alt левого логотипа не совпадает с табло, заголовок виджета (`title`) — с лигой
+    крошек. Такой снимок нельзя привязать к событию: герой отбрасывается.
+    """
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    ids = set(logo_ids)
+    names_core = {_winline_name_core(n) for n in names}
+    league_core = _winline_league_core(league)
+    for frame in node.select("iframe"):
+        src = str(frame.get("src") or "")
+        if not src:
+            continue
+        ids.update(_WINLINE_HERO_EVENT_ID_RE.findall(unquote(src)))
+        try:
+            query = parse_qs(urlparse(src).query)
+        except Exception:
+            continue
+        n1 = (query.get("n1") or [""])[0]
+        n2 = (query.get("n2") or [""])[0]
+        present = [_winline_name_core(n) for n in (n1, n2) if n.strip()]
+        # Каждое присутствующее имя виджета обязано быть из табло; оба — ровно пара.
+        if any(core not in names_core for core in present):
+            return None
+        if len(present) == 2 and set(present) != names_core:
+            return None
+        title = (query.get("title") or [""])[0]
+        if title and league_core and _winline_league_core(title) != league_core:
+            return None
+    if len(ids) > 1:
+        return None
+    # alt правого логотипа у Winline ошибочно повторяет левый: сверяем только левый.
+    first_logo = node.select_one(".match-card__logo-image")
+    alt = str(first_logo.get("alt") or "") if first_logo is not None else ""
+    if alt and _winline_name_core(alt) != _winline_name_core(names[0]):
+        return None
+    return next(iter(ids)) if ids else ""
+
+
+def _winline_hero_cards(soup: Any) -> List[Dict[str, Any]]:
+    """Событие из верхнего «героя» обзора (`ww-feature-event-live-center-dsk`).
+
+    Выбранный живой матч Winline показывает сверху (счёт, видео, «Популярные на
+    матч / на карту»), а в ленте `eventId-*` его уже может не быть: 08.10.2026
+    TEAM AURORA vs 1W (карта 2) жил только здесь, и sweep не видел матч вовсе.
+    У героя нет `id="eventId-…"`; id события берётся из логотипов команд
+    (`/api/cls/event/<n>/<id>`). Лига — из собственных хлебных крошек героя, а не
+    из порядка документа. Имена команд — из `.match-card__team-name` (alt логотипа
+    правой команды у Winline ошибочно повторяет левую).
+
+    Консервативно (раунд 2, ревью 08.10): героя с противоречивыми признаками
+    (`_winline_hero_event_id`: разные id в любых источниках, имена/лига виджета не
+    те) или с датой
+    старта при живом табло не возвращаем. Живой герой — только по табло
+    (`match-card__timer` / `__live-score`); плеер «Просмотр видеотрансляции»
+    (`player-wrapper--live`) сам по себе live не доказывает.
+    """
+    heroes: List[Dict[str, Any]] = []
+    try:
+        nodes = soup.select(
+            "ww-feature-event-live-center-dsk, section.event-live-center")
+    except Exception:
+        return heroes
+    seen: set = set()
+    for node in nodes:
+        try:
+            # Обёртка и вложенная section — один герой: берём внешний узел.
+            if any(id(p) in seen for p in node.parents):
+                continue
+            seen.add(id(node))
+            if node.select_one(".event-live-center__markets") is None:
+                continue
+            league = ""
+            crumb = node.select_one(".event-breadcrumbs")
+            if crumb is not None:
+                crumb_text = crumb.get_text(" ", strip=True)
+                league_hit = _WINLINE_HERO_LEAGUE_RE.match(crumb_text)
+                if league_hit is None:
+                    continue  # не Dota 2 (или не заголовок турнира)
+                league = league_hit.group(1).strip()
+            names = []
+            for team in node.select(".match-card__team"):
+                name_el = team.select_one(".match-card__team-name")
+                if name_el is None:
+                    continue
+                direct = [
+                    c.get_text(" ", strip=True)
+                    for c in name_el.find_all("div", recursive=False)
+                ]
+                direct = [d for d in direct if d]
+                if direct:
+                    names.append(direct[0])
+            if len(names) != 2:
+                continue
+            logo_ids = set(_WINLINE_HERO_EVENT_ID_RE.findall(
+                " ".join(str(img.get("src") or "")
+                         for img in node.select("img.match-card__logo-image"))))
+            if len(logo_ids) > 1:
+                continue  # логотипы называют разные события
+            event_id = _winline_hero_event_id(node, names, league, logo_ids)
+            if event_id is None:
+                continue  # id/имена/лига героя спорят друг с другом
+            live = node.select_one(
+                ".match-card__timer, .match-card__live-score") is not None
+            scoreboard_text = " ".join(
+                el.get_text(" ", strip=True)
+                for el in node.select(".event-live-center__scoreboard"))
+            start_date = _WINLINE_HERO_START_DATE_RE.search(scoreboard_text) is not None
+            if live and start_date:
+                continue  # живое табло и дата старта одновременно: снимок противоречив
+            rows: List[Dict[str, Any]] = []
+            for wrapper in node.select(".event-live-center__markets .fast-bets__wrapper"):
+                title_el = wrapper.select_one(".fast-bets__title")
+                title = title_el.get_text(" ", strip=True).lower() if title_el else ""
+                for line in wrapper.select(".bet-line"):
+                    period_el = line.select_one(".bet-line__period")
+                    period = period_el.get_text(" ", strip=True) if period_el else ""
+                    map_hit = re.search(r"(\d+)\s*карта", period)
+                    if map_hit:
+                        kind, map_num = "map", int(map_hit.group(1))
+                    elif "матч" in period.lower() or "матч" in title:
+                        kind, map_num = "match", None
+                    else:
+                        continue
+                    has_prices = any(
+                        re.search(r"\d+\.\d+", btn.get_text(" ", strip=True))
+                        for btn in line.select(".odd-btn"))
+                    dup = next(
+                        (r for r in rows
+                         if r["kind"] == kind and r["map_num"] == map_num), None)
+                    if dup is not None:
+                        dup["has_prices"] = bool(dup["has_prices"] or has_prices)
+                    else:
+                        rows.append({"kind": kind, "map_num": map_num,
+                                     "has_prices": has_prices})
+            header_map: Optional[int] = None
+            pinned = soup.select_one("ww-pinned-card .new-card--selected .card-top__right")
+            pinned_hit = re.search(
+                r"(\d+)\s*карта", pinned.get_text(" ", strip=True)) if pinned else None
+            if pinned_hit:
+                header_map = int(pinned_hit.group(1))
+            else:
+                current = [r["map_num"] for r in rows if r["kind"] == "map"]
+                header_map = current[0] if current else None
+            heroes.append({
+                "event_id": event_id,
+                "league": league,
+                "prop_duel": winline_league_is_prop_duel(league),
+                "team1": names[0],
+                "team2": names[1],
+                "live": bool(live),
+                "header_map": header_map,
+                "rows": rows,
+                "source": "hero",
+                "start_date": bool(start_date),
+            })
+        except Exception:
+            continue
+    return heroes
+
+
+def _winline_merge_hero_cards(
+    cards: List[Dict[str, Any]], heroes: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Один раз на событие: герой сливается с карточкой ленты или добавляется.
+
+    Консервативно — любое расхождение отбрасывает героя, карточка ленты остаётся
+    как есть (раунд 2, ревью 08.10):
+    - id героя — единый id по ВСЕМ его источникам (логотипы и виджет); герой с id
+      сливается только с карточкой ленты С ТЕМ ЖЕ id, только если он живой по табло,
+      без даты старта, ядра имён пары и лига совпадают; нет карточки с таким id —
+      герой отдельное событие;
+    - герой без id сливается только с единственной карточкой ленты той же пары,
+      которая LIVE, при живом табло героя, без даты старта и при совпавшей лиге
+      (одна карточка той же пары не доказывает то же событие: это может быть
+      предматч будущей встречи); нет ни одной карточки с парой — герой отдельный;
+      иначе (несколько карточек, предматч, дата, спор по лиге) — отбрасываем;
+    - два героя с одним id — снимок противоречив, оба прочь.
+    """
+    result = list(cards)
+    prepend: List[Dict[str, Any]] = []
+    ids_count: Dict[str, int] = {}
+    for hero in heroes:
+        key = hero.get("event_id") or ""
+        if key:
+            ids_count[key] = ids_count.get(key, 0) + 1
+    for hero in heroes:
+        hero_id = hero.get("event_id") or ""
+        if hero_id and ids_count.get(hero_id, 0) > 1:
+            continue
+        hero_pair = _winline_pair_key(hero["team1"], hero["team2"])
+        hero_league = _winline_league_core(hero.get("league"))
+        target: Optional[Dict[str, Any]] = None
+        if hero_id:
+            target = next(
+                (c for c in result if c.get("event_id") == hero_id), None)
+            if target is None:
+                prepend.append(hero)
+                continue
+            # Раунд 3: не-живой герой (нет табло) или с датой старта ничего не вносит
+            # в карточку ленты с тем же id — её ряды не становятся живыми.
+            if not hero.get("live") or hero.get("start_date"):
+                continue
+        else:
+            same_pair = [
+                c for c in result
+                if _winline_pair_key(c["team1"], c["team2"]) == hero_pair
+            ]
+            if not same_pair:
+                prepend.append(hero)
+                continue
+            if len(same_pair) != 1:
+                continue
+            target = same_pair[0]
+            if not (target.get("live") and hero.get("live")
+                    and not hero.get("start_date")):
+                continue
+        # Общая для обоих путей проверка: пара и лига обязаны совпасть.
+        if _winline_pair_key(target["team1"], target["team2"]) != hero_pair:
+            continue
+        if not hero_league or hero_league != _winline_league_core(target.get("league")):
+            continue
+        if hero.get("live") and not target.get("live"):
+            # Ленточная карточка того же id была предматчевой: её ряды - линия до начала,
+            # живыми они не становятся. Живое событие несёт ряды живого героя, и только их
+            # (ревью astra, раунд 3: предматчевая карта 1 опрашивалась и вытесняла живую 2).
+            target["live"] = True
+            target["header_map"] = hero.get("header_map")
+            target["rows"] = [dict(hrow) for hrow in hero.get("rows") or []]
+            continue
+        target["live"] = bool(target.get("live") or hero.get("live"))
+        if target.get("header_map") is None:
+            target["header_map"] = hero.get("header_map")
+        for hrow in hero.get("rows") or []:
+            row = next(
+                (r for r in target["rows"]
+                 if r["kind"] == hrow["kind"] and r["map_num"] == hrow["map_num"]),
+                None)
+            if row is None:
+                target["rows"].append(dict(hrow))
+            elif hrow["has_prices"]:
+                row["has_prices"] = True
+    # Герой стоит в документе выше ленты — и в списке идёт раньше неё.
+    return prepend + result
+
+
 def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
     """Все карточки событий обзора Winline: лига, пара, live-флаг, ряды карт.
 
@@ -2251,6 +2538,8 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
     `ww-feature-block-event-dsk#eventId-<id>` → `card--live`,
     `body-left__names .name` → пара, `match-row-label`/`period-name` →
     ряды `Матч`/`N карта`, цены — десятичная точка в теле ряда).
+    Верхний «герой» обзора (выбранный живой матч, `ww-feature-event-live-center-dsk`)
+    добавляется той же формой карточки и сливается с карточкой ленты по id события.
     Нужна sweep кэфов без моста: какие карточки вообще есть в эфире.
     Гейты (allow/deny лиг) — дело рантайма, парсер перечисляет всё.
     """
@@ -2356,6 +2645,14 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
                     "header_map": header_map,
                     "rows": rows,
                 })
+    # Верхний «герой» (выбранный живой матч) — того же вида карточка, один раз на
+    # событие; ошибка разбора героя не должна ронять перечисление ленты.
+    try:
+        heroes = _winline_hero_cards(soup)
+        if heroes:
+            cards = _winline_merge_hero_cards(cards, heroes)
+    except Exception:
+        pass
     return cards
 
 
