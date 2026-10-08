@@ -55,6 +55,20 @@ Question: the prod WIN floor (`_ml_dispatch_min_odds_reject_for_delivery`, base/
 
 Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/scoreboard/priced_vs_unpriced.py runtime/artifacts/star-dispatch/scoreboard_20261008` (reuses scoreboard.py through runpy; output `priced_vs_unpriced_20261008.txt`). "Unpriced" here means no row in the E-361 join window, not proof that prod saw no quote; from 8e49e2ac the ledger `price_snapshot.selected` answers that directly.
 
+## Add-on 08.10 (2): the hit rate follows the Winline price; model confidence adds a little on top only for win_single
+Question: do the ML heads know anything the market price does not? Delivered priced WIN bets, logistic regression `won ~ logit(1/price) [+ logit(conf)]` (numpy IRLS, LR test of the conf term):
+
+| rule | n | slope on logit(1/price) | + logit(conf): coef (se) | LR p |
+|---|---|---|---|---|
+| win_single_model_confirm | 146 | 0.97 (0.20) | +0.95 (0.41) | 0.016 |
+| win_late_after_wait | 35 | 1.00 (0.31) | -1.36 (2.20) | 0.53 |
+
+- Mean conf is nearly flat across price bands (0.72-0.76), while the hit rate tracks the implied probability: edge terciles over all priced WIN bets give hit 0.833 / 0.717 / 0.279 against implied 0.848 / 0.634 / 0.273. The market price is the main predictor, which is expected in-game because it already reads the game state and the heads are draft/early models.
+- win_single: leave-one-out selection "bet only when sigma(-0.88 + 0.95 logit(1/price) + 0.95 logit(conf)) x price > 1" keeps 85 of 146 bets: ROI +0.161 [-0.057, +0.380] against +0.071 for all, and the 61 rejected bets return -0.055. Adding the floor-blocked bets (n=189): +0.102 against +0.067. Not significant -> no gate; pre-registered forward check on card ingame-92v0 (params frozen above).
+- win_late_after_wait: conf carries nothing beyond price. The price >= 3.0 bets won 2 of 17; the live E-357 gate (behind >= 11 000 NW) would have skipped 10 of them (1 won). Of the remaining 7, 4 had a known deficit < 11 000 and all lost; 3 had no deficit row (1 won). The price-ceiling residual (7 bets) is too small for a gate; it goes into the ~21.10 recheck (card ingame-2q3c).
+
+Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/scoreboard/{edge_bands,model_vs_price,late_price_vs_nw}.py runtime/artifacts/star-dispatch/scoreboard_20261008` (outputs `*_20261008.txt` in that directory). Where to look for errors: the price is the E-361 join (latest open row <=600 s before the decision), not the taken price; 1/price includes the bookmaker margin (the intercept absorbs it); the 22 % unpriced bets are excluded (their hit rate is no worse, see above).
+
 ## Decision
 No rule switch: every ROI interval crosses 0 and kills markets have no prices. The scoreboard is the shared instrument for the due re-checks (E-351 ~17.10, E-342/E-359 ~19.10, E-357 ~21.10): rerun extract_bets.py + scoreboard.py on fresh copies. kills_underdog_early_window 45.6 % supports its switch-off on 05.10. An ELO-role correction of kills30 waits for Winline individual-kills lines (idea card ingame-zc2h, defer 05.11).
 
