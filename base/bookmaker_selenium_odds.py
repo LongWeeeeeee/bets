@@ -1921,6 +1921,32 @@ def winline_league_is_prop_duel(league: Any) -> bool:
     return any(marker in low for marker in _WINLINE_PROP_LEAGUE_MARKERS)
 
 
+def winline_event_node_is_prop_duel(node: Any, block_cache: Optional[Dict[int, bool]] = None) -> bool:
+    """Карточка `eventId-*` лежит в СВОЁМ блоке турнира «Дуэль игроков».
+
+    Единое решение для цен (`_WinlineDOMSnapshot._prop_duel_event_ids`) и для
+    перечисления карточек sweep (`winline_enumerate_live_cards`): ближайший предок
+    `ww-feature-block-tournament-dsk` и заголовок ВНУТРИ него; нет контейнера или
+    заголовка — не дуэль (fail toward keeping real match cards).
+    """
+    try:
+        block = node.find_parent(_WINLINE_TOURNAMENT_BLOCK_TAG)
+        if block is None:
+            return False
+        cache = block_cache if block_cache is not None else {}
+        is_prop = cache.get(id(block))
+        if is_prop is None:
+            title = block.select_one('[class*="block-tournament-header__title"]')
+            is_prop = bool(
+                title is not None
+                and winline_league_is_prop_duel(title.get_text(" ", strip=True))
+            )
+            cache[id(block)] = is_prop
+        return bool(is_prop)
+    except Exception:
+        return False
+
+
 class _WinlineDOMSnapshot:
     """Read-only parse and text index owned by one acquired DOM payload."""
 
@@ -1949,18 +1975,7 @@ class _WinlineDOMSnapshot:
             try:
                 titles: Dict[int, bool] = {}
                 for node in self.soup.find_all(id=re.compile(r"^eventId-\d+$")):
-                    block = node.find_parent(_WINLINE_TOURNAMENT_BLOCK_TAG)
-                    if block is None:
-                        continue
-                    is_prop = titles.get(id(block))
-                    if is_prop is None:
-                        title = block.select_one('[class*="block-tournament-header__title"]')
-                        is_prop = bool(
-                            title is not None
-                            and winline_league_is_prop_duel(title.get_text(" ", strip=True))
-                        )
-                        titles[id(block)] = is_prop
-                    if is_prop:
+                    if winline_event_node_is_prop_duel(node, titles):
                         found.add(id(node))
             except Exception:
                 found = set()
@@ -2245,6 +2260,7 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
     except Exception:
         return cards
     current_league = ""
+    prop_blocks: Dict[int, bool] = {}
     try:
         walker = list(soup.descendants)
     except Exception:
@@ -2331,6 +2347,9 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
                 cards.append({
                     "event_id": event_id,
                     "league": current_league,
+                    # Дуэль решает СОБСТВЕННЫЙ блок турнира карточки (то же правило,
+                    # что у цен), а не `current_league` по порядку документа.
+                    "prop_duel": winline_event_node_is_prop_duel(node, prop_blocks),
                     "team1": names[0],
                     "team2": names[1],
                     "live": bool(live),

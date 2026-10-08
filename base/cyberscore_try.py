@@ -20960,7 +20960,18 @@ def _winline_card_sweep_skip_props_enabled() -> bool:
 
 
 def _winline_card_is_prop_duel(card: Any) -> bool:
-    """Карточка листинга — проп-секция (дуэль игроков), а не матч команд."""
+    """Карточка листинга — проп-секция (дуэль игроков), а не матч команд.
+
+    Парсер листинга кладёт `prop_duel` по СОБСТВЕННОМУ блоку турнира карточки (то
+    же правило, что у цен: `winline_event_node_is_prop_duel`); `league` идёт по
+    порядку документа и для решения не годится. Без ключа (синтетическая
+    карточка) — прежнее решение по названию лиги.
+    """
+    try:
+        if isinstance(card, dict) and "prop_duel" in card:
+            return bool(card.get("prop_duel"))
+    except Exception:
+        return False
     try:
         league = re.sub(r"\s+", " ", str((card or {}).get("league") or "")).lower()
     except Exception:

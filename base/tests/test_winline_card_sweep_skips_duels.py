@@ -237,6 +237,51 @@ def test_r2_real_card_moved_into_a_later_headerless_container_is_not_a_duel():
     assert ids == _DUEL_IDS
 
 
+def _moved_real_card_html() -> str:
+    """Captured overview with the real match card moved into a headerless container after the duels."""
+    html = _load_html("winline_overview_snapshot_20261008_blast_duel_cards.json")
+    soup = BeautifulSoup(html, "html.parser")
+    real = soup.find(id=_REAL_ID)
+    last_duel_block = soup.find(id="eventId-16889471").find_parent(_TOURNAMENT_TAG)
+    headerless = soup.new_tag(_TOURNAMENT_TAG)
+    last_duel_block.insert_after(headerless)
+    headerless.append(real.extract())
+    return str(soup)
+
+
+def test_p3_parser_decides_duel_by_own_container_not_document_order():
+    cards = {c["event_id"]: c for c in odds_mod.winline_enumerate_live_cards(_moved_real_card_html())}
+    real = cards[_REAL_ID.split("-")[1]]
+    # Document-order league is the duel one (what the old sweep filter read) ...
+    assert odds_mod.winline_league_is_prop_duel(real["league"])
+    # ... but the card's own container has no header, so it is not a duel.
+    assert real["prop_duel"] is False
+    assert {"eventId-" + i for i, c in cards.items() if c["prop_duel"]} == _DUEL_IDS
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_p3_sweep_keeps_real_card_in_headerless_container_after_duels(sweep, monkeypatch, moved):
+    """Sweep-level: the real card in a headerless container placed AFTER the duel cards must still be swept."""
+    run, created = sweep
+    html = _moved_real_card_html() if moved else _load_html(
+        "winline_overview_snapshot_20261008_blast_duel_cards.json")
+    monkeypatch.setitem(C._winline_overview_state, "html", html)
+    real_enumerate = odds_mod.winline_enumerate_live_cards
+
+    def enumerate_real_live(h):  # the fixture hook marks live by league; here by event id
+        cards = real_enumerate(h)
+        for card in cards:
+            if card["event_id"] == _REAL_ID.split("-")[1]:
+                card["live"] = True
+        return cards
+
+    monkeypatch.setattr(odds_mod, "winline_enumerate_live_cards", enumerate_real_live)
+    summary = run()
+    assert summary.get("skipped_props") == 4, summary
+    assert not [c for c in created if "(" in c["team1"] or "(" in c["team2"]], _pairs(created)
+    assert _pairs(created) == [(REAL_PAIR[0], REAL_PAIR[1], REAL_MAP)], (moved, summary, _pairs(created))
+
+
 def test_r2_card_without_any_tournament_container_is_not_a_duel():
     html = ('<div class="x"><span class="block-tournament-header__title">BLAST Slam. Дуэль игроков.'
             ' Убийства</span></div><div id="eventId-1">TEAM AURORA 1W</div>')
