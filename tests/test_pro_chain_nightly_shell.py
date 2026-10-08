@@ -627,7 +627,8 @@ def test_chain_gate_systemd_units_are_bounded_and_use_moscow_time():
         "TimeoutStartSec=infinity",
     ]
     assert all(line in service.splitlines() for line in required)
-    assert "OnCalendar=*-*-* 01:30:00 Europe/Moscow" in timer.splitlines()
+    # 03:02 MSK: after the STRATZ daily quota reset at 00:00 UTC (07.10, card ingame-jzzx).
+    assert "OnCalendar=*-*-* 03:02:00 Europe/Moscow" in timer.splitlines()
     assert "Persistent=false" in timer.splitlines()
     assert "Unit=pro-chain-nightly.service" in timer.splitlines()
     assert "WantedBy=timers.target" in timer.splitlines()

@@ -1,8 +1,8 @@
 [Unit]
-Description=Run pro-corpus chain at 01:30 Moscow time
+Description=Run pro-corpus chain at 03:02 Moscow time (after the STRATZ daily quota reset at 00:00 UTC)
 
 [Timer]
-OnCalendar=*-*-* 01:30:00 Europe/Moscow
+OnCalendar=*-*-* 03:02:00 Europe/Moscow
 Persistent=false
 Unit=pro-chain-nightly.service
 

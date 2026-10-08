@@ -274,6 +274,28 @@ def _build_tier_team_ids():
     return ids
 
 
+class StratzAuthError(RuntimeError):
+    """Все ключи пула не принимаются Stratz (истекли или отозваны); повтор бессмыслен."""
+
+
+def _jwt_expiry(token):
+    """exp (эпоха, сек) из JWT без проверки подписи; None, если токен не JWT."""
+    try:
+        import base64
+        payload = str(token).split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get('exp')
+        return int(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+def _is_auth_failure(data):
+    """Ответ Stratz «токен не принят»: HTTP 403, в теле нет ключа data."""
+    return (isinstance(data, dict) and 'data' not in data
+            and str(data.get('message') or '').startswith('A bearer token is required'))
+
+
 PROXY_COOLDOWN_INITIAL = 900
 PROXY_COOLDOWN_MAX = 3600
 
@@ -304,6 +326,11 @@ class RateLimitTracker:
         self.proxy_blocked_until = 0.0
         self.proxy_failures = 0
         self.proxy_generation = 0
+        # Ключ не принят Stratz (истёк/отозван): пара выпадает из круга до конца
+        # процесса. Раньше такая пара получала свою долю запросов и отдавала
+        # «A bearer token is required» без ключа data, а вызывающий код молча
+        # засчитывал команду опрошенной с нулём карт (07.10.2026: 3 из 5 ключей).
+        self.auth_dead = False
 
     @property
     def short_name(self):
@@ -324,7 +351,17 @@ class RateLimitTracker:
 
     @property
     def available_at(self):
+        if self.auth_dead:
+            return float('inf')
         return max(self.blocked_until, self.proxy_blocked_until)
+
+    async def mark_auth_dead(self, message):
+        async with self.lock:
+            if self.auth_dead:
+                return
+            self.auth_dead = True
+            print(f"🪦 {self.short_name}: Stratz не принял ключ ({' '.join(str(message).split())[:80]}): "
+                  f"пара исключена до конца процесса")
 
     async def mark_proxy_failed(self, error, generation):
         async with self.lock:
@@ -358,6 +395,8 @@ class RateLimitTracker:
         async with self.lock:
             now = time.time()
 
+            if self.auth_dead:
+                return False
             if now < self.proxy_blocked_until:
                 return False
 
@@ -464,6 +503,26 @@ class RateLimitTracker:
                 self.requests_log[period].append(now)
 
 
+def live_stratz_pairs(pairs):
+    """Пары без токенов с истёкшим JWT (exp). Не-JWT токены проходят как есть.
+
+    Все пары просрочены -> StratzAuthError: тихий нулевой сбор хуже остановки.
+    """
+    pairs = list(pairs.items() if hasattr(pairs, 'items') else pairs)
+    now = time.time()
+    live = []
+    for proxy_url, api_token in pairs:
+        exp = _jwt_expiry(api_token)
+        if exp is not None and exp <= now:
+            short = proxy_url.split('@')[-1] if '@' in (proxy_url or '') else (proxy_url or 'direct')[:30]
+            print(f"🪦 {short}: ключ Stratz истёк {time.strftime('%F %T', time.gmtime(exp))} UTC, пара исключена")
+            continue
+        live.append((proxy_url, api_token))
+    if pairs and not live:
+        raise StratzAuthError("все ключи Stratz истекли: нужны новые токены (stratz.com/api)")
+    return live
+
+
 class ProxyAPIPool:
     """Управляет пулом прокси-API пар с автоматическим переключением"""
     
@@ -480,6 +539,7 @@ class ProxyAPIPool:
         self.trackers = []
         pairs = (api_to_proxy_dict.items() if hasattr(api_to_proxy_dict, 'items')
                  else list(api_to_proxy_dict))
+        pairs = live_stratz_pairs(pairs)
         for proxy_url, api_token in pairs:
             state = token_states.get(api_token)
             tracker = RateLimitTracker(proxy_url, api_token, shared_state=state)
@@ -492,6 +552,8 @@ class ProxyAPIPool:
     
     async def get_available_tracker(self):
         """Получает доступный tracker (равномерный round-robin по всем парам)"""
+        if self.trackers and all(t.auth_dead for t in self.trackers):
+            raise StratzAuthError("Stratz не принял ни один ключ пула")
         max_attempts = len(self.trackers) * 10
         attempt = 0
 
@@ -595,6 +657,14 @@ class ProxyAPIPool:
                     )
                     await tracker.mark_proxy_recovered()
 
+                    if _is_auth_failure(data):
+                        await tracker.mark_auth_dead(data.get('message'))
+                        if all(t.auth_dead for t in self.trackers):
+                            raise StratzAuthError("Stratz не принял ни один ключ пула")
+                        self.current_index = (self.current_index + 1) % len(self.trackers)
+                        retry_count += 1
+                        continue
+
                     # Проверяем на rate limit от API
                     if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
                         scope = await tracker.apply_rate_limit_headers(headers)
@@ -619,7 +689,18 @@ class ProxyAPIPool:
                     await tracker.apply_rate_limit_headers(headers)
                     return data
 
+                except StratzAuthError:
+                    raise
                 except Exception as e:
+                    # Без Accept: application/json шлюз Kong отдаёт 403 HTML-страницей,
+                    # и _post_json_with_requests превращает её в RuntimeError.
+                    if 'A bearer token is required' in str(e):
+                        await tracker.mark_auth_dead(str(e)[-80:])
+                        if all(t.auth_dead for t in self.trackers):
+                            raise StratzAuthError("Stratz не принял ни один ключ пула") from e
+                        self.current_index = (self.current_index + 1) % len(self.trackers)
+                        retry_count += 1
+                        continue
                     # curl_cffi создаёт response даже при неудачном connect;
                     # status_code=0 означает, что HTTP-ответа STRATZ не было.
                     if (isinstance(e, (cf_requests.exceptions.ConnectionError,
@@ -854,6 +935,8 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
             result = await request_func(*args, **kwargs)
             return result
         except Exception as e:
+            if isinstance(e, StratzAuthError):
+                raise
             if non_retryable_exceptions and isinstance(e, non_retryable_exceptions):
                 raise
             last_error = e
@@ -3996,7 +4079,7 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
         from keys import STRATZ_PAIRS as _PAIRS
     except Exception:
         _PAIRS = list(STRATZ_PROXY_MAP.items())
-    pools = [ProxyAPIPool([pair]) for pair in _PAIRS]
+    pools = [ProxyAPIPool([pair]) for pair in live_stratz_pairs(_PAIRS)]
     if show_prints:
         print(f"🔑 пар ключ-прокси в сборе: {len(pools)}, темп {pace} c на пару", flush=True)
 
@@ -4093,7 +4176,7 @@ async def get_batched(ids, out_dir, body, compact, batch=8, pace=2.7,
         from keys import STRATZ_PAIRS as _PAIRS
     except Exception:
         _PAIRS = list(STRATZ_PROXY_MAP.items())
-    pools = [ProxyAPIPool([pair]) for pair in _PAIRS]
+    pools = [ProxyAPIPool([pair]) for pair in live_stratz_pairs(_PAIRS)]
     run_tag = time.strftime('%Y%m%d_%H%M%S')
     path = os.path.join(out_dir, f'batch_{run_tag}.jsonl.gz')
     fh = _gzip.open(path, 'wt', encoding='utf-8')
