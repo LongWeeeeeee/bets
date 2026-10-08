@@ -611,6 +611,76 @@ class QuickPage(FakePage):
         return super().evaluate(script, event_id)
 
 
+@pytest.mark.parametrize("quick_present", [True, False], ids=["clicked", "no-click"])
+def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, capsys, quick_present):
+    page = QuickPage(quick_present=quick_present)
+    _, context = offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card()])
+
+    def fail_connection():
+        page.failure_callback(Mock(failure="net::err_connection_reset"))
+
+    if quick_present:
+        original_inner_text = page.inner_text
+
+        def inner_text(**kwargs):
+            text = original_inner_text(**kwargs)
+            if page.quick:
+                fail_connection()
+            return text
+
+        monkeypatch.setattr(page, "inner_text", inner_text)
+    else:
+        page.before_click = fail_connection
+
+    dump_dir = tmp_path / "quick"
+    history = tmp_path / "h.jsonl"
+    assert collector.main(["--history", str(history), "--quick-dump-dir", str(dump_dir)]) == 5
+    assert page.tab_calls == 1 and page.opened == ["16855431"]
+    all_file, = dump_dir.glob("*_all.txt")
+    assert all_file.read_text() == page.default_text
+    assert not list(dump_dir.glob("*_quick.txt"))
+    assert not (dump_dir / "index.jsonl").exists()
+    assert not list(dump_dir.glob("*.tmp"))
+    # Default history is committed before the quick-tab connection fails.
+    assert len(history.read_text().splitlines()) == 3
+    assert capsys.readouterr().out == (
+        "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
+        "loads=2 country=DE status=5 error=RuntimeError\n")
+    context.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize("quick_mode", [False, True], ids=["default", "quick"])
+def test_unrendered_event_skips_expand_and_default_body(monkeypatch, tmp_path, capsys, quick_mode):
+    monkeypatch.delenv("WINLINE_QUICK_DUMP_DIR", raising=False)
+    page = QuickPage(full_markets=False)
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card()])
+    evaluate = Mock(wraps=page.evaluate)
+    inner_text = Mock(wraps=page.inner_text)
+    monkeypatch.setattr(page, "evaluate", evaluate)
+    monkeypatch.setattr(page, "inner_text", inner_text)
+    history = tmp_path / "h.jsonl"
+    dump_dir = tmp_path / "quick"
+    args = ["--history", str(history)]
+    if quick_mode:
+        args += ["--quick-dump-dir", str(dump_dir)]
+
+    assert collector.main(args) == 0
+    assert collector.EXPAND_JS not in [call.args[0] for call in evaluate.call_args_list]
+    assert not history.exists()
+    assert capsys.readouterr().out == (
+        "cards=1 events_opened=1 events_missing=0 events_unrendered=1 rows_written=0 "
+        "loads=2 country=DE status=0 error=-\n")
+    if quick_mode:
+        assert page.tab_calls == 1
+        assert inner_text.call_count == 3  # IP echo, default body, quick body.
+        assert len((dump_dir / "index.jsonl").read_text().splitlines()) == 1
+    else:
+        inner_text.assert_called_once_with(timeout=10000)  # Only the IP echo.
+        assert page.tab_calls == 0 and not dump_dir.exists()
+
+
 @pytest.mark.parametrize("quick_present,full_markets", [
     (True, True), (False, True), (True, False), (False, False),
 ])
