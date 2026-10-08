@@ -135,7 +135,10 @@ def test_bookmaker_writes_our_team_as_a_different_word():
 
 
 def test_without_the_alias_that_card_is_not_found(monkeypatch):
-    """Контроль фикстуры: пару держит справочник, а не случайное совпадение слов."""
+    """Контроль фикстуры: пару держит справочник, а не случайное совпадение слов.
+
+    Только текст страницы, без DOM: правило «одно имя» (только по DOM) не работает.
+    """
     monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
 
     odds, extract = _odds(ASGARD_LIVE_AND_LINE_PAGE_TEXT, "Team Synapse", "RE ARISE", 2)
@@ -349,7 +352,11 @@ def test_past_roster_name_is_found_on_the_page():
 
 
 def test_without_that_alias_the_qualifier_card_is_not_found(monkeypatch):
-    """Контроль: пару держит справочник, а не случайное совпадение слов."""
+    """Контроль: пару держит справочник, а не случайное совпадение слов.
+
+    Только текст страницы, без DOM: у плоского текста нет структуры карточек, и
+    правило «одно имя» (только по DOM, WINLINE_ONE_SIDE_PAIR) здесь не работает.
+    """
     monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
 
     odds, extract = _odds(BLAST_QUAL_PAGE_TEXT, "Yellow Submarine", "RE.Arise", 1)
@@ -396,13 +403,26 @@ def test_bookmaker_l_read_as_capital_i_is_found():
 
 
 def test_without_that_alias_blasterbi_card_is_not_found(monkeypatch):
-    """Контроль фикстуры: без справочника — ровно провал прода."""
+    """Контроль фикстуры: без справочника и без правила «одно имя» — ровно провал прода.
+
+    С правилом (WINLINE_ONE_SIDE_PAIR, по умолчанию включено) та же карточка
+    находится по `LEGION` и даёт цену с меткой; см. test_winline_one_side_pair.py.
+    """
     monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+    monkeypatch.setenv("WINLINE_ONE_SIDE_PAIR", "0")
 
     odds, extract = _dom_odds(_blasterbi_page(), "Blasterbl", "LEGION", 2)
 
     assert odds == []
     assert "promotion=not_decider" in (extract.miss_fingerprint or "")
+
+    monkeypatch.delenv("WINLINE_ONE_SIDE_PAIR")
+    odds, extract = _dom_odds(_blasterbi_page(), "Blasterbl", "LEGION", 2)
+
+    assert odds == [1.70, 2.02]
+    assert extract.miss_fingerprint == (
+        "one_side_pair matched=LEGION->LEGION other=Blasterbl->BLASTERBI"
+    )
 
 
 # Живая страница 08.10.2026 18:34 MSK (снимок обзора прода, провенанс рядом с
@@ -438,13 +458,26 @@ def test_bookmaker_1w_spelling_of_1win_is_found():
 
 
 def test_without_that_alias_1win_card_is_not_found(monkeypatch):
-    """Контроль фикстуры: без справочника — ровно провал прода."""
+    """Контроль фикстуры: без справочника и без правила «одно имя» — ровно провал прода.
+
+    С правилом (WINLINE_ONE_SIDE_PAIR, по умолчанию включено) живая карточка
+    `TEAM AURORA 1W` находится по `Aurora Gaming` и даёт цену с меткой.
+    """
     monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+    monkeypatch.setenv("WINLINE_ONE_SIDE_PAIR", "0")
 
     odds, extract = _dom_odds(_blast_duel_page(), "Aurora Gaming", "1win", 2)
 
     assert odds == []
     assert "promotion=not_decider" in (extract.miss_fingerprint or "")
+
+    monkeypatch.delenv("WINLINE_ONE_SIDE_PAIR")
+    odds, extract = _dom_odds(_blast_duel_page(), "Aurora Gaming", "1win", 2)
+
+    assert odds == [1.61, 2.22]
+    assert extract.miss_fingerprint == (
+        "one_side_pair matched=Aurora Gaming->TEAM AURORA other=1win->1W"
+    )
 
 
 def test_1w_alias_does_not_glue_duel_card_odds_on_map_3():

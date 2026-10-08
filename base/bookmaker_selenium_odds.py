@@ -2782,6 +2782,7 @@ def _winline_promote_last_map_match_market(
     map_num: int,
     diag: Optional[List[str]] = None,
     _snapshot: Optional[_WinlineDOMSnapshot] = None,
+    force_skip_props: bool = False,
 ) -> Optional["_WinlineMapExtract"]:
     """Рынок «Матч» как рынок ПОСЛЕДНЕЙ карты серии.
 
@@ -2823,6 +2824,14 @@ def _winline_promote_last_map_match_market(
         if not _winline_single_card_scope(scope_text):
             # Широкий контейнер накрывает соседние матчи: его подписи рынков
             # ничего не говорят о нашей карточке.
+            continue
+        if (
+            force_skip_props
+            and _snapshot is not None
+            and _snapshot.in_prop_duel_card(element)
+        ):
+            # Только правило «одно имя» (`_winline_one_side_pair_extract`): у него
+            # защита от проп-дуэлей не отключается флагом старого пути.
             continue
         candidates.append((len(scope_text), element, scope_text))
     if not candidates:
@@ -2953,6 +2962,534 @@ def _winline_card_order_label(order: Optional[str], team1: str, team2: str) -> s
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Пара, доказанная ОДНИМ именем (владелец, 08.10.2026).
+#
+# Winline переименовывает команды (1win -> 1W, ЯЧЁ123 -> YACHE123, Blasterbl ->
+# BLASTERBI, Team Synapse -> TEAM SYNTAX), и каждое переименование стоило серии
+# карт без цены, пока человек не дописывал алиас (1win: 9 из 9 карт BLAST Slam
+# 30.09-08.10). Когда пара не доказана по ДВУМ именам, берём единственную ЖИВУЮ
+# карточку, на которой прежним сопоставителем доказано ровно одно наше имя; второе
+# имя - это второе имя той карточки, как бы Winline его ни написал.
+#
+# Раунд 2 (по двум отклонённым ревью раунда 1): буквальное «подойдёт любая одна
+# команда» небезопасно, чужой матч получал цену через слово из запасных форм
+# поиска (`Team Zero` -> ZERO TENACITY, `GamerLegion` -> LEGION, `Nigma Galaxy`
+# -> GALAXY RACER) или через неизвестного соперника (`LEGION - Team Liquid` ->
+# LEGION - BLASTERBI). Поэтому цену отдаём, только если:
+#   G1 совпавшая сторона совпала ПОЛНЫМ написанием: ядро названия карточки (без
+#      родовых team/gaming/esports/gg/..., метка состава academy/junior/youth - в
+#      ядре) равно ядру нашего имени или одного из его известных написаний;
+#   G2 второе имя карточки - переписанное наше второе имя (транслит, приставка,
+#      одна-две буквы); полные переименования (Team Synapse -> TEAM SYNTAX)
+#      по-прежнему только ручным алиасом;
+#   G3 если на карточке есть метка живой карты (`2карта`), она равна нашей карте;
+#   G4 карточки с разными id события - разные события; закреплённый блок без id
+#      вливается в ленточную карточку только когда она единственная с этой парой.
+#
+# Что НЕ цена: карточка-линия (не live), проп-дуэль, карточка без строки нашей
+# карты, любая неоднозначность. Неоднозначно: совпавшее имя на двух живых
+# карточках; наши два имени на РАЗНЫХ живых карточках; пара названа на одной
+# карточке обоими именами (тогда это обычный путь); совпавшее имя расходится с
+# именем карточки по метке состава (academy/junior/youth).
+# Цена берётся тем же разбором, что и обычная (`_winline_structured_current_map_winner`),
+# только по именам самой карточки: строка карты, залоченные кнопки, промоция
+# «Матч» на решающей карте - те же правила. Откат: WINLINE_ONE_SIDE_PAIR=0.
+# ---------------------------------------------------------------------------
+_ONE_SIDE_PAIR_MARK = "one_side_pair"
+_ONE_SIDE_PAIR_LOGGED: set = set()
+_ONE_SIDE_PAIR_LOG = logging.getLogger(__name__)
+_WINLINE_PLAYER_IN_PARENS_RE = re.compile(r"\([^()]+\)\s*$")
+_WINLINE_SCOREBOARD_VIEWERS_RE = re.compile(r"^<?\d+(?:[.,]\d+)?[kKкК]\s+(?=\S)")
+_WINLINE_DAY_MARKER_RE = re.compile(r"\b(?:сегодня|завтра|today|tomorrow)\b|\d{2}\.\d{2}\.\d{2}", re.I)
+# Метка живой карты в шапке карточки (`2карта`, слитно); у карточки без неё
+# (на странице 10.09 у CYBER NOVA её нет) проверки по метке нет.
+_WINLINE_MAP_LABEL_RE = re.compile(r"(?<![0-9])([1-5])карта(?![а-яё])", re.I)
+# Id события в ссылках логотипов закреплённой карточки и live-центра (`/api/cls/event/1/16855095`):
+# у блоков нет атрибута `eventId-N`, но идентификатор события в них есть.
+_WINLINE_BLOCK_EVENT_ID_RE = re.compile(r"/api/cls/event/\d+/(\d+)")
+# Родовые слова ядра названия: общий список модуля плюс `gg`.
+_ONE_SIDE_GENERIC_TOKENS = frozenset(GENERIC_TEAM_TOKENS) | {"gg"}
+# Кириллица -> латиница для сравнения второго имени (Winline: ЯЧЁ123 -> YACHE123).
+_ONE_SIDE_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def winline_one_side_pair_enabled() -> bool:
+    return str(os.getenv("WINLINE_ONE_SIDE_PAIR", "1")).strip().lower() \
+        not in {"0", "false", "off", "no", "n"}
+
+
+def _winline_roster_qualifiers(name: Any) -> frozenset:
+    """Метки второго состава в названии: `Team Spirit Academy` -> {academy}."""
+    return frozenset(
+        token for token in _norm(str(name or "")).split()
+        if token in ROSTER_QUALIFIER_TOKENS
+    )
+
+
+def _winline_text_is_live(text: str) -> bool:
+    """Шапка живой карточки: слитный `Nкарта` и ни слова про дату начала."""
+    flat = " ".join(str(text or "").split())
+    return bool(
+        _WINLINE_CARD_HEADER_MARKER_RE.search(flat)
+        and not _looks_future_context(flat)
+        and not _WINLINE_DAY_MARKER_RE.search(flat)
+    )
+
+
+def _winline_one_side_events(snapshot: "_WinlineDOMSnapshot") -> List[Dict[str, Any]]:
+    """События страницы по паре имён самой карточки: лента, закреплённая, панель.
+
+    Событие ленты - карточка `eventId-N`: разные id - разные события, даже при
+    одинаковых именах (копия карточки с другим id не сливается с оригиналом).
+    Закреплённая карточка и live-центр id не несут: такой блок вливается в
+    ленточную карточку только когда карточка с этой парой имён ровно ОДНА; иначе
+    (нет ни одной или больше одной) блоки с одной парой образуют своё событие, и
+    пара считается неоднозначной, если событий с ней больше одного.
+
+    Для события: имена как написал Winline, live и признак проп-дуэли (любой из
+    блоков), метки живой карты из шапок (`labels`) и ключ пары `key`.
+    """
+    cached = getattr(snapshot, "_one_side_events", None)
+    if cached is not None:
+        return cached
+    feed: List[Dict[str, Any]] = []
+    by_id: Dict[str, Dict[str, Any]] = {}
+    blocks: List[Dict[str, Any]] = []
+
+    def _entry(names: List[str], *, live: bool, prop: bool, labels, node: Any,
+               ids: Any = ()) -> Optional[Dict[str, Any]]:
+        names = [n for n in names if n]
+        flat = " ".join(snapshot.text(node).split()) if node is not None else ""
+        if len(names) != 2:
+            return None
+        keys = (_norm(names[0]), _norm(names[1]))
+        if not keys[0] or not keys[1] or keys[0] == keys[1]:
+            return None
+        # Имя игрока со скобкой `WS (TEAM AURORA)` - строка дуэли, не команда.
+        prop = prop or any(_WINLINE_PLAYER_IN_PARENS_RE.search(n) for n in names)
+        return {
+            "names": (names[0], names[1]),
+            "key": keys,
+            "live": bool(live),
+            "prop": bool(prop),
+            "labels": {int(x) for x in labels},
+            # Дата/время начала в тексте блока (`Сегодня 13:00`, `08.10.26 05:00`) - это
+            # линия будущего матча, а не живой.
+            "future": bool(_looks_future_context(flat) or _WINLINE_DAY_MARKER_RE.search(flat)),
+            # Id события (лента - `eventId-N`, блоки - из ссылок логотипов). Два разных id в
+            # одном блоке - несогласованный снимок (`conflict`): цены по нему нет.
+            "ids": {str(x) for x in ids},
+            "conflict": len({str(x) for x in ids}) > 1,
+            # DOM-узлы события: цену разбираем ТОЛЬКО в них, а не по всей странице
+            # (иначе имена карточки находят и соседнюю линию `... ACADEMY`).
+            "nodes": [node],
+        }
+
+    def _merge(into: Dict[str, Any], other: Dict[str, Any]) -> None:
+        into["live"] = into["live"] or other["live"]
+        into["prop"] = into["prop"] or other["prop"]
+        into["labels"] |= other["labels"]
+        into["future"] = into["future"] or other["future"]
+        into["ids"] |= other["ids"]
+        into["conflict"] = into["conflict"] or other["conflict"] or len(into["ids"]) > 1
+        into["nodes"].extend(n for n in other["nodes"] if all(n is not m for m in into["nodes"]))
+
+    def _same_event(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+        """Можно ли считать два блока одним событием: id не противоречат, дата одна."""
+        if a["ids"] and b["ids"] and a["ids"] != b["ids"]:
+            return False
+        return a["future"] == b["future"]
+
+    def _block_ids(node: Any) -> List[str]:
+        try:
+            return _WINLINE_BLOCK_EVENT_ID_RE.findall(str(node))
+        except Exception:
+            return []
+
+    def _distinct(nodes, clean=None) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for node in nodes:
+            text = " ".join(snapshot.text(node).split())
+            if clean is not None:
+                text = clean(text)
+            key = _norm(text)
+            if text and key not in seen:
+                seen.add(key)
+                out.append(text)
+        return out
+
+    try:
+        soup = snapshot.soup
+        titles: Dict[int, bool] = {}
+        for node in soup.find_all(id=re.compile(r"^eventId-\d+$")):
+            names = [
+                " ".join(snapshot.text(el).split())
+                for el in node.select(".body-left__names .name")
+            ]
+            labels = [
+                match
+                for el in node.select(".header-left__time")
+                for match in _WINLINE_MAP_LABEL_RE.findall(snapshot.text(el))
+            ]
+            entry = _entry(
+                names,
+                live=node.select_one(".card--live") is not None,
+                prop=winline_event_node_is_prop_duel(node, titles),
+                labels=labels,
+                node=node,
+                ids=[str(node["id"])[len("eventId-"):]],
+            )
+            if entry is None:
+                continue
+            known = by_id.get(str(node["id"]))
+            if known is not None and known["key"] == entry["key"]:
+                if known["live"] != entry["live"] or known["future"] != entry["future"]:
+                    # Один id, но живая и будущая копии - снимок несогласован.
+                    known["conflict"] = True
+                _merge(known, entry)
+                continue
+            by_id.setdefault(str(node["id"]), entry)
+            feed.append(entry)
+        for node in soup.select("ww-pinned-card"):
+            text = snapshot.text(node)
+            entry = _entry(
+                _distinct(node.select(".card-teams__names span")),
+                live=_winline_text_is_live(text),
+                prop=winline_league_is_prop_duel(text),
+                labels=_WINLINE_MAP_LABEL_RE.findall(text),
+                node=node,
+                ids=_block_ids(node),
+            )
+            if entry is not None:
+                blocks.append(entry)
+        for node in soup.select("ww-feature-event-live-center-dsk, .event-live-center"):
+            text = snapshot.text(node)
+            # Метку карты live-центра не читаем: в его тексте только `3 карта`
+            # раздельно (вкладка/рынок), как шапка карточки она не опознаётся.
+            entry = _entry(
+                _distinct(
+                    node.select(".match-card__team-name"),
+                    clean=lambda value: _WINLINE_SCOREBOARD_VIEWERS_RE.sub("", value),
+                ),
+                live=_winline_text_is_live(text),
+                prop=winline_league_is_prop_duel(text),
+                labels=(),
+                node=node,
+                ids=_block_ids(node),
+            )
+            if entry is not None:
+                blocks.append(entry)
+    except Exception:
+        feed, blocks = [], []
+    result: List[Dict[str, Any]] = list(feed)
+    standalone: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for block in blocks:
+        same_pair = [event for event in feed if event["key"] == block["key"]]
+        # Блок без id вливается в ленточную карточку пары, только если она одна, ЖИВАЯ
+        # (`card--live`) и сам блок не показывает дату начала. Живой блок рядом с неживой
+        # карточкой той же пары - это другой (будущий) матч, и его узлы во фрагменте цены
+        # отдали бы его кэфы (ревью astra 08.10, раунд 3). Живость самого блока по тексту
+        # ненадёжна (live-центр 08.10 без слитного `Nкарта`), поэтому решает карточка ленты.
+        # Без слияния у пары два события -> `multi_card`, цены нет.
+        # Id события из ссылок логотипов блока должен совпасть с id карточки ленты (если
+        # он есть): одинаковые имена при другом id - другое событие (ревью astra, раунд 4).
+        if (
+            len(same_pair) == 1
+            and same_pair[0]["live"]
+            and not block["future"]
+            and (not block["ids"] or block["ids"] == same_pair[0]["ids"])
+        ):
+            _merge(same_pair[0], block)
+            continue
+        # Закреплённая и блок с другим id или с датой начала - разные события одной пары;
+        # блок вливается в первое совместимое отдельное событие этой пары, иначе - новое.
+        same_key = standalone.setdefault(block["key"], [])
+        target = next((known for known in same_key if _same_event(known, block)), None)
+        if target is not None:
+            _merge(target, block)
+        else:
+            same_key.append(block)
+            result.append(block)
+    snapshot._one_side_events = result
+    return result
+
+
+def _winline_name_proven_on(snapshot: "_WinlineDOMSnapshot", ours: str, card_name: str) -> bool:
+    """Наше имя доказано на имени карточки тем же сопоставителем, что и всюду.
+
+    Дополнительно метки состава должны совпасть: `Team Spirit` не доказывается на
+    `TEAM SPIRIT ACADEMY` (сопоставитель находит `team spirit` внутри длинного
+    названия), а `Team Spirit Academy` не доказывается обрубком `spirit`.
+
+    Это ШИРОКОЕ доказательство: оно годится для «пара названа на карточке» и для
+    неоднозначности, но не для цены - цену отдаёт только полное совпадение стороны
+    (`_winline_matched_side_is_full`).
+    """
+    if not ours or not card_name:
+        return False
+    if not snapshot.find_positions(card_name.lower(), ours):
+        return False
+    return _winline_roster_qualifiers(ours) == _winline_roster_qualifiers(card_name)
+
+
+def _winline_core_tokens(name: Any) -> Tuple[str, ...]:
+    """Ядро названия: слова без родовых, буквы-двойники сведены к латинице.
+
+    Метка состава (academy/junior/youth) в ядре остаётся: `Aurora Academy` и
+    `TEAM AURORA` - разные команды.
+    """
+    tokens = _norm(_fold_confusables(str(name or ""))).split()
+    core = tuple(t for t in tokens if t not in _ONE_SIDE_GENERIC_TOKENS)
+    return core or tuple(tokens)
+
+
+def _winline_matched_side_is_full(ours: str, card_name: str) -> bool:
+    """G1: имя карточки - ПОЛНОЕ написание нашего имени (или его известного написания).
+
+    Одно слово из запасных форм поиска (`zero` из `Team Zero` на `ZERO TENACITY`,
+    `legion` из `GamerLegion`) команду не доказывает.
+    """
+    card_core = _winline_core_tokens(card_name)
+    if not card_core:
+        return False
+    if card_core == _winline_core_tokens(ours):
+        return True
+    try:
+        spellings = list(_alias_spellings(ours) or [])
+    except Exception:
+        spellings = []
+    return any(card_core == _winline_core_tokens(spelling) for spelling in spellings)
+
+
+def _winline_similarity_forms(name: Any) -> List[str]:
+    """Склеенное ядро названия латиницей: с двойниками, свёрнутыми и по транслиту."""
+    raw = str(name or "").lower()
+    forms: List[str] = []
+    for base in (_fold_confusables(raw), raw):
+        latin = "".join(_ONE_SIDE_TRANSLIT.get(ch, ch) for ch in base)
+        tokens = re.sub(r"[^a-z0-9]+", " ", latin).split()
+        core = [t for t in tokens if t not in _ONE_SIDE_GENERIC_TOKENS] or tokens
+        form = "".join(core)
+        if form and form not in forms:
+            forms.append(form)
+    return forms
+
+
+def _winline_edit_distance(a: str, b: str) -> int:
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def _winline_other_side_similar(ours: str, card_name: str) -> bool:
+    """G2: второе имя карточки похоже на переписанное наше второе имя.
+
+    После ядра и транслита подходит любое: равны; одно - начало другого (короткое
+    >= 2 знаков, остаток <= 3); расстояние Левенштейна <= max(1, длина//6), для
+    имён от 4 знаков. Полное переименование (`Team Synapse` -> `TEAM SYNTAX`)
+    правилом не берётся - это ручной алиас.
+    """
+    for a in _winline_similarity_forms(ours):
+        for b in _winline_similarity_forms(card_name):
+            if a == b:
+                return True
+            shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+            if len(shorter) >= 2 and longer.startswith(shorter) and len(longer) - len(shorter) <= 3:
+                return True
+            if len(shorter) >= 4 and _winline_edit_distance(a, b) <= max(1, len(longer) // 6):
+                return True
+    return False
+
+
+def _winline_one_side_resolve(
+    snapshot: "_WinlineDOMSnapshot",
+    team1: str,
+    team2: str,
+) -> Tuple[Optional[Tuple[Dict[str, Any], int, int]], str]:
+    """(событие, совпавшая сторона 1|2, индекс имени на карточке) либо (None, причина)."""
+    events = _winline_one_side_events(snapshot)
+    live_hits: Dict[int, List[Tuple[Dict[str, Any], List[int]]]] = {1: [], 2: []}
+    for event in events:
+        if event["prop"]:
+            continue
+        names = event["names"]
+        full1 = [i for i, n in enumerate(names) if _winline_matched_side_is_full(team1, n)]
+        full2 = [i for i, n in enumerate(names) if _winline_matched_side_is_full(team2, n)]
+        wide1 = bool(full1) or any(_winline_name_proven_on(snapshot, team1, n) for n in names)
+        wide2 = bool(full2) or any(_winline_name_proven_on(snapshot, team2, n) for n in names)
+        if wide1 and wide2:
+            # Пара названа на карточке (живой или нет): это не наш случай.
+            return None, "pair_listed"
+        if not event["live"]:
+            continue
+        if wide1:
+            live_hits[1].append((event, full1))
+        if wide2:
+            live_hits[2].append((event, full2))
+    if live_hits[1] and live_hits[2]:
+        return None, "split_cards"
+    side = 1 if live_hits[1] else (2 if live_hits[2] else 0)
+    if not side:
+        return None, "none"
+    hits = live_hits[side]
+    if len(hits) != 1:
+        return None, "multi_card"
+    event, full_idx = hits[0]
+    if event.get("conflict"):
+        # Разные id события внутри одного блока или живая и будущая копии одного id.
+        return None, "id_conflict"
+    if not full_idx:
+        # Имя нашлось лишь широким сопоставлением (слово из запасных форм): G1.
+        return None, "matched_not_full"
+    if len(full_idx) != 1:
+        return None, "multi_card"
+    # G4: то же событие-двойник под другим id (или закреплённый блок при двух
+    # ленточных карточках пары) - неоднозначно.
+    if sum(1 for other in events if other["key"] == event["key"]) != 1:
+        return None, "multi_card"
+    return (event, side, full_idx[0]), ""
+
+
+def _winline_one_side_log(kind: str, team1: str, team2: str, map_num: int, detail: str) -> None:
+    key = (kind, str(team1), str(team2), int(map_num))
+    if key in _ONE_SIDE_PAIR_LOGGED:
+        return
+    if len(_ONE_SIDE_PAIR_LOGGED) > 2000:
+        _ONE_SIDE_PAIR_LOGGED.clear()
+    _ONE_SIDE_PAIR_LOGGED.add(key)
+    try:
+        _ONE_SIDE_PAIR_LOG.warning(
+            "winline %s %s: %s - %s map=%s %s",
+            _ONE_SIDE_PAIR_MARK, kind, team1, team2, map_num, detail,
+        )
+    except Exception:
+        pass
+
+
+def _winline_one_side_pair_extract(
+    html: str,
+    team1: str,
+    team2: str,
+    map_num: int,
+    *,
+    series_last_map: bool,
+    snapshot: "_WinlineDOMSnapshot",
+) -> Tuple[Optional["_WinlineMapExtract"], str]:
+    """Цена единственной живой карточки с одним доказанным именем, либо (None, причина).
+
+    Причина непустая только там, где карточка-кандидат была (или была
+    неоднозначность): её дописывают к отпечатку промаха. Нет кандидата - пусто, и
+    отпечаток остаётся прежним байт в байт.
+    """
+    if not winline_one_side_pair_enabled():
+        return None, ""
+    resolved, reason = _winline_one_side_resolve(snapshot, team1, team2)
+    if resolved is None:
+        if reason in {"split_cards", "multi_card", "matched_not_full", "id_conflict"}:
+            _winline_one_side_log("refused", team1, team2, map_num, reason)
+            return None, reason
+        return None, ""
+    event, side, card_idx = resolved
+    card_a, card_b = event["names"]
+    other_ours_name = team2 if side == 1 else team1
+    # G3: метка живой карты на карточке (если есть) должна быть нашей картой.
+    labels = event.get("labels") or set()
+    if labels and labels != {int(map_num)}:
+        _winline_one_side_log(
+            "refused", team1, team2, map_num,
+            f"live_map_mismatch labels={sorted(labels)}",
+        )
+        return None, "live_map_mismatch"
+    # G2: второе имя карточки - переписанное наше второе имя.
+    if not _winline_other_side_similar(other_ours_name, event["names"][1 - card_idx]):
+        _winline_one_side_log(
+            "refused", team1, team2, map_num,
+            f"other_not_similar {other_ours_name[:40]}->{event['names'][1 - card_idx][:40]}",
+        )
+        return None, "other_not_similar"
+    # Цена - только из DOM выбранного события: фрагмент из его узлов (лента,
+    # закреплённая, live-центр). Разбор по всей странице находил по именам карточки
+    # и соседние (`TEAM SPIRIT` внутри линии `TEAM SPIRIT ACADEMY 1W`) и отдавал их
+    # цену, когда кнопки самой живой карточки закрыты (ревью astra 08.10, раунд 2).
+    # Проп-дуэль отсекается раньше, по флагу события `prop`, посчитанному на ВСЕЙ
+    # странице (`_winline_one_side_resolve`): во фрагменте нет контейнера турнира,
+    # так что `_force_skip_props` здесь ничего не находит и оставлен как есть.
+    nodes = [node for node in (event.get("nodes") or []) if node is not None]
+    # Вложенный узел (секция `.event-live-center` внутри компонента live-центра) уже есть во
+    # фрагменте через предка - второй раз его ряды не нужны.
+    nodes = [
+        node for node in nodes
+        if not any(other is not node and any(parent is other for parent in node.parents) for other in nodes)
+    ]
+    if not nodes:
+        return None, "no_priced_row"
+    try:
+        fragment = "<html><body>" + "".join(str(node) for node in nodes) + "</body></html>"
+    except Exception:
+        return None, "no_priced_row"
+    sub = _winline_structured_current_map_winner(
+        fragment,
+        card_a,
+        card_b,
+        map_num,
+        series_last_map=series_last_map,
+        diag=[],
+        _force_skip_props=True,
+    )
+    odds = list(getattr(sub, "odds", None) or [])
+    if sub is None or sub.reason or sub.market_closed or len(odds) != 2:
+        return None, "no_priced_row"
+    raw_label = str(sub.card_team_order or "")
+    if raw_label == f"{card_a}|{card_b}":
+        raw_names = [card_a, card_b]
+    elif raw_label == f"{card_b}|{card_a}":
+        raw_names = [card_b, card_a]
+    else:
+        return None, "no_priced_row"
+    matched_ours = team1 if side == 1 else team2
+    other_ours = team2 if side == 1 else team1
+    card_names = (card_a, card_b)
+    # `sub.odds` идут в порядке (card_a, card_b); наш порядок - по стороне team1.
+    team1_card_idx = card_idx if side == 1 else 1 - card_idx
+    ours_odds = odds if team1_card_idx == 0 else [odds[1], odds[0]]
+    marker = (
+        f"{_ONE_SIDE_PAIR_MARK} matched={matched_ours[:40]}->{card_names[card_idx][:40]} "
+        f"other={other_ours[:40]}->{card_names[1 - card_idx][:40]}"
+    )
+    _winline_one_side_log("priced", team1, team2, map_num, marker)
+    return _WinlineMapExtract(
+        odds=ours_odds,
+        map_num=map_num,
+        market_kind="current_map_winner",
+        p1_team="team1",
+        p2_team="team2",
+        details=sub.details,
+        promoted_from_match=bool(sub.promoted_from_match),
+        # Контракт поля тот же, что у пути двух имён (`_winline_card_order_label`):
+        # НАШИ имена в том порядке, в каком их написал Winline. По нему
+        # `cyberscore_try._winline_stabilize_odds_orientation` доказывает
+        # ориентацию (card_provenance); написание Winline едет в метке.
+        card_team_order="|".join(
+            (matched_ours if name == card_names[card_idx] else other_ours)
+            for name in raw_names
+        ),
+        card_odds=list(sub.card_odds or []),
+        miss_fingerprint=marker,
+    ), ""
+
+
 def _winline_structured_current_map_winner(
     html: str,
     team1: str,
@@ -2961,6 +3498,7 @@ def _winline_structured_current_map_winner(
     series_last_map: bool = False,
     diag: Optional[List[str]] = None,
     _snapshot: Optional[_WinlineDOMSnapshot] = None,
+    _force_skip_props: bool = False,
 ) -> Optional["_WinlineMapExtract"]:
     """Extract only the two DOM buttons of the current-map winner market.
 
@@ -3004,7 +3542,7 @@ def _winline_structured_current_map_winner(
     # Секция «Дуэль игроков» не матч команд: имена игроков «WS (TEAM AURORA)» /
     # «33 (1W)» совпадают с командами, а ряд «3 карта» дуэли — линия убийств с
     # заблокированными кнопками, которая давала market_closed вместо «карточки нет».
-    skip_props = winline_prop_skip_enabled()
+    skip_props = winline_prop_skip_enabled() or bool(_force_skip_props)
 
     def _append_legacy_prices(
         container: Any,
@@ -3279,7 +3817,8 @@ def _winline_structured_current_map_winner(
         # On a proven decider these are the same outcome; only Match's own
         # unlocked two-way buttons determine whether its prices are usable.
         promoted = _winline_promote_last_map_match_market(
-            soup, team1, team2, map_num, diag=diag, _snapshot=snapshot)
+            soup, team1, team2, map_num, diag=diag, _snapshot=snapshot,
+            force_skip_props=bool(_force_skip_props))
         if promoted is not None:
             return promoted
     elif diag is not None:
@@ -3495,17 +4034,37 @@ def _extract_winline_current_map_winner(
     if structured is not None:
         return structured
     if html:
+        # Пара не доказана по двум именам. Одно имя + единственная живая
+        # карточка со строкой нашей карты - см. `_winline_one_side_pair_extract`.
+        one_side = None
+        one_side_reason = ""
+        try:
+            one_side_snapshot = (
+                _snapshot if _snapshot is not None and _snapshot.html == html
+                else _WinlineDOMSnapshot(html)
+            )
+            one_side, one_side_reason = _winline_one_side_pair_extract(
+                html, team1, team2, map_num,
+                series_last_map=series_last_map, snapshot=one_side_snapshot,
+            )
+        except Exception:
+            one_side = None
+            one_side_reason = ""
+        if one_side is not None:
+            return one_side
         # A full DOM snapshot is stronger evidence than flattened text. If its
         # exact winner buttons cannot be proven structurally, fail closed:
         # falling back here is precisely how handicap/total prices leaked into
         # the current-map winner stream when the winner market disappeared.
+        miss = _winline_promotion_fingerprint(promotion_diag, series_last_map=series_last_map)
+        if one_side_reason:
+            miss = f"{miss} {_ONE_SIDE_PAIR_MARK}=refused:{one_side_reason}".strip()
         return _WinlineMapExtract(
             reason="map",
             map_num=map_num,
             market_kind="current_map_winner",
             details="winline structured current map winner market unavailable",
-            miss_fingerprint=_winline_promotion_fingerprint(
-                promotion_diag, series_last_map=series_last_map),
+            miss_fingerprint=miss,
         )
 
     card_context = _winline_matched_card_context(

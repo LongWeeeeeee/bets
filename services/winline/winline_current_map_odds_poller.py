@@ -1117,6 +1117,14 @@ class WinlineCurrentMapOddsPoller:
             # или строки карты внутри неё.
             if str(attempt.get("market_status") or "") != "open":
                 record.update(_history_miss_fields(attempt))
+            else:
+                # Цена открытого рынка, взятая у карточки по ОДНОМУ доказанному
+                # имени (`one_side_pair matched=<наше>-><карточка> other=...`):
+                # метка обязана быть видна в истории, иначе такую цену не отличить
+                # от цены с доказанной по двум именам парой.
+                marker = str(attempt.get("miss_fingerprint") or "")
+                if marker.startswith("one_side_pair"):
+                    record["miss_fingerprint"] = marker[:200]
             line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")

@@ -2330,6 +2330,63 @@ def _winline_select_matching_pinned_card(
     return False
 
 
+#: (пара, карта), о которых уже ушла строка «цена по одной команде» (на процесс).
+_winline_one_side_pair_noted: Any = set()
+#: Неудачные попытки отправки той же строки (пара+карта -> число).
+_winline_one_side_pair_attempts: Dict[str, int] = {}
+#: Пара+карта, строка которой отправляется прямо сейчас (второй поток не шлёт дубль).
+_winline_one_side_pair_inflight: Any = set()
+_winline_one_side_pair_lock = threading.Lock()
+
+
+def _winline_note_one_side_pair(team1: Any, team2: Any, map_num: Any, marker: str,
+                                send_fn: Any = None) -> bool:
+    """Одна служебная строка на пару+карту: цена взята с карточки по одной команде.
+
+    Сама цена уже принята парсером (гейты — в bookmaker_selenium_odds); строка
+    нужна, чтобы написание Winline стало постоянным алиасом. Откат строки —
+    WINLINE_ONE_SIDE_PAIR_TG=0, откат самого правила — WINLINE_ONE_SIDE_PAIR=0.
+    """
+    try:
+        if str(os.getenv("WINLINE_ONE_SIDE_PAIR_TG", "1")).strip().lower() in (
+                "0", "false", "no", "off"):
+            return False
+        pair = sorted([str(team1 or "").strip().lower(), str(team2 or "").strip().lower()])
+        key = f"{pair[0]}|{pair[1]}|map{map_num}"
+        # Ключ «доставлено» ставится только после успешной отправки; неудачных
+        # попыток на пару+карту не больше трёх (сбой Telegram не глушит строку
+        # навсегда и не превращает каждый тик опроса в новую попытку).
+        with _winline_one_side_pair_lock:
+            if key in _winline_one_side_pair_noted or key in _winline_one_side_pair_inflight:
+                return False
+            attempts = int(_winline_one_side_pair_attempts.get(key) or 0)
+            if attempts >= 3:
+                return False
+            _winline_one_side_pair_attempts[key] = attempts + 1
+            _winline_one_side_pair_inflight.add(key)
+        delivered = False
+        # try открывается сразу после отметки «в полёте»: что бы ни упало дальше (даже
+        # print), отметка снимается в finally и строка не застревает до конца процесса.
+        try:
+            message = (
+                f"🔤 Winline: цена {team1} — {team2}, карта {map_num} взята с карточки, "
+                f"найденной по одной команде ({marker}). Проверь пару и добавь алиас "
+                f"в base/team_name_aliases.py"
+            )
+            if attempts == 0:
+                print(f"🔤 Winline one-side pair: {team1} vs {team2} map{map_num} — {marker}")
+            delivered = bool(_winline_send_lifecycle_message(
+                message, send_fn, kind="one_side_pair", key=key))
+        finally:
+            with _winline_one_side_pair_lock:
+                _winline_one_side_pair_inflight.discard(key)
+                if delivered:
+                    _winline_one_side_pair_noted.add(key)
+        return delivered
+    except Exception:
+        return False
+
+
 def _winline_fast_collect_from_payload(
     payload: Any,
     *,
@@ -2434,6 +2491,15 @@ def _winline_fast_collect_from_payload(
     result.dom_signature_scope = "card"
     result.card_team_order = getattr(extract, "card_team_order", None)
     result.card_odds = list(getattr(extract, "card_odds", None) or [])
+    # 08.10.2026 (ingame-grtf): цена взята с карточки, найденной по ОДНОЙ нашей
+    # команде (Winline пишет другую иначе: 1win -> 1W, ЯЧЁ123 -> YACHE123).
+    # Метка едет в историю кэфов, а в служебный чат — одна строка на пару+карту,
+    # чтобы постоянный алиас попал в base/team_name_aliases.py. Прочие
+    # отпечатки (promotion=...) в положительную строку по-прежнему не пишутся.
+    one_side_fp = str(getattr(extract, "miss_fingerprint", "") or "")
+    if one_side_fp.startswith("one_side_pair matched="):
+        result.miss_fingerprint = one_side_fp[:200]
+        _winline_note_one_side_pair(team1, team2, map_num, one_side_fp[:200])
     if result.promoted_from_match:
         # Держим в details объяснение парсера («рынка карты нет, взят Матч»):
         # без него в evidence не отличить промоцию от обычного рынка карты.
