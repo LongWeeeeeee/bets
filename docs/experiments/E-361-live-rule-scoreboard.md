@@ -45,6 +45,16 @@ Date 08.10.2026, session claude:5f587557, card ingame-sulk. Owner standing objec
 
 Pooled calibration is fine; split by ELO role it is not: the model ignores team strength, so it under-predicts the favourite by 12-14 pp and over-predicts the underdog by 10-19 pp. Consistent with E-345 (underdog, E-281 >= 0.60: 57 % at >= 30, n=28).
 
+## Add-on 08.10: bets without a Winline price are not worse
+Question: the prod WIN floor (`_ml_dispatch_min_odds_reject_for_delivery`, base/cyberscore_try.py:14157) passes a bet when the poller has no fresh quote (serv1 log: 48 "ML-пол по кэфу не применён" lines in the current 77 MB log). If unpriced bets lost more often, a fail-closed rule would pay. Prediction: unpriced hit below priced. Result: refuted, no gate.
+
+| rule (delivered, all periods) | priced n / hit [Wilson 95%] | unpriced n / hit [Wilson 95%] |
+|---|---|---|
+| win_single_model_confirm | 146 / 0.637 [0.556, 0.711] | 42 / 0.619 [0.468, 0.750] |
+| win_late_after_wait | 35 / 0.486 [0.330, 0.644] | 17 / 0.647 [0.413, 0.827] |
+
+Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/scoreboard/priced_vs_unpriced.py runtime/artifacts/star-dispatch/scoreboard_20261008` (reuses scoreboard.py through runpy; output `priced_vs_unpriced_20261008.txt`). "Unpriced" here means no row in the E-361 join window, not proof that prod saw no quote; from 8e49e2ac the ledger `price_snapshot.selected` answers that directly.
+
 ## Decision
 No rule switch: every ROI interval crosses 0 and kills markets have no prices. The scoreboard is the shared instrument for the due re-checks (E-351 ~17.10, E-342/E-359 ~19.10, E-357 ~21.10): rerun extract_bets.py + scoreboard.py on fresh copies. kills_underdog_early_window 45.6 % supports its switch-off on 05.10. An ELO-role correction of kills30 waits for Winline individual-kills lines (idea card ingame-zc2h, defer 05.11).
 
