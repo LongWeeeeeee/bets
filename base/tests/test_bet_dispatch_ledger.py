@@ -32,6 +32,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -133,6 +135,12 @@ def test_deliver_and_persist_signal_writes_exact_ledger_row(monkeypatch, tmp_pat
         "prematch_model_confidence": row["confidence"],
         "late_model_side": "radiant",
         "game_time": row["game_time"],
+        # Card ingame-8a5i: the STAR/prematch path has no ml_dispatch market or
+        # rule; its floor comes from the prematch_model_* details.
+        "market": None,
+        "rule": None,
+        "expected_wr": row["expected_wr"],
+        "min_odds": row["min_odds"],
         # Нет прогретого bookmaker prefetch-снимка для этого match_key в тесте
         # (skip_bookmaker_prepare=True его и не создаёт) — цена недоступна.
         "price_snapshot": None,
@@ -236,3 +244,69 @@ def test_ledger_without_fresh_quote_has_null_snapshot_and_no_exception(
         monkeypatch, tmp_path, seed_quote=False, target="YACHE123")
     assert row["price_snapshot"] is None
     assert row["target_team_name"] == "YACHE123"
+
+
+# --- market / rule on every ml_dispatch ledger row (card ingame-8a5i) ---
+# 08.10.2026: 43 of 552 prod ledger rows looked like duplicates of a WIN row
+# (same match, map, side, target): they were kills_total / kills_window bets
+# delivered in the same tick (ml_dispatch_decisions LEGION|Blasterbl map 2,
+# 1791481604-09), and since 8e49e2ac they carried the map-winner price_snapshot
+# (2.4) with nothing saying the bet was not a map-winner bet. The rows now name
+# their market, rule and floor; price_snapshot stays the map-winner quote.
+def _dispatch_through_decision(monkeypatch, tmp_path, *, market, rule, target):
+    from types import SimpleNamespace
+    first = json.loads(WINLINE_FIXTURE.read_text(encoding="utf-8"))["messages"][0]
+    key = first["canonical_key"]
+    p1, p2 = first["observation"]["output_pair"]
+    monkeypatch.setattr(runtime, "_winline_odds_orientation_state", {
+        key: {"p1": p1, "p2": p2, "status": "open", "last_quote_mono": time.monotonic()}})
+    ledger_path = tmp_path / "bet_dispatch_ledger.jsonl"
+    monkeypatch.setattr(runtime, "BET_DISPATCH_LEDGER_PATH", str(ledger_path), raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False)
+    monkeypatch.setattr(runtime, "_bookmaker_prepare_message_for_delivery",
+                        lambda _key, text, **_kw: (text, True, "disabled", None))
+    monkeypatch.setattr(runtime, "_is_denylisted_bet_team_name", lambda *_a, **_k: False)
+    for name in ("_half_stake_elo_underdog_reject_for_delivery",
+                 "_win_model_reject_for_delivery", "_late_win_model_reject_for_delivery"):
+        monkeypatch.setattr(runtime, name, lambda *_a, **_kw: None)
+    sent = []
+    monkeypatch.setattr(runtime, "send_message", lambda text, **_k: sent.append(text) or True)
+    monkeypatch.setattr(runtime, "add_url", lambda *a, **k: None)
+    monkeypatch.setattr(runtime, "_signal_fingerprint_try_reserve", lambda *_a: (True, "fp"))
+    monkeypatch.setattr(runtime, "_signal_fingerprint_mark_sent", lambda *_a: None)
+    monkeypatch.setattr(runtime, "decelerate_winline_current_map_polling", lambda *_a: None)
+    side = "Radiant" if target == "YANGON GALACTICOS" else "Dire"
+    decision = SimpleNamespace(
+        market=market, target_side=side, target_team=target, rule=rule,
+        reasons=["window=5_15"] if market == "kills_window" else [],
+        expected_wr=0.643, min_odds=1.56, floor_informational=True)
+    runtime._ml_dispatch_deliver_decision(
+        decision, match_key="dltv.org/matches/yangon-yache.3", base_url="series",
+        ctx_map_num=3, resolved_map_num=3, radiant_team_name="YANGON GALACTICOS",
+        dire_team_name="YACHE123", live_league={}, top="", mid="", bot="",
+        protracker_payload=None, team_elo_block="", game_time_seconds=600,
+        radiant_lead=0, early_output=None, mid_output=None, all_output=None,
+        radiant_heroes_and_pos=None, dire_heroes_and_pos=None,
+        full_message_text="СТАВКА НА YACHE123 x1\nYANGON GALACTICOS VS YACHE123",
+        ml_laning_line="", all_model_line="",
+        ledger=SimpleNamespace(add=lambda _k: None, save=lambda: None))
+    assert len(sent) == 1, sent
+    lines = _read_ledger_lines(ledger_path)
+    assert len(lines) == 1, lines
+    return lines[0], (p1, p2)
+
+
+@pytest.mark.parametrize("market,rule", [
+    ("kills_total", "kills_early_win_kills30"),
+    ("kills_window", "kills_panel_window"),
+    ("win", "win_single_model_confirm"),
+])
+def test_ml_dispatch_ledger_row_names_market_rule_and_floor(monkeypatch, tmp_path, market, rule):
+    row, (p1, p2) = _dispatch_through_decision(
+        monkeypatch, tmp_path, market=market, rule=rule, target="YACHE123")
+    assert (row["market"], row["rule"]) == (market, rule)
+    assert (row["expected_wr"], row["min_odds"]) == (0.643, 1.56)
+    # The snapshot is still the map-winner quote at send time and says so,
+    # so a kills row can be told apart from the price of its own market.
+    assert row["price_snapshot"]["market"] == "map_winner"
+    assert row["price_snapshot"]["selected"] == p2

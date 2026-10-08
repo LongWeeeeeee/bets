@@ -35487,6 +35487,21 @@ def _build_bet_dispatch_ledger_entry(
     if prematch_model_confidence is None:
         prematch_model_confidence = details.get("prematch_model_confidence")
 
+    # 08.10.2026 (card ingame-8a5i): ml_dispatch delivers win / kills_total /
+    # kills_window bets for one map in the same tick; without the market a kills
+    # row looked like a duplicate WIN row carrying the map-winner price below.
+    calibration = ctx.get("calibration") if isinstance(ctx.get("calibration"), dict) else {}
+
+    def _first_present(*values: Any) -> Any:
+        return next((value for value in values if value is not None), None)
+
+    market = _first_present(ctx.get("ml_market"), details.get("ml_market"))
+    rule = _first_present(ctx.get("ml_rule"), details.get("ml_rule"))
+    expected_wr = _first_present(details.get("expected_wr"), calibration.get("expected_wr"),
+                                 details.get("prematch_model_expected_wr"))
+    min_odds = _first_present(details.get("min_odds"), calibration.get("min_odds"),
+                              details.get("prematch_model_min_odds"))
+
     return {
         "ts": int(time.time()),
         "match_key": str(match_key or ""),
@@ -35506,6 +35521,12 @@ def _build_bet_dispatch_ledger_entry(
         "prematch_model_confidence": prematch_model_confidence,
         "late_model_side": ctx.get("late_model_side"),
         "game_time": details.get("game_time"),
+        "market": market,
+        "rule": rule,
+        "expected_wr": expected_wr,
+        "min_odds": min_odds,
+        # Always the MAP-WINNER quote at send time (its own "market" key says so),
+        # also on kills rows, where it is context and not the bet's price.
         "price_snapshot": _bet_ledger_price_snapshot(
             match_key,
             selected_side,
