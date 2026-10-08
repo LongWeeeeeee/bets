@@ -1253,7 +1253,8 @@ Append+flush+fsync, без усечения.
 повреждённый JSON не затирается, цикл завершается ошибкой.
 Exit: 0 (успех/нет карточек/достигнут лимит), 2 (прокси/IP/browser preflight),
 5 (ошибка после начала Winline-цикла). Stdout — одна строка
-`cards=… events_opened=… events_missing=… events_unrendered=… rows_written=… loads=… country=… status=… error=<класс>`.
+`cards=… events_opened=… events_missing=… events_unrendered=… rows_written=… loads=… country=… status=… error=<класс> events_left_listing=… events_not_clickable=… card_wait_seconds_max=… events_opened_hero=… events_hero_open_failed=…`.
+С 3adb4336 (08.10): после перезагрузки списка сборщик ждёт конкретную карточку до 15 с и один раз пересчитывает список; карточку, переехавшую в шапку списка (`ww-feature-event-live-center-dsk`, id только в `/api/cls/event/<n>/<id>`), открывает кнопкой «Все маркеты». `events_opened` — отправленные клики; загружено = `events_opened − events_hero_open_failed` (и −1 при status=5); `events_missing = events_left_listing + events_not_clickable`.
 Offline regressions: `services/winline/tests/test_winline_kills_totals_collector.py` (вне `base/`, чтобы не задевать цель доставки прода),
 захваченные EVENT-тексты и gzip-листинг от 05.10.2026 с provenance в fixtures.
 
