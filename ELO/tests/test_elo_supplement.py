@@ -16,6 +16,7 @@ from ELO.config import HybridEloConfig
 from ELO import live_team_strength as live
 
 
+PRE_SUPPLEMENT_COMMIT = "630979142f1b1cd1247f5535fd9cf2df0a1cef38"  # last main commit before the supplement (7398ee0e); full sha so a short prefix can never become ambiguous
 FIXTURE = Path(__file__).parent / "fixtures/elo_supplement_20261006"
 CONVERTER = Path(__file__).resolve().parents[2] / "scripts/pro_chain/build_elo_supplement.py"
 
@@ -198,6 +199,37 @@ def test_autouse_supplement_isolation_guards_default_snapshot(tmp_path, monkeypa
 
 @pytest.mark.parametrize("with_corpus", [False, True])
 @pytest.mark.parametrize("exists", [False, True])
+def test_empty_supplement_leaves_no_trace(tmp_path, with_corpus, exists):
+    """Builder-change-proof inertness: an empty or missing supplement dir adds no
+    supplement key, path or counter anywhere in the snapshot."""
+    corpus, supplement = tmp_path / "corpus", tmp_path / "supplement"
+    corpus.mkdir()
+    if exists:
+        supplement.mkdir()
+        (supplement / "notes.txt").write_text("not a supplement file")
+    if with_corpus:
+        (corpus / "maps.json").write_text((FIXTURE / "corpus_captured.json").read_text())
+    snapshot = _build(corpus, supplement)
+
+    def keys_and_strings(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield str(key)
+                yield from keys_and_strings(value)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                yield from keys_and_strings(value)
+        elif isinstance(node, str):
+            yield node
+
+    # tmp_path itself contains this test's name: blank it out, then no key or string may
+    # mention the supplement (a key such as "meta/supplement" is caught too).
+    found = [s.replace(str(tmp_path), "<tmp>") for s in keys_and_strings(snapshot)]
+    assert not [s for s in found if "supplement" in s.casefold()]
+
+
+@pytest.mark.parametrize("with_corpus", [False, True])
+@pytest.mark.parametrize("exists", [False, True])
 def test_empty_supplement_snapshot_is_byte_identical_to_main(tmp_path, with_corpus, exists):
     corpus, supplement = tmp_path / "corpus", tmp_path / "supplement"
     corpus.mkdir()
@@ -205,14 +237,26 @@ def test_empty_supplement_snapshot_is_byte_identical_to_main(tmp_path, with_corp
         supplement.mkdir()
     if with_corpus:
         (corpus / "maps.json").write_text((FIXTURE / "corpus_captured.json").read_text())
-    # Execute only HEAD's snapshot function, against these captured inputs.
-    source = subprocess.run(["git", "show", "HEAD:ELO/live_team_strength.py"],
-                            cwd=CONVERTER.parents[2], check=True,
-                            capture_output=True, text=True).stdout
-    function = next(node for node in ast.parse(source).body
+    # Execute only the PRE-SUPPLEMENT snapshot function, against these captured inputs.
+    # Pinned to the last main commit before the supplement (7398ee0e): comparing against
+    # HEAD became a comparison with the supplement builder itself after that commit and
+    # failed every uncommitted builder change. safe.directory: serv1 runs the suite under
+    # systemd-run without HOME, where git refuses the repo as "dubious ownership".
+    # If _build_snapshot_dict itself is changed on purpose later, this pin no longer
+    # describes main. Do not just retire it: test_empty_supplement_leaves_no_trace only
+    # catches leaks that carry the word "supplement" (a neutral counter slips through), so
+    # replace this with a comparison against the new builder run on a supplement-free tree.
+    shown = subprocess.run(["git", "-c", "safe.directory=*", "show",
+                            f"{PRE_SUPPLEMENT_COMMIT}:ELO/live_team_strength.py"],
+                           cwd=CONVERTER.parents[2], capture_output=True, text=True)
+    if shown.returncode != 0:
+        pytest.skip(f"pre-supplement commit {PRE_SUPPLEMENT_COMMIT} unavailable: "
+                    f"{shown.stderr.strip()[:200]}")
+    function = next(node for node in ast.parse(shown.stdout).body
                     if isinstance(node, ast.FunctionDef) and node.name == "_build_snapshot_dict")
     namespace = dict(vars(live))
-    exec(compile(ast.Module(body=[function], type_ignores=[]), "HEAD:snapshot", "exec"), namespace)
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 f"{PRE_SUPPLEMENT_COMMIT}:snapshot", "exec"), namespace)
     expected = namespace["_build_snapshot_dict"](
         data_dir=corpus, active_cutoff_days=180,
         display_decay_half_life_days=120, config=HybridEloConfig())
