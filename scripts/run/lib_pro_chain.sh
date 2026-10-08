@@ -31,7 +31,8 @@
 #   prod_sha1 REL            — sha1 файла $PROD_ROOT/REL (пусто, если нет)
 #   prod_run 'CMD'           — изменяющая команда на проде; в тени пропуск, rc 0
 #   prod_script ARGS... <S   — stdin-скрипт bash на проде; в тени stdin
-#                              выбрасывается, rc 0
+#                              выбрасывается, rc 0; локально — в своём
+#                              systemd scope вне cgroup юнита цепочки
 #   prod_stage SRC REL       — положить SRC в $PROD_ROOT/REL.tmp и сверить sha1;
 #                              rc 1 при расхождении (.tmp удалён); в тени только
 #                              строка в $PRO_CHAIN_SUMMARY, rc 0
@@ -172,9 +173,30 @@ prod_run() {
   fi
 }
 
+# Локальный режим (цепочка на самом serv1) запускает stdin-скрипт в СОБСТВЕННОМ
+# systemd scope. Иначе `bash -s` остаётся потомком юнита pro-chain-nightly и
+# наследует его cgroup (MemoryHigh=7.5G, MemorySwapMax=0, OOMScoreAdjust=900):
+# перебазировка ELO в ночь 08.10.2026 упёрлась в MemoryHigh, ядро троттлило её
+# 6 ч (состояние D, mem_cgroup_handle_over_high), прод стоял 04:18–10:21 МСК.
+# На Маке скрипт шёл через `ssh serv1 bash -s` — сессия sshd без лимита памяти;
+# scope без MemoryHigh/MemorySwapMax это поведение возвращает. MemoryMax не
+# задаём: до переезда цепочки на serv1 потолка не было, а OOM-убийство
+# перебазировки теперь безопасно (см. rc-ветки в ELO_REBASE_REMOTE).
+# Scope — отдельный юнит: остановка pro-chain-nightly его не трогает (killmode
+# юнита сигналит только его cgroup и главный PID). Проверка доступности — до
+# запуска, потому что у systemd-run провал создания scope даёт тот же rc 1, что
+# и «перебазировка отклонена»; без systemd-run (Мак, не root) — прежний `bash -s`.
 prod_script() {
   if shadow_on; then cat >/dev/null; echo "[тень] пропуск скрипта на проде: $*"; return 0; fi
-  if [ "$PRO_CHAIN_MODE" = local ]; then bash -s -- "$@"
+  if [ "$PRO_CHAIN_MODE" = local ]; then
+    if command -v systemd-run >/dev/null 2>&1 \
+        && systemd-run --scope --quiet --collect true </dev/null >/dev/null 2>&1; then
+      systemd-run --scope --quiet --collect \
+        -p MemoryHigh=infinity -p MemorySwapMax=infinity bash -s -- "$@"
+    else
+      echo "ВНИМАНИЕ: systemd-run --scope недоступен; скрипт на проде идёт в cgroup цепочки (лимит памяти юнита действует)"
+      bash -s -- "$@"
+    fi
   else ssh -o BatchMode=yes "$SERV1" bash -s -- "$@"
   fi
 }

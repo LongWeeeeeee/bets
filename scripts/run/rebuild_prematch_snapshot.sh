@@ -296,7 +296,11 @@ CHECK
   if ! shadow_on; then
     wait_no_live_map "${PRO_CHAIN_RESTART_WAIT_SECONDS:-5400}" "рестарт cyberscore"
   fi
-  prod_script "$ELO_SNAPSHOT_STAGED" <<'ELO_REBASE_REMOTE'
+  # Второй аргумент — лимит перебазировки в секундах: env через ssh не ходит,
+  # поэтому значение уезжает позиционным. 1800 с = 4.2 × весь замеренный простой
+  # 06.10.2026 (stop 05:58:41 → start 06:05:51 = 430 с вместе с sidecar'ом) и
+  # 9 × оценка самой перебазировки (~200 с: stop → mtime состояния 06:01).
+  prod_script "$ELO_SNAPSHOT_STAGED" "${PRO_CHAIN_REBASE_TIMEOUT_SECONDS:-1800}" <<'ELO_REBASE_REMOTE'
 set -e
 cd /root/main
 snapshot=ELO/output/live_team_elo_snapshot.json
@@ -304,19 +308,59 @@ staged_snapshot="$snapshot"
 if [ "$1" = 1 ]; then
   staged_snapshot="$snapshot.tmp"
 fi
+rebase_timeout="${2:-1800}"
+case "$rebase_timeout" in
+  ''|*[!0-9]*|0) rebase_timeout=1800 ;;
+esac
+# Всё, что перебазировка может записать (live_team_strength.py:1777-1802):
+# состояние, progress и — только при pending_overlay_commit — live-дельта.
+# Каждый файл пишется атомарно (tmp + fsync + os.replace), но три замены между
+# собой НЕ атомарны: убитый между ними процесс оставляет состояние новой базы
+# при progress старой. Поэтому «не изменён» проверяется по всем трём сразу.
+# cksum читает содержимое (тот же размер и mtime не обманут его), есть и в GNU,
+# и в BSD; ~220 МБ файла дают доли секунды.
+fingerprint_runtime_elo() {
+  local f crc
+  for f in runtime/live_elo_model_state.json runtime/live_elo_progress.json \
+           runtime/live_elo_delta.json; do
+    if [ -e "$f" ]; then
+      crc="$(cksum < "$f")" || crc="нечитаем-$RANDOM-$SECONDS"
+    else
+      crc=отсутствует
+    fi
+    echo "$f $crc"
+  done
+}
+# Нет timeout — не трогаем прод вообще: без предела вернётся ночной простой 08.10.
+if ! command -v timeout >/dev/null 2>&1; then
+  echo 'ОШИБКА: нет команды timeout; перебазировка без предела по времени запрещена, прод не остановлен'
+  exit 1
+fi
 systemctl stop cyberscore.service
-if venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot"; then
+elo_before="$(fingerprint_runtime_elo)"
+rebase_started="$(date +%s)"
+rebase_status=0
+timeout -k 60 "$rebase_timeout" venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot" || rebase_status=$?
+if [ "$rebase_status" -eq 0 ]; then
   :
-else
-  rebase_status=$?
-  if [ "$rebase_status" -ne 1 ]; then
-    echo 'ОШИБКА: целостность runtime ELO не подтверждена; сервис оставлен остановленным'
-    exit "$rebase_status"
-  fi
+elif [ "$rebase_status" -eq 1 ]; then
   echo 'ОШИБКА: перебазировка ELO отклонена; новый снимок не установлен'
   : > /root/.local/state/ingame/map_id_check.txt
   systemctl start cyberscore.service
   exit 1
+else
+  # Таймаут (124/137), OOM-убийство (137), падение интерпретатора, код 2 самой
+  # перебазировки. Если ни один runtime-файл не изменился, база прежняя, и прод
+  # безопасно поднять на прежнем снимке; иначе целостность не доказана.
+  rebase_seconds=$(( $(date +%s) - rebase_started ))
+  if [ "$(fingerprint_runtime_elo)" = "$elo_before" ]; then
+    echo "ОШИБКА: перебазировка ELO прервана (rc=$rebase_status, ${rebase_seconds} с, лимит ${rebase_timeout} с); runtime ELO не изменён, прод поднят на прежнем снимке"
+    : > /root/.local/state/ingame/map_id_check.txt
+    systemctl start cyberscore.service
+    exit 1
+  fi
+  echo "ОШИБКА: целостность runtime ELO не подтверждена (rc=$rebase_status, ${rebase_seconds} с); сервис оставлен остановленным"
+  exit "$rebase_status"
 fi
 if [ "$1" = 1 ]; then
   mv "$staged_snapshot" "$snapshot"

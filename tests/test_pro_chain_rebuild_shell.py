@@ -33,6 +33,9 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 ORIGINAL_REV = "f5353230"
 TARGET = os.environ.get("PRO_CHAIN_TEST_TARGET", "new")
+# Red runs of tests added after a commit: PRO_CHAIN_TEST_SCRIPTS_REV=<rev> feeds the
+# "new" target the scripts of that revision (git show) instead of the working tree.
+SCRIPTS_REV = os.environ.get("PRO_CHAIN_TEST_SCRIPTS_REV")
 BASH = "/bin/bash"
 
 REBUILD_REL = "scripts/run/rebuild_prematch_snapshot.sh"
@@ -40,6 +43,7 @@ KV3_REL = "scripts/ops/build_kv3_state.sh"
 LIB_REL = "scripts/run/lib_pro_chain.sh"
 
 OLD_ARTIFACT = b"old-artifact\n"
+REBASE_TIMEOUT_DEFAULT = 1800   # seconds; 4.2 x the whole 06.10.2026 outage window (430 s)
 BUILT = {
     "artifact": b"artifact-v3-hybrid\n",
     "elo": b'{"elo": 1}\n',
@@ -164,11 +168,74 @@ if [ "${1:-}" = "-s" ]; then
   tmp="$(mktemp "${TMPDIR:-/tmp}/bashs.XXXXXX")"
   cat > "$tmp.orig"
   echo "BASH-S ${*:2} $(shasum -a 1 < "$tmp.orig" | cut -d' ' -f1)" >> "$STUB_EVENTS"
+  echo "SCOPE-ENV ${STUB_IN_SCOPE:-0}" >> "$STUB_EVENTS"
   sed "s#/root/main#$FAKE_PROD#g; s#/root/.local/state#$FAKE_STATE#g" "$tmp.orig" > "$tmp"
   /bin/bash "$@" < "$tmp"; rc=$?
   rm -f "$tmp" "$tmp.orig"; exit $rc
 fi
 exec /bin/bash "$@"
+'''
+
+# systemd-run for `--scope`: logs argv, drops its own options and runs the rest in
+# the current process, like the real one. STUB_SYSTEMD_RUN_FAIL=1 simulates a host
+# where a transient scope cannot be created (no systemd, not root).
+SYSTEMD_RUN_STUB = r'''#!/bin/bash
+echo "SYSTEMD-RUN $*" >> "$STUB_EVENTS"
+[ -n "${STUB_SYSTEMD_RUN_FAIL:-}" ] && exit 1
+args=("$@"); i=0
+while [ "$i" -lt "$#" ]; do
+  case "${args[$i]}" in
+    --scope|--quiet|--collect) i=$((i+1));;
+    -p) i=$((i+2));;
+    *) break;;
+  esac
+done
+export STUB_IN_SCOPE=1
+exec "${args[@]:$i}"
+'''
+
+# coreutils `timeout` does not exist on macOS: same contract (-k D N cmd...), rc 124
+# when the limit fires, the child's own rc otherwise.
+TIMEOUT_STUB = r'''#!/bin/bash
+echo "TIMEOUT $*" >> "$STUB_EVENTS"
+exec "$STUB_REAL_PY" -I "$(dirname "$0")/timeout_impl.py" "$@"
+'''
+TIMEOUT_IMPL = '''import subprocess, sys
+a = sys.argv[1:]
+if a[0] == "-k":
+    a = a[2:]
+secs, cmd = float(a[0]), a[1:]
+p = subprocess.Popen(cmd)
+try:
+    rc = p.wait(timeout=secs)
+except subprocess.TimeoutExpired:
+    p.terminate()
+    try:
+        p.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+    sys.exit(124)
+sys.exit(rc if rc >= 0 else 128 - rc)
+'''
+
+# Prod-side python: the rebase outcome is chosen by STUB_REBASE; the other prod
+# python steps (delta conversion, sidecar) just succeed.
+PRODPY_REBASE_STUB = r'''#!/bin/bash
+if [ "${1:-}" = "-c" ]; then exec "$STUB_REAL_PY" "$@"; fi
+echo "PRODPY $*" >> "$STUB_EVENTS"
+if [ "${1:-}" = ELO/rebase_runtime_model_state.py ]; then
+  case "${STUB_REBASE:-ok}" in
+    hang) exec /bin/sleep 600;;
+    kill-clean) exit 137;;
+    kill-state) printf 'half-rebased\n' > runtime/live_elo_model_state.json; exit 137;;
+    kill-progress) printf 'half-rebased\n' > runtime/live_elo_progress.json; exit 137;;
+    kill-delta) printf '{}' > runtime/live_elo_delta.json; exit 137;;
+    reject) exit 1;;
+    rollback-clean) exit 2;;
+  esac
+fi
+exit 0
 '''
 
 TOPUP_STUB = '#!/bin/bash\necho "TOPUP $*" >> "$STUB_EVENTS"\nexit 0\n'
@@ -189,6 +256,14 @@ def _git_show(rel: str) -> str | None:
     res = subprocess.run(["git", "-C", str(REPO), "show", f"{ORIGINAL_REV}:{rel}"],
                          capture_output=True, text=True)
     return res.stdout if res.returncode == 0 else None
+
+
+def _scripts_text(rel: str) -> str:
+    if SCRIPTS_REV:
+        res = subprocess.run(["git", "-C", str(REPO), "show", f"{SCRIPTS_REV}:{rel}"],
+                             capture_output=True, text=True, check=True)
+        return res.stdout
+    return (REPO / rel).read_text(encoding="utf-8")
 
 
 def transform_original(rel: str, text: str, stub_py: str) -> str:
@@ -235,11 +310,12 @@ class Env:
         py = self.stubs / "python3"
         for name, text in (("python3", PY_STUB), ("ssh", SSH_STUB), ("scp", SCP_STUB),
                            ("systemctl", SYSTEMCTL_STUB), ("sleep", SLEEP_STUB),
-                           ("sha1sum", SHA1SUM_STUB), ("bash", BASH_STUB)):
+                           ("sha1sum", SHA1SUM_STUB), ("bash", BASH_STUB),
+                           ("systemd-run", SYSTEMD_RUN_STUB), ("timeout", TIMEOUT_STUB)):
             _write(self.stubs / name, text, exe=True)
+        _write(self.stubs / "timeout_impl.py", TIMEOUT_IMPL)
         # build tree scripts
-        lib = (REPO / LIB_REL).read_text(encoding="utf-8")
-        _write(build / LIB_REL, lib, exe=True)
+        _write(build / LIB_REL, _scripts_text(LIB_REL), exe=True)
         _write(build / "scripts/run/topup_pro_corpus.sh", TOPUP_STUB, exe=True)
         _write(build / "runtime/pro_topup_fresh.log", "fresh\n")  # skip the 20 h safety top-up
         if target == "original":
@@ -249,7 +325,7 @@ class Env:
                 _write(build / rel, transform_original(rel, orig, str(py)), exe=True)
         else:
             for rel in (REBUILD_REL, KV3_REL):
-                _write(build / rel, (REPO / rel).read_text(encoding="utf-8"), exe=True)
+                _write(build / rel, _scripts_text(rel), exe=True)
         if self.kv3:
             _write(build / "ml-models/prematch_panel_kv3/manifest.json", "{}\n")
             _write(build / "runtime/kv3_state_deliver.on", "")
@@ -743,19 +819,19 @@ printf '{}' > "$FAKE_PROD/runtime/sourcetv_matches.json"
     assert reads and max(reads) < transaction, "restart reads must precede the transaction session"
     assert events.index("WATCHDOG-DISARMED") < transaction
     if mode == "remote":
-        ssh_transaction = events.index("SSH bash -s -- 1")
+        ssh_transaction = events.index(f"SSH bash -s -- 1 {REBASE_TIMEOUT_DEFAULT}")
         ssh_reads = [i for i, line in enumerate(events)
                      if i > roi and line.startswith("SSH ") and "sourcetv_matches.json" in line]
         assert ssh_reads and max(ssh_reads) < ssh_transaction < transaction
     else:
         assert not e.ops(("SSH ",))
-    base = subprocess.run(
-        ["git", "-C", str(REPO), "show", f"3de5a5af:{REBUILD_REL}"],
-        capture_output=True, check=True,
-    ).stdout
+    # The transaction text reaches `bash -s` byte for byte as the script's own heredoc
+    # (the rebase-timeout rewrite of 08.10.2026 changed the text since 3de5a5af, so the
+    # pin is the script under test, not that old revision).
+    base = _scripts_text(REBUILD_REL).encode("utf-8")
     base_stdin = base.split(b"<<'ELO_REBASE_REMOTE'\n", 1)[1].split(b"ELO_REBASE_REMOTE\n", 1)[0]
     assert transaction_stdin.read_bytes() == base_stdin
-    assert e.ops(("BASH-S",)) == [f"BASH-S -- 1 {hashlib.sha1(base_stdin).hexdigest()}"]
+    assert e.ops(("BASH-S",)) == [f"BASH-S -- 1 {REBASE_TIMEOUT_DEFAULT} {hashlib.sha1(base_stdin).hexdigest()}"]
     stop = events.index("SYSTEMCTL stop cyberscore.service")
     if clears:
         assert events.index("RESTART-GATE-SLEEP") < transaction < stop
@@ -923,3 +999,166 @@ def test_chain_gate_parent_signal_waits_for_shadow_rebuild(make_env):
         # Let the bounded stub finish even when running against an old script.
         process.wait(timeout=5)
         time.sleep(0.8)
+
+
+# ------------------------------------------------------------- ELO rebase transaction
+#
+# Question: can the nightly ELO rebase keep prod cyberscore stopped for hours?
+# 08.10.2026 it did (04:18-10:21 MSK): the rebase ran inside the chain unit's cgroup
+# (MemoryHigh 7.5G, no swap) and was throttled 6 h; nothing bounded it. Two guards:
+# (A) local mode runs the transaction in its own systemd scope, (B) the rebase runs
+# under `timeout` and a failure with untouched runtime ELO files restarts prod.
+# All assertions are at the delivery boundary: the systemctl call sequence, the
+# map_id_check file, the exit code and the line the admin chat receives.
+
+RUNTIME_ELO = ("runtime/live_elo_model_state.json", "runtime/live_elo_progress.json")
+
+
+def _rebase_env(make_env, mode="local", **kw):
+    e = make_env(kv3=False, target=TARGET, mode=mode, **kw)
+    _write(e.prod / "venv/bin/python3", PRODPY_REBASE_STUB, exe=True)
+    for rel in RUNTIME_ELO:
+        _write(e.prod / rel, f"{rel}-v1\n")
+    return e
+
+
+def _run_rebase(e, outcome, **extra):
+    env = {"STUB_REBASE": outcome, "PRO_CHAIN_RESTART_WAIT_SECONDS": "0"}
+    env.update(extra)
+    r = e.run(REBUILD_REL, extra=env)
+    log = e.log.read_text() if e.log.exists() else ""
+    return r, log
+
+
+def _map_id_check(e) -> bytes:
+    return (e.state / "ingame/map_id_check.txt").read_bytes()
+
+
+def _prod_snapshot(e) -> bytes:
+    return (e.prod / "ELO/output/live_team_elo_snapshot.json").read_bytes()
+
+
+def test_local_transaction_runs_in_its_own_systemd_scope(make_env):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    events = e.events_lines()
+    # availability probe first, then the real run with no memory throttle and no swap cap
+    scope = [l for l in events if l.startswith("SYSTEMD-RUN ")]
+    assert scope == [
+        "SYSTEMD-RUN --scope --quiet --collect true",
+        "SYSTEMD-RUN --scope --quiet --collect -p MemoryHigh=infinity -p MemorySwapMax=infinity "
+        f"bash -s -- 1 {REBASE_TIMEOUT_DEFAULT}",
+    ]
+    # the transaction itself ran inside that scope, after it was created
+    transaction = next(i for i, l in enumerate(events) if l.startswith("BASH-S"))
+    assert events.index(scope[1]) < transaction
+    assert events[transaction + 1] == "SCOPE-ENV 1"
+    assert "ВНИМАНИЕ: systemd-run" not in log
+    # rebase went through timeout with the kill-after grace and the unchanged argv
+    assert (f"TIMEOUT -k 60 {REBASE_TIMEOUT_DEFAULT} venv/bin/python3 ELO/rebase_runtime_model_state.py "
+            "--snapshot ELO/output/live_team_elo_snapshot.json.tmp") in events
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                     "SYSTEMCTL start cyberscore.service",
+                                     "SYSTEMCTL is-active cyberscore.service"]
+    assert _map_id_check(e) == b""
+
+
+def test_remote_transaction_does_not_use_systemd_run(make_env):
+    e = _rebase_env(make_env, mode="remote")
+    r, log = _run_rebase(e, "ok")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert not e.ops(("SYSTEMD-RUN",))
+    assert f"SSH bash -s -- 1 {REBASE_TIMEOUT_DEFAULT}" in e.events_lines()
+
+
+def test_local_transaction_without_scope_falls_back_with_a_warning(make_env):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok", STUB_SYSTEMD_RUN_FAIL="1")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert "ВНИМАНИЕ: systemd-run --scope недоступен" in log
+    events = e.events_lines()
+    assert [l for l in events if l.startswith("SYSTEMD-RUN ")] == [
+        "SYSTEMD-RUN --scope --quiet --collect true"]   # only the failed probe
+    transaction = next(i for i, l in enumerate(events) if l.startswith("BASH-S"))
+    assert events[transaction + 1] == "SCOPE-ENV 0"
+    assert e.ops(("SYSTEMCTL",))[-1] == "SYSTEMCTL is-active cyberscore.service"
+
+
+def test_rebase_timeout_is_passed_as_a_positional_argument(make_env):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "ok", PRO_CHAIN_REBASE_TIMEOUT_SECONDS="777")
+    assert r.returncode == 0, r.stdout + r.stderr + log
+    assert any(l.startswith("TIMEOUT -k 60 777 venv/bin/python3 ELO/rebase_runtime_model_state.py")
+               for l in e.events_lines())
+    assert any(l.startswith("BASH-S -- 1 777 ") for l in e.events_lines())
+
+
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("outcome,rc", [("hang", 124), ("kill-clean", 137), ("rollback-clean", 2)])
+def test_rebase_failure_with_untouched_runtime_files_brings_prod_back(make_env, mode, outcome, rc):
+    e = _rebase_env(make_env, mode=mode)
+    before = {rel: (e.prod / rel).read_bytes() for rel in RUNTIME_ELO}
+    snapshot_before = _prod_snapshot(e)
+    r, log = _run_rebase(e, outcome, PRO_CHAIN_REBASE_TIMEOUT_SECONDS="1")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    # prod stopped, rebase attempted, prod started again on the old snapshot; never "active" polled
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                     "SYSTEMCTL start cyberscore.service"]
+    assert _map_id_check(e) == b"", "map_id_check must be cleared before the start"
+    assert {rel: (e.prod / rel).read_bytes() for rel in RUNTIME_ELO} == before
+    assert _prod_snapshot(e) == snapshot_before, "a failed rebase must not install the new snapshot"
+    assert not e.ops(("PRODPY ELO/convert_state_to_delta.py", "PRODPY ELO/build_state_arrays.py"))
+    err = [l for l in log.splitlines() if l.startswith("ОШИБКА: перебазировка ELO прервана")]
+    assert len(err) == 1, log
+    assert f"rc={rc}" in err[0] and "лимит 1 с" in err[0]
+    assert "runtime ELO не изменён, прод поднят на прежнем снимке" in err[0]
+
+
+@pytest.mark.parametrize("touched", ["kill-state", "kill-progress", "kill-delta"])
+def test_rebase_killed_after_touching_runtime_files_leaves_prod_stopped(make_env, touched):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, touched)
+    assert r.returncode == 137, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service"], "prod must stay stopped"
+    assert _map_id_check(e) == b"old-map\n", "map_id_check must not be touched"
+    assert _prod_snapshot(e) == OLD_ARTIFACT
+    assert "ОШИБКА: целостность runtime ELO не подтверждена (rc=137" in log
+    assert "оставлен остановленным" in log
+    assert "прод поднят" not in log
+
+
+def test_rebase_rejected_with_rc_1_clears_map_id_check_and_restarts(make_env):
+    e = _rebase_env(make_env)
+    r, log = _run_rebase(e, "reject")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert e.ops(("SYSTEMCTL",)) == ["SYSTEMCTL stop cyberscore.service",
+                                     "SYSTEMCTL start cyberscore.service"]
+    assert _map_id_check(e) == b""
+    assert "ОШИБКА: перебазировка ELO отклонена; новый снимок не установлен" in log
+    assert "прервана" not in log
+    assert _prod_snapshot(e) == OLD_ARTIFACT
+
+
+def test_transaction_refuses_to_stop_prod_without_timeout_binary(make_env):
+    e = _rebase_env(make_env)
+    (e.stubs / "timeout").unlink()   # and hide a host `timeout` (serv1 has coreutils) via PATH
+    r, log = _run_rebase(e, "ok", PATH=f"{e.stubs}:{_path_without_timeout(e)}")
+    assert r.returncode == 1, r.stdout + r.stderr + log
+    assert not e.ops(("SYSTEMCTL",)), "prod must not be stopped when the rebase cannot be bounded"
+    assert _map_id_check(e) == b"old-map\n"
+    assert "ОШИБКА: нет команды timeout" in log
+
+
+def _path_without_timeout(e) -> str:
+    """A PATH of symlinks to /usr/bin:/bin minus `timeout`/`gtimeout` (serv1 has coreutils there)."""
+    shim = e.base / "path_no_timeout"
+    shim.mkdir(exist_ok=True)
+    for d in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+        for p in Path(d).iterdir():
+            if p.name in ("timeout", "gtimeout", "systemd-run"):
+                continue
+            link = shim / p.name
+            if not link.exists() and not link.is_symlink():
+                link.symlink_to(p)
+    return str(shim)
