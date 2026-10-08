@@ -12639,21 +12639,26 @@ def _ml_dispatch_verdict_from_pair(pair: Any):
     return _md.ModelVerdict(side, confidence)
 
 
-def _ml_dispatch_compose_message(header: str, body_text: Any, model_line: str = "") -> str:
+def _ml_dispatch_compose_message(header: str, body_text: Any, model_line: str = "",
+                                 floor_line: str = "") -> str:
     """Заголовок ml_dispatch поверх ТОГО ЖЕ тела карты — приём из
     `_build_prematch_model_bet_message`: переписывается только первая строка.
+    ``floor_line`` (E-359, только kills_panel_window) встаёт сразу под заголовком,
+    как пол WIN; это подсказка цены, а не блок.
     """
     body = str(body_text or "").strip()
     if not body:
-        return header
+        return f"{header}\n{floor_line}" if floor_line else header
     lines = body.splitlines()
     if lines and lines[0].startswith("СТАВКА НА "):
         lines[0] = header
     else:
         lines.insert(0, header)
+    if floor_line:
+        lines.insert(1, floor_line)
     text = "\n".join(lines)
     if model_line and model_line.strip() and model_line.strip() not in text:
-        lines.insert(1, model_line.rstrip("\n"))
+        lines.insert(2 if floor_line else 1, model_line.rstrip("\n"))
         text = "\n".join(lines)
     return text
 
@@ -12760,13 +12765,18 @@ def _ml_dispatch_deliver_decision(
             kills_window_label=window_label,
         )
         panel_line = ""
+        floor_line = ""
         if decision.rule == "kills_panel_window":
+            # E-359: informational break-even price (no block, no price check).
+            if getattr(decision, "floor_informational", False) and decision.min_odds is not None:
+                floor_line = f"Ставить от кэфа {float(decision.min_odds):.2f}"
             # Owner decision 05.10.2026: say which model this window bet rests on
             # (the other kills_window rules keep their text unchanged).
             panel_line = (f"🤖 Ранние килы {window_label.replace('_', '-')} по панели ML: "
                           f"{decision.target_team} ({decision.target_side}) "
                           f"{decision.expected_wr * 100:.0f}%")
-        message_text = _ml_dispatch_compose_message(header, full_message_text, panel_line)
+        message_text = _ml_dispatch_compose_message(
+            header, full_message_text, panel_line, floor_line)
     else:  # kills_total
         header = _format_signal_header(
             stake_team_name=decision.target_team,
@@ -49955,6 +49965,9 @@ if __name__ == "__main__":
         f" panel_kills={'on' if _dispatch_startup_cfg.panel_kills_enabled else 'off'}"
         f"/{_dispatch_startup_cfg.panel_kills_min_conf}"
         f"/{','.join(_dispatch_startup_cfg.panel_kills_windows)}"
+        f" kills_floor="
+        f"{_dispatch_startup_cfg.kills_floor_margin if _dispatch_startup_cfg.kills_floor_enabled else 'off'}"
+        f"{'(default)' if _dispatch_startup_cfg.kills_floor_enabled and _dispatch_startup_cfg.kills_floor_margin_defaulted else ''}"
         f" panel_tier1={'on' if PANEL_KILLS_REQUIRE_TIER1 else 'off'}"
         f" lane_kills={'on' if _dispatch_startup_cfg.lane_kills_enabled else 'off'}"
         f" underdog_kills_window={'on' if _dispatch_startup_cfg.underdog_kills_window_enabled else 'off'}"

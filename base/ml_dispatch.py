@@ -491,6 +491,15 @@ class Config:
     # ``from_env`` defaults so a hand-built ``Config()`` is the production config.
     lane_kills_enabled: bool = False
     lane_kills_windows: Tuple[str, ...] = ("5_15",)
+    # Owner objective 08.10.2026 (E-359, card ingame-iu1v): informational price floor
+    # ``1/(conf - margin)`` on kills_panel_window bets only (panel overconfidence
+    # measured 3.9 pp). Never a block; ``ML_DISPATCH_KILLS_FLOOR=0`` restores no line.
+    # Dataclass defaults == ``from_env`` defaults (production config).
+    kills_floor_enabled: bool = True
+    kills_floor_margin: float = 0.04
+    # True when ML_DISPATCH_KILLS_MIN_ODDS_MARGIN was set to an unusable value
+    # (not finite, < 0 or >= 1) and the default 0.04 was used instead.
+    kills_floor_margin_defaulted: bool = False
     panel_kills_enabled: bool = True
     panel_kills_min_conf: float = 0.60
     panel_kills_windows: Tuple[str, ...] = ("5_15",)
@@ -511,6 +520,19 @@ class Config:
                 return float(env.get(name, default))
             except (TypeError, ValueError):
                 return float(default)
+
+        kills_floor_margin = 0.04
+        kills_floor_margin_defaulted = False
+        raw_kills_margin = env.get("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN")
+        if raw_kills_margin is not None:
+            try:
+                parsed_margin = float(raw_kills_margin)
+            except (TypeError, ValueError):
+                parsed_margin = float("nan")
+            if math.isfinite(parsed_margin) and 0.0 <= parsed_margin < 1.0:
+                kills_floor_margin = parsed_margin
+            else:
+                kills_floor_margin_defaulted = True
 
         prematch_enabled = env.get("PREMATCH_ML_ENABLED", "0") == "1"
         default_models = DEFAULT_WIN_MODELS + (("prematch",) if prematch_enabled else ())
@@ -576,6 +598,11 @@ class Config:
                     env.get("ML_DISPATCH_LANE_KILLS_WINDOWS", "5_15")
                 ).split(",") if label.strip()
             ),
+            kills_floor_enabled=str(
+                env.get("ML_DISPATCH_KILLS_FLOOR", "1")
+            ).strip().lower() not in ("0", "false", "off"),
+            kills_floor_margin=kills_floor_margin,
+            kills_floor_margin_defaulted=kills_floor_margin_defaulted,
             panel_kills_enabled=str(
                 env.get("ML_DISPATCH_PANEL_KILLS", "1")
             ).strip().lower() not in ("0", "false", "off"),
@@ -618,6 +645,9 @@ class Decision:
     # Raw max model confidence before the E-350 floor calibration; ``None``
     # when not tracked (kills paths, hand-built decisions).
     expected_wr_raw: Optional[float] = None
+    # E-359: True when ``min_odds`` is an informational floor the delivery prints
+    # ("Ставить от кэфа X") but never enforces (kills_panel_window only).
+    floor_informational: bool = False
 
 
 @dataclass
@@ -718,8 +748,9 @@ def _detect_late_conflict(ctx: Ctx, cfg: Config) -> Optional[LateConflict]:
     )
 
 
-def _min_odds(expected_wr: float, cfg: Config) -> float:
-    denom = max(expected_wr - cfg.min_odds_margin, 1e-6)
+def _min_odds(expected_wr: float, cfg: Config, margin: Optional[float] = None) -> float:
+    margin = cfg.min_odds_margin if margin is None else margin
+    denom = max(expected_wr - margin, 1e-6)
     return round(1.0 / denom, 2)
 
 
@@ -1527,13 +1558,19 @@ def _evaluate_kills_panel(
         item for item in skipped
         if not (item.market == "kills_window" and (item.side is None or item.side == side))
     ]
+    # E-359: informational floor on the measured panel calibration (never the WIN
+    # E-350 calibration, never a block). conf - margin <= 0 -> no floor.
+    kills_floor = (cfg.kills_floor_enabled
+                   and confidence - cfg.kills_floor_margin > 0)
     decisions = decisions + [Decision(
         market="kills_window", target_side=side, target_team=ctx.team_name(side),
         rule=RULE_KILLS_PANEL_WINDOW, models_for=["panel_w_5_15"],
         models_against=[], timing="now", expected_wr=confidence,
-        min_odds=_min_odds(confidence, cfg),
+        min_odds=_min_odds(confidence, cfg,
+                           cfg.kills_floor_margin if kills_floor else None),
         reasons=[f"panel_w_5_15={confidence:.3f} >= {cfg.panel_kills_min_conf} for {side}",
                  f"window={label}"],
+        floor_informational=kills_floor,
     )]
     return decisions, skipped
 

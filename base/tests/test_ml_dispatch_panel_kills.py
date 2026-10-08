@@ -67,6 +67,7 @@ PANEL_ENVS = (
     "ML_DISPATCH_PANEL_KILLS_WINDOWS", "ML_DISPATCH_LANE_KILLS",
     "ML_DISPATCH_LANE_KILLS_WINDOWS", "ML_DISPATCH_KILLS_WINDOW_ONE_SIDE",
     "PREMATCH_ML_ENABLED", "DISPATCH_MODE",
+    "ML_DISPATCH_KILLS_FLOOR", "ML_DISPATCH_KILLS_MIN_ODDS_MARGIN",
 )
 BLOCK_KEYS = ("early_output", "early_end_output", "mid_output", "post_lane_output")
 
@@ -204,8 +205,10 @@ def test_prod_off_path_panel_entry_becomes_one_5_15_decision(monkeypatch, row):
     assert decision.timing == "now"
     assert "window=5_15" in decision.reasons
     assert decision.expected_wr == pytest.approx(confidence)
-    # Plain price floor from the kills probability, no WIN calibration applied.
-    assert decision.min_odds == md._min_odds(confidence, md.Config.from_env())
+    # E-359: informational floor 1/(conf - 0.04) from the kills probability, no WIN
+    # calibration applied.
+    assert decision.min_odds == round(1.0 / (confidence - 0.04), 2)
+    assert decision.floor_informational is True
     assert md.evaluate(_ctx(pair), md.Config.from_env()) == result  # idempotent
 
 
@@ -698,3 +701,109 @@ def test_tick_on_path_same_index_failed_panel_does_not_read_another_maps_verdict
         win_model_veto._LAST_FILL.clear()
         win_model_veto._LAST_FILL.update(saved)
         win_model_veto._FILL_HISTORY.pop(33.25, None)
+
+
+# ---------------------------------------------------------------- E-359 informational floor
+# Card ingame-iu1v: the outgoing Telegram text of a kills_panel_window bet carries
+# "Ставить от кэфа X" with X = round(1/(conf - 0.04), 2), right under the header like
+# the WIN message. Informational only: no block, no price check for kills.
+
+def _floor_text(args):
+    return args[1]
+
+
+def test_tick_panel_bet_text_carries_the_floor_line_under_the_header(monkeypatch):
+    blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
+    delivered, logged = _drive_tick(monkeypatch, blocks)
+    (args, kwargs), = _window_calls(delivered)
+    lines = _floor_text(args).splitlines()
+    expected = round(1.0 / (0.724205 - 0.04), 2)          # B_DIRE confidence 0.724205
+    assert expected == 1.46
+    assert lines[1] == "Ставить от кэфа 1.46"
+    assert "по панели ML: Beta (Dire) 72%" in lines[2]
+    calibration = kwargs["stake_multiplier_context"]["calibration"]
+    assert calibration["min_odds"] == pytest.approx(expected)
+    assert logged[0]["decisions"][0]["min_odds"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("row,floor", zip(TIER1_TICKS, ["1.78", "1.70"]),
+                         ids=["DIREBORN_Xipto", "CloudDawning_Yangon"])
+def test_captured_tick_text_carries_the_floor_line(monkeypatch, row, floor):
+    conf = row["verdicts"]["panel_w_5_15"]["confidence"]
+    assert f"{1.0 / (conf - 0.04):.2f}" == floor
+    delivered, _ = _drive_tick(monkeypatch, None, tier1=False, captured=row)
+    (args, _kwargs), = _window_calls(delivered)
+    lines = args[1].splitlines()
+    assert lines[1] == f"Ставить от кэфа {floor}"
+    assert "по панели ML" in lines[2]
+
+
+def test_floor_off_env_gives_todays_text_and_floor(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_KILLS_FLOOR", "0")
+    blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
+    delivered, logged = _drive_tick(monkeypatch, blocks)
+    (args, kwargs), = _window_calls(delivered)
+    assert "Ставить от кэфа" not in args[1]
+    assert "по панели ML: Beta (Dire) 72%" in args[1].splitlines()[1]
+    # exactly today's decision: the unshown 0.12-margin floor is unchanged.
+    assert kwargs["stake_multiplier_context"]["calibration"]["min_odds"] == \
+        md._min_odds(0.724205, md.Config.from_env())
+
+
+def test_margin_env_moves_the_floor(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN", "0.10")
+    blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
+    delivered, _ = _drive_tick(monkeypatch, blocks)
+    (args, _kwargs), = _window_calls(delivered)
+    assert args[1].splitlines()[1] == f"Ставить от кэфа {1.0 / (0.724205 - 0.10):.2f}"
+
+
+def test_no_floor_when_margin_swallows_the_confidence(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN", "0.80")
+    pair = _prod_pair(monkeypatch, B_DIRE)
+    decision, = _windows(md.evaluate(_ctx(pair), md.Config.from_env()))
+    assert decision.floor_informational is False
+    assert decision.min_odds == md._min_odds(0.724205, md.Config.from_env())
+
+
+def test_kills_floor_is_never_a_delivery_block(monkeypatch):
+    """Even with a Winline price far below the printed floor, no ml_min_odds_below_floor."""
+    blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
+    delivered, _ = _drive_tick(monkeypatch, blocks)
+    (args, kwargs), = _window_calls(delivered)
+    monkeypatch.setattr(C, "_ml_dispatch_fresh_winline_price", lambda *a, **k: 1.05)
+    assert C._ml_dispatch_min_odds_reject_for_delivery(
+        args[1], kwargs["stake_multiplier_context"], match_key="m", map_num=1) is None
+
+
+def test_other_kills_window_rules_get_no_floor(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_LANE_KILLS", "1")
+    decision, = _windows(md.evaluate(_lane_ctx("fires_both_early_star"), md.Config.from_env()))
+    assert decision.rule == "kills_lane_early_window"
+    assert decision.floor_informational is False
+
+
+def test_win_floor_margin_is_unchanged_by_the_kills_margin(monkeypatch):
+    monkeypatch.setenv("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN", "0.01")
+    cfg = md.Config.from_env()
+    assert cfg.min_odds_margin == 0.12
+    assert md._min_odds(0.74, cfg) == round(1.0 / (0.74 - 0.12), 2)
+
+
+@pytest.mark.parametrize("raw", ["-1", "-inf", "nan", "inf", "abc", "", "1.5", "1"])
+def test_unusable_margin_env_falls_back_to_the_default_margin(monkeypatch, raw):
+    """Negative / non-finite / garbage / >= 1 margins use 0.04 (not 'no line')."""
+    monkeypatch.setenv("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN", raw)
+    cfg = md.Config.from_env()
+    assert cfg.kills_floor_margin == 0.04 and cfg.kills_floor_margin_defaulted is True
+    blocks = _produce_blocks(monkeypatch, _verdicts(B_DIRE))
+    delivered, _ = _drive_tick(monkeypatch, blocks)
+    (args, _kwargs), = _window_calls(delivered)
+    assert args[1].splitlines()[1] == "Ставить от кэфа 1.46"
+
+
+def test_valid_margin_env_is_not_flagged_as_defaulted(monkeypatch):
+    for raw, flagged in (("0", False), ("0.10", False)):
+        monkeypatch.setenv("ML_DISPATCH_KILLS_MIN_ODDS_MARGIN", raw)
+        cfg = md.Config.from_env()
+        assert cfg.kills_floor_margin == float(raw) and cfg.kills_floor_margin_defaulted is flagged

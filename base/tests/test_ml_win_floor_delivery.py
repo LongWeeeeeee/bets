@@ -15,6 +15,16 @@ from base import cyberscore_try as C
 FIXTURE = Path(__file__).parent / "fixtures" / "winline_yangon_yache_map3_20260915.json"
 
 
+@pytest.fixture(autouse=True)
+def _team_denylist_isolated(monkeypatch):
+    """The captured 15.09 fixture team YANGON GALACTICOS has been on the team denylist
+    since 29.09 (d34ae96e), which rejects every delivery here before the WIN floor is
+    reached. The denylist has no env flag, so only its name lookup is stubbed (the
+    gate itself, ``_team_denylist_reject_for_delivery``, still runs); this file tests
+    the WIN price floor, not the denylist (covered by its own tests)."""
+    monkeypatch.setattr(C, "_is_denylisted_bet_team_name", lambda _name: False)
+
+
 @pytest.fixture
 def quote(monkeypatch):
     first = json.loads(FIXTURE.read_text())["messages"][0]

@@ -419,7 +419,7 @@ conflict) не затрагиваются.
 панельная модель `w_5_15` с confidence ≥ 0,60 (`ML_DISPATCH_PANEL_KILLS_MIN_CONF`)
 даёт один `kills_window` (`rule="kills_panel_window"`) на свою сторону в первом
 открытом окне из `ML_DISPATCH_PANEL_KILLS_WINDOWS` (по умолчанию `5_15`), без
-ELO/Late/All/kills30 и без пола по кэфу. Вердикт при `PREMATCH_ML_ENABLED=0`
+ELO/Late/All/kills30 и без блока по кэфу (с 08.10.2026, E-359, текст получает информационную строку «Ставить от кэфа 1/(conf−0,04)»; откат `ML_DISPATCH_KILLS_FLOOR=0`). Вердикт при `PREMATCH_ML_ENABLED=0`
 (прод) приходит в `details["panel_w_5_15"]` из `_off_auxiliary_panels` тем же
 каналом, что `kills30`; сбой панели = `None` = ставки нет. Живое попадание
 64,3 % n=196, офлайн-проверки нет. Откат: `ML_DISPATCH_PANEL_KILLS=0`.
