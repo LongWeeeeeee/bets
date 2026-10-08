@@ -274,7 +274,15 @@ def _build_tier_team_ids():
     return ids
 
 
-class StratzAuthError(RuntimeError):
+class StratzBatchError(RuntimeError):
+    """Неполный pro-сбор; успешно опрошенные команды сохраняются при отказе."""
+
+    def __init__(self, message, completed_ids=()):
+        super().__init__(message)
+        self.completed_ids = set(completed_ids)
+
+
+class StratzAuthError(StratzBatchError):
     """Все ключи пула не принимаются Stratz (истекли или отозваны); повтор бессмыслен."""
 
 
@@ -676,7 +684,7 @@ class ProxyAPIPool:
                         retry_count += 1
 
                         # Проверяем, все ли пары заблокированы
-                        if all(t.is_rate_limited for t in self.trackers):
+                        if all(t.is_rate_limited for t in self.trackers if not t.auth_dead):
                             await self._sleep_until_first_free()
                             retry_count = 0  # Сбрасываем счетчик после сна
 
@@ -1078,6 +1086,7 @@ async def get_maps_new(ids, mkdir,
     ids_set = set(int(id) for id in ids)
     maps_counter = 0
     failed_batches = 0
+    auth_error = None
     run_map_ids = set()
     for map_id in output_data.keys():
         try:
@@ -1132,6 +1141,7 @@ async def get_maps_new(ids, mkdir,
 
         async def _phase_results():
             """Единый поток результатов; pub выдаёт страницу, pro — старый батч."""
+            nonlocal auth_error
             if not pro:
                 async for completed_ids, page_matches, page_player_ids, failed_ids in iter_pub_pages(
                         remaining_ids_list, skip=skip, batch_size=batch_size,
@@ -1153,10 +1163,14 @@ async def get_maps_new(ids, mkdir,
                 ], return_exceptions=True)
                 for batch, result in zip(batch_group, results):
                     if isinstance(result, BaseException):
+                        if isinstance(result, StratzAuthError):
+                            auth_error = result
                         yield set(), [], set(), set(batch)
                     else:
                         matches, page_player_ids = result
                         yield set(batch), matches, page_player_ids, set()
+                if auth_error is not None:
+                    break  # Новые группы не опрашиваем: живых ключей уже нет.
 
         async for completed_ids, matches, new_player_ids, failed_ids in _phase_results():
             if failed_ids:
@@ -1325,13 +1339,13 @@ async def get_maps_new(ids, mkdir,
     elif not skip_auxiliary_files and not pro:
         print("⚠️ pub crawl завершён с нескачанными страницами; last_crawl_completed_utc не обновлён")
 
-    incomplete_pub_crawl = not pro and failed_batches > 0
-    # Partial pub pages are safely checkpointed above, but their crawl cursor is
-    # not complete. Keep the state and make the caller observe the failure.
-    if not incomplete_pub_crawl:
+    incomplete_crawl = failed_batches > 0
+    incomplete_pub_crawl = not pro and incomplete_crawl
+    # Partial results are checkpointed above; retain state on either crawl failure.
+    if not incomplete_crawl:
         clear_get_maps_state(maps_to_save)
 
-    print("\n⚠️ Обработка pub не завершена: часть игроков будет повторена" if incomplete_pub_crawl
+    print("\n⚠️ Обработка не завершена: часть ID будет повторена" if incomplete_crawl
           else "\n✅ Обработка завершена!")
     print(f"🎮 Собрано валидных матчей: {maps_counter}")
     print(f"⏭️  Пропущено pub-страниц: {failed_batches}")
@@ -1351,6 +1365,11 @@ async def get_maps_new(ids, mkdir,
 
     if merged_files:
         print(f"✅ Временные файлы объединены: {len(merged_files)} файлов")
+    if pro and incomplete_crawl:
+        completed_ids = processed_ids & ids_set
+        if auth_error is not None:
+            raise StratzAuthError(str(auth_error), completed_ids) from auth_error
+        raise StratzBatchError(f"pro crawl incomplete: {failed_batches} batch(es) failed", completed_ids)
     if incomplete_pub_crawl:
         raise RuntimeError(f"pub crawl incomplete: {failed_batches} page batch(es) failed")
     return {
@@ -3831,9 +3850,16 @@ def get_pros(max_waves=None):
             print(f"⏹️ достигнут предел волн ({max_waves}), в очереди осталось {len(queue):,}")
             break
         print(f"\n🌊 волна {wave}: опрашиваю {len(queue):,} команд", flush=True)
-        asyncio.run(get_maps_new(ids=list(queue), pro=True,
-                                 mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
-                                 batch_concurrency=batch_concurrency))
+        try:
+            asyncio.run(get_maps_new(ids=list(queue), pro=True,
+                                     mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
+                                     batch_concurrency=batch_concurrency))
+        except Exception as exc:
+            if isinstance(exc, StratzBatchError):
+                visited |= exc.completed_ids
+                _save_visited_teams(visited_path, visited)
+            print(f"ОШИБКА: добор про-корпуса не завершён: {exc}", flush=True)
+            raise  # topup обязан завершиться с ненулевым rc, а не с 0 карт.
         visited |= set(queue)
         _save_visited_teams(visited_path, visited)
 
@@ -4088,20 +4114,20 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
     queue = asyncio.Queue()
     for b in batches:
         queue.put_nowait(b)
+    next_request_at = [0.0] * len(pools)
 
     async def worker(pool_i):
         pool = pools[pool_i]
-        next_at = 0.0
         misses = 0        # подряд идущие пустые ответы -> растущая пауза
         while True:
             try:
                 batch = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
-            delay = next_at - time.time()
+            delay = next_request_at[pool_i] - time.time()
             if delay > 0:
                 await asyncio.sleep(delay)
-            next_at = time.time() + float(pace)
+            next_request_at[pool_i] = time.time() + float(pace)
             try:
                 data = await pool.make_request(
                     url='https://api.stratz.com/graphql',
@@ -4109,6 +4135,10 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                     headers={"Content-Type": "application/json", "Accept": "application/json",
                              "User-Agent": "STRATZ_API"},
                 )
+            except StratzAuthError:
+                stats['err'] += 1
+                queue.put_nowait(batch)
+                return  # make_request уже исключил пару; живые работники повторят батч.
             except Exception as exc:
                 stats['err'] += 1
                 if show_prints and stats['err'] % 50 == 0:
@@ -4140,8 +4170,16 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                       f"осталось {queue.qsize():,}, возвратов {stats['requeued']}, "
                       f"ошибок {stats['err']}", flush=True)
 
-    await asyncio.gather(*(worker(i) for i in range(len(pools))))
-    fh.close()
+    try:
+        while not queue.empty():
+            live_pools = [i for i, pool in enumerate(pools)
+                          if any(not t.auth_dead for t in pool.trackers)]
+            if not live_pools:
+                raise StratzAuthError("Stratz не принял ни один ключ playback-пулов")
+            # Живой работник мог завершиться до возврата пачки мёртвой парой.
+            await asyncio.gather(*(worker(i) for i in live_pools))
+    finally:
+        fh.close()
     if show_prints:
         print(f"✅ playback: собрано {stats['ok']:,} карт, без разбора {stats['unparsed']:,}, "
               f"ошибок {stats['err']}, файл {path}", flush=True)
@@ -4184,20 +4222,20 @@ async def get_batched(ids, out_dir, body, compact, batch=8, pace=2.7,
     queue = asyncio.Queue()
     for i in range(0, len(todo), batch):
         queue.put_nowait(todo[i:i + batch])
+    next_request_at = [0.0] * len(pools)
 
     async def worker(pool_i):
         pool = pools[pool_i]
-        next_at = 0.0
         misses = 0
         while True:
             try:
                 chunk = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
-            delay = next_at - time.time()
+            delay = next_request_at[pool_i] - time.time()
             if delay > 0:
                 await asyncio.sleep(delay)
-            next_at = time.time() + float(pace)
+            next_request_at[pool_i] = time.time() + float(pace)
             q = "query { " + " ".join(
                 f"m{k}: match(id: {mid}) {body}" for k, mid in enumerate(chunk)) + " }"
             try:
@@ -4208,6 +4246,10 @@ async def get_batched(ids, out_dir, body, compact, batch=8, pace=2.7,
                              "Accept": "application/json",
                              "User-Agent": "STRATZ_API"},
                 )
+            except StratzAuthError:
+                stats['err'] += 1
+                queue.put_nowait(chunk)
+                return
             except Exception:
                 stats['err'] += 1
                 data = None
@@ -4233,8 +4275,15 @@ async def get_batched(ids, out_dir, body, compact, batch=8, pace=2.7,
                       f"осталось пачек {queue.qsize():,}, ошибок {stats['err']}",
                       flush=True)
 
-    await asyncio.gather(*(worker(i) for i in range(len(pools))))
-    fh.close()
+    try:
+        while not queue.empty():
+            live_pools = [i for i, pool in enumerate(pools)
+                          if any(not t.auth_dead for t in pool.trackers)]
+            if not live_pools:
+                raise StratzAuthError("Stratz не принял ни один ключ батч-пулов")
+            await asyncio.gather(*(worker(i) for i in live_pools))
+    finally:
+        fh.close()
     if show_prints:
         print(f"✅ батч-сбор: {stats['ok']:,} карт за {stats['req']:,} запросов, "
               f"пусто {stats['empty']:,}, ошибок {stats['err']}\n   файл: {path}",
