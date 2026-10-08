@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Win-rate reconciliation for runtime/bet_dispatch_ledger.jsonl.
+"""Map-winner win-rate reconciliation for base/runtime/bet_dispatch_ledger.jsonl.
 
 Joins the sent-bet ledger (written by `_record_bet_dispatch_ledger` at the
 single delivery point `_deliver_and_persist_signal`, base/cyberscore_try.py)
 against real outcomes from `runtime/live_elo_progress.json`
 (`applied_maps[*].match_id`/`.radiant_win`); win-rate with a Wilson 95% CI,
-grouped by path/tier pair/side/month. Unmatched rows count as unknown, never
-dropped from "sent". Usage: reconcile_bet_ledger.py [--ledger P] [--progress P]
+grouped by path/market/tier pair/side/month. Kills markets are not scored;
+ml_dispatch rows without a market require --include-legacy-ml-dispatch.
+Unmatched map-winner rows count as unknown, never dropped from "sent".
+Usage: reconcile_bet_ledger.py [--ledger P] [--progress P]
+[--include-legacy-ml-dispatch]
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LEDGER = REPO_ROOT / "runtime" / "bet_dispatch_ledger.jsonl"
+DEFAULT_LEDGER = REPO_ROOT / "base" / "runtime" / "bet_dispatch_ledger.jsonl"
 DEFAULT_PROGRESS = REPO_ROOT / "runtime" / "live_elo_progress.json"
 
 def _load_ledger(path: Path) -> list[dict]:
@@ -104,13 +107,40 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     parser.add_argument("--progress", type=Path, default=DEFAULT_PROGRESS)
+    parser.add_argument(
+        "--include-legacy-ml-dispatch", action="store_true",
+        help="Score ml_dispatch rows without a market as map-winner bets (may include kills bets)",
+    )
     args = parser.parse_args()
     rows = _load_ledger(args.ledger)
     outcomes = _load_outcomes(args.progress)
     print(f"Ledger rows: {len(rows)} ({args.ledger}); known outcomes: {len(outcomes)} ({args.progress})")
+    map_winner_rows = []
+    not_map_winner = legacy_ml_dispatch = 0
+    for row in rows:
+        market = row.get("market")
+        if market is None and row.get("reason") == "ml_dispatch":
+            legacy_ml_dispatch += 1
+            if not args.include_legacy_ml_dispatch:
+                continue
+        elif market is not None and market != "win":
+            not_map_winner += 1
+            continue
+        elif market is None and any(tag in str(row.get("reason") or "") for tag in ("kills", "tempo_over")):
+            # Pre-ml kills / game-total paths (early_winner_kills_window_sent,
+            # star_signal_sent_now_kills_window_policy, star_signal_sent_now_kills_dual,
+            # tempo_over_fallback_sent in base/cyberscore_try.py) write no market;
+            # 0 such prod rows on 08.10.2026.
+            not_map_winner += 1
+            continue
+        map_winner_rows.append(row)
+    print(f"not map-winner: {not_map_winner}")
+    print(f"ml_dispatch rows without market (before 08.10.2026, may be kills bets): {legacy_ml_dispatch}")
+    rows = map_winner_rows
     if not rows:
         return
     _print_group("By path", rows, outcomes, lambda r: str(r.get("reason") or "unknown"))
+    _print_group("By market", rows, outcomes, lambda r: str(r.get("market") or "legacy"))
     _print_group("By tier pair", rows, outcomes, _tier_pair_key)
     _print_group("By side", rows, outcomes, lambda r: str(r.get("side") or "unknown"))
     _print_group("By month", rows, outcomes, _month_key)
