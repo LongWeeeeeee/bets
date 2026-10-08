@@ -110,6 +110,39 @@ def _isolate_live_elo_progress(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_live_elo_lock_state_and_pin(tmp_path, monkeypatch):
+    """Замок, рантайм-состояние живого ELO и пин снимка — как в бою, но не боевые.
+
+    Карточка ingame-gmoi (08.10.2026). Фикстура выше уводит только файл
+    прогресса; ещё три значения по умолчанию смотрели в настоящую копию кода, а
+    набор на serv1 по документированной команде шёл в /root/main:
+    `DEFAULT_RUNTIME_LOCK_PATH` — боевой flock `runtime/live_elo_state.lock`;
+    `DEFAULT_RUNTIME_MODEL_STATE_PATH` — `runtime/live_elo_model_state.json`
+    (734 МБ на Маке), дельта `LIVE_ELO_DELTA`; и прод живёт с `ELO_SNAPSHOT_PIN=1`, а тест без пина
+    считает перенесённый снимок устаревшим при любом более свежем json корпуса,
+    и `ensure_snapshot()` пересобирает его на местном корпусе.
+
+    Пути читаются на вызове (4a7036f7), поэтому достаточно атрибута модуля.
+    Своё имя у фикстуры обязательно: одноимённая в `base/tests/conftest.py`
+    перекрыла бы эту. Путь самого снимка (`DEFAULT_SNAPSHOT_PATH`) — значение
+    по умолчанию в сигнатурах, атрибутом его не увести; пин закрывает ту
+    пересборку, от которой он защищает прод. Тест:
+    `base/tests/test_conftest_elo_runtime_isolation.py`.
+    """
+    monkeypatch.setenv("ELO_SNAPSHOT_PIN", "1")
+    # Дельта живого рейтинга (`runtime/live_elo_delta.json`) читает env на вызове;
+    # пишется, только если её база совпала со снимком, — в /root/main совпадает.
+    monkeypatch.setenv("LIVE_ELO_DELTA", str(tmp_path / "live_elo_delta.json"))
+    for name, module in list(sys.modules.items()):
+        if name.rsplit(".", 1)[-1] == "live_team_strength":
+            monkeypatch.setattr(module, "DEFAULT_RUNTIME_LOCK_PATH",
+                                tmp_path / "live_elo_state.lock", raising=False)
+            monkeypatch.setattr(module, "DEFAULT_RUNTIME_MODEL_STATE_PATH",
+                                tmp_path / "live_elo_model_state.json",
+                                raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_prematch_eval_journal(tmp_path, monkeypatch):
     """Не даёт тестам писать в БОЕВОЙ журнал оценок предматчевой модели.
 
