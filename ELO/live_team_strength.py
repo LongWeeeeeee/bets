@@ -2857,7 +2857,7 @@ def build_snapshot(
 
 def load_live_snapshot(
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
-    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
+    runtime_model_state_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """Снимок с ПРИМЕШАННЫМ рантайм-состоянием — то, что нужно живому счёту.
 
@@ -2873,6 +2873,10 @@ def load_live_snapshot(
     `_MODEL_FROM_SNAPSHOT_CACHE` по состоянию, из которого построена. Второй
     разбор 366-мегабайтного файла здесь не происходит.
     """
+    if runtime_model_state_path is None:
+        # Resolved per call, not bound at import: a module-attribute patch (the
+        # test-suite isolation) must take effect, prod value is identical.
+        runtime_model_state_path = DEFAULT_RUNTIME_MODEL_STATE_PATH
     base = load_snapshot(snapshot_path)
     if base is None or not (_snapshot_replay_is_current(base) or _snapshot_is_k24_pre_a(base)):
         return None
@@ -3281,9 +3285,11 @@ def get_matchup_summary(
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
     data_dir: Path = DEFAULT_DATA_DIR,
     rebuild_if_missing: bool = True,
-    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
+    runtime_model_state_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """Serve the selected composition at the requested strict as-of instant."""
+    if runtime_model_state_path is None:
+        runtime_model_state_path = DEFAULT_RUNTIME_MODEL_STATE_PATH
     from ELO.models import a_lineup_summary, k24_lineup_summary
 
     # Without a supplied map start, the only honest query point is the next
@@ -3397,13 +3403,22 @@ def register_live_map_context(
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
     data_dir: Path = DEFAULT_DATA_DIR,
     rebuild_if_missing: bool = True,
-    progress_path: Path = DEFAULT_RUNTIME_PROGRESS_PATH,
-    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
-    runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
+    progress_path: Path | None = None,
+    runtime_model_state_path: Path | None = None,
+    runtime_lock_path: Path | None = None,
     winner_lookup: Any = None,
     score_duration_lookup: Any = None,
     observed_game_time: float | int | None = None,
 ) -> dict[str, Any] | None:
+    # Defaults are resolved per call, not bound at import: the test isolation
+    # patches these module attributes, and a bound default would keep pointing
+    # at the checkout's real runtime/ files (prod values are unchanged).
+    if progress_path is None:
+        progress_path = DEFAULT_RUNTIME_PROGRESS_PATH
+    if runtime_model_state_path is None:
+        runtime_model_state_path = DEFAULT_RUNTIME_MODEL_STATE_PATH
+    if runtime_lock_path is None:
+        runtime_lock_path = DEFAULT_RUNTIME_LOCK_PATH
     normalized_series_key = str(series_key or "").strip() or str(match_record.series_id or series_url or map_key)
     normalized_map_key = str(map_key or "").strip()
     if not normalized_series_key or not normalized_map_key:
@@ -3664,12 +3679,21 @@ def finalize_live_series_from_scores(
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
     data_dir: Path = DEFAULT_DATA_DIR,
     rebuild_if_missing: bool = True,
-    progress_path: Path = DEFAULT_RUNTIME_PROGRESS_PATH,
-    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
-    runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
+    progress_path: Path | None = None,
+    runtime_model_state_path: Path | None = None,
+    runtime_lock_path: Path | None = None,
     winner_lookup: Any = None,
     score_duration_lookup: Any = None,
 ) -> dict[str, Any] | None:
+    # Defaults are resolved per call, not bound at import: the test isolation
+    # patches these module attributes, and a bound default would keep pointing
+    # at the checkout's real runtime/ files (prod values are unchanged).
+    if progress_path is None:
+        progress_path = DEFAULT_RUNTIME_PROGRESS_PATH
+    if runtime_model_state_path is None:
+        runtime_model_state_path = DEFAULT_RUNTIME_MODEL_STATE_PATH
+    if runtime_lock_path is None:
+        runtime_lock_path = DEFAULT_RUNTIME_LOCK_PATH
     normalized_series_key = str(series_key or "").strip() or str(series_url or "").strip()
     if not normalized_series_key:
         return None
