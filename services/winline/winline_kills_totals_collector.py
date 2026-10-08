@@ -40,6 +40,13 @@ OPEN_EVENT_JS = """(id) => {
   target.click();
   return true;
 }"""
+OPEN_HERO_EVENT_JS = """() => {
+  const target = document.querySelector('ww-feature-event-live-center-dsk .fast-bets__all-markets');
+  if (!target) return false;
+  target.scrollIntoView({block: 'center'});
+  target.click();
+  return true;
+}"""
 EXPAND_JS = """() => {
   const labels = ['ещё', 'еще', 'показать все', 'все рынки', 'развернуть'];
   let n = 0;
@@ -90,6 +97,18 @@ FULL_MARKETS_JS = """() => /(^|\\n)Все(\\n|$)/.test(document.body.innerText |
 BODY_LENGTH_JS = """() => (document.body.innerText || '').length"""
 FULL_MARKETS_TIMEOUT_MS = 20000
 SETTLE_POLLS = 10
+
+
+def hero_event_id(html):
+    """First logo event ID inside the featured live block, if present."""
+    start = html.find("<ww-feature-event-live-center")
+    if start < 0:
+        return None
+    end = html.find("</ww-feature-event-live-center", start)
+    if end < 0:
+        return None
+    match = re.search(r"/api/cls/event/\d+/(\d+)", html[start:end])
+    return match.group(1) if match else None
 
 
 def wait_full_markets(page):
@@ -617,23 +636,58 @@ def _cycle(args, stats):
             selected = select_cards(cards, args.kinds, args.max_events)
             if not selected:
                 return 0
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
             with HistoryWriter(args.history) as writer:
                 for index, card in enumerate(selected):
+                    if not card["event_id"].isdigit():
+                        stats["events_missing"] = stats.get("events_missing", 0) + 1
+                        continue
                     # Initial listing is reusable; subsequent events need a fresh listing.
                     needed = 1 if index == 0 else 2
                     if loads.n + needed > loads.maximum:
                         break
                     if index:
                         listing()
+                        wait_started = time.monotonic()
+                        try:
+                            page.wait_for_selector("#eventId-%s" % card["event_id"], timeout=15000)
+                        except PlaywrightTimeoutError:
+                            pass
+                        finally:
+                            stats["card_wait_seconds_max"] = max(
+                                stats.get("card_wait_seconds_max", 0),
+                                int(round(time.monotonic() - wait_started)))
                     loads.gate()
-                    if not page.evaluate(OPEN_EVENT_JS, card["event_id"]):
-                        # The card left the listing between reloads (e.g. went live): skip it,
-                        # it is not a proxy/route failure.
-                        stats["events_missing"] = stats.get("events_missing", 0) + 1
-                        continue
+                    opened_hero = False
+                    opened = page.evaluate(OPEN_EVENT_JS, card["event_id"])
+                    if not opened:
+                        listing_html = page.content()
+                        fresh_cards = enumerate_cards(listing_html)
+                        present = any(c["event_id"] == card["event_id"] for c in fresh_cards)
+                        # One retry in the current DOM; no additional listing loads.
+                        if present:
+                            opened = page.evaluate(OPEN_EVENT_JS, card["event_id"])
+                        if not opened and hero_event_id(listing_html) == card["event_id"]:
+                            opened_hero = bool(page.evaluate(OPEN_HERO_EVENT_JS))
+                            opened = opened_hero
+                        if not opened:
+                            stats["events_missing"] = stats.get("events_missing", 0) + 1
+                            reason = "events_not_clickable" if present else "events_left_listing"
+                            stats[reason] = stats.get(reason, 0) + 1
+                            continue
                     stats["events_opened"] += 1
-                    page.wait_for_function(EVENT_READY_JS,
-                                           arg=[LIST_URL, card["team1"], card["team2"]], timeout=30000)
+                    try:
+                        page.wait_for_function(EVENT_READY_JS,
+                                               arg=[LIST_URL, card["team1"], card["team2"]], timeout=30000)
+                    except PlaywrightTimeoutError:
+                        if not opened_hero:
+                            raise
+                        # A proxy failure during the hero click must not end the run as status=0.
+                        check_connection()
+                        stats["events_hero_open_failed"] = stats.get("events_hero_open_failed", 0) + 1
+                        continue
+                    if opened_hero:
+                        stats["events_opened_hero"] = stats.get("events_opened_hero", 0) + 1
                     time.sleep(4.0)
                     full_markets = wait_full_markets(page)
                     if not full_markets:
@@ -709,10 +763,20 @@ def main(argv=None):
     # Never expose their output or exception messages; report only bounded counters.
     with quiet_output():
         code = _cycle(args, stats)
+    # events_opened counts clicks sent (feed or hero); pages actually loaded =
+    # events_opened - events_hero_open_failed (and - 1 when status=5 aborted on a load).
+    # events_missing = events_left_listing + events_not_clickable (+ non-digit ids).
     print("cards={cards} events_opened={events_opened} events_missing={missing} events_unrendered={unrendered} "
-          "rows_written={rows_written} loads={loads} country={country} status={status} error={error}".format(
+          "rows_written={rows_written} loads={loads} country={country} status={status} error={error} "
+          "events_left_listing={left} events_not_clickable={not_clickable} "
+          "card_wait_seconds_max={wait_seconds} "
+          "events_opened_hero={opened_hero} events_hero_open_failed={hero_failed}".format(
               status=code, missing=stats.get("events_missing", 0), unrendered=stats.get("events_unrendered", 0),
-              error=stats.get("error", "-"),
+              error=stats.get("error", "-"), left=stats.get("events_left_listing", 0),
+              not_clickable=stats.get("events_not_clickable", 0),
+              wait_seconds=stats.get("card_wait_seconds_max", 0),
+              opened_hero=stats.get("events_opened_hero", 0),
+              hero_failed=stats.get("events_hero_open_failed", 0),
               **{k: v for k, v in stats.items() if k not in ("events_missing", "events_unrendered", "error")}),
           flush=True)
     return code

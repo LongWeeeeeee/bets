@@ -458,10 +458,10 @@ def test_browser_ip_check_before_winline(monkeypatch, tmp_path, browser_ip):
 def test_live_first_both_kinds_and_load_cap(monkeypatch, tmp_path, capsys):
     page = FakePage()
     factory, context = offline_browser(monkeypatch, page)
-    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("pre"), card("live", True)])
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("16855432"), card("16855433", True)])
     path = tmp_path / "h.jsonl"
     assert collector.main(["--history", str(path), "--kinds", "all", "--max-loads", "4"]) == 0
-    assert page.opened == ["live", "pre"]
+    assert page.opened == ["16855433", "16855432"]
     assert "cards=2 events_opened=2 events_missing=0 events_unrendered=0 rows_written=6 loads=4" in capsys.readouterr().out
     assert factory.call_args.kwargs["block_webrtc"] is True
     assert factory.call_args.kwargs["firefox_user_prefs"]["network.proxy.failover_direct"] is False
@@ -469,19 +469,19 @@ def test_live_first_both_kinds_and_load_cap(monkeypatch, tmp_path, capsys):
     context.__exit__.assert_called_once()
     page.opened.clear()
     assert collector.main(["--history", str(path), "--kinds", "all", "--max-loads", "2"]) == 0
-    assert page.opened == ["live"]
+    assert page.opened == ["16855433"]
     page.opened.clear()
     assert collector.main(["--history", str(path), "--kinds", "all", "--max-events", "1"]) == 0
-    assert page.opened == ["live"]
+    assert page.opened == ["16855433"]
 
 
 def test_default_is_prematch_only_owner_decision(monkeypatch, tmp_path, capsys):
     """Owner 05.10: prematch pages only (every 3 h); live event pages are never opened by default."""
     page = FakePage()
     offline_browser(monkeypatch, page)
-    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("live", True), card("pre")])
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("16855433", True), card("16855432")])
     assert collector.main(["--history", str(tmp_path / "h.jsonl")]) == 0
-    assert page.opened == ["pre"]
+    assert page.opened == ["16855432"]
     assert "cards=2 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3" in capsys.readouterr().out
 
 
@@ -497,14 +497,14 @@ def test_prematch_selection_on_captured_listing():
 def test_vanished_card_is_skipped_not_fatal(monkeypatch, tmp_path, capsys):
     class Vanishing(FakePage):
         def evaluate(self, script, event_id=None):
-            if event_id == "gone":
+            if event_id == "16855430":
                 return False
             return super().evaluate(script, event_id)
     page = Vanishing()
     offline_browser(monkeypatch, page)
-    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("gone"), card("pre")])
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("16855430"), card("16855432")])
     assert collector.main(["--history", str(tmp_path / "h.jsonl")]) == 0
-    assert page.opened == ["pre"]
+    assert page.opened == ["16855432"]
     assert "events_opened=1 events_missing=1" in capsys.readouterr().out
 
 
@@ -519,7 +519,7 @@ def test_no_cards(monkeypatch, tmp_path):
 def test_midcycle_failure_stops_and_masks(monkeypatch, tmp_path, capsys):
     page = FakePage(event_failure=True)
     offline_browser(monkeypatch, page)
-    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(), card("second")])
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(), card("16855432")])
     assert collector.main(["--history", str(tmp_path / "h.jsonl")]) == 5
     output = capsys.readouterr()
     assert "loads=2" in output.out
@@ -591,17 +591,17 @@ def test_unrendered_event_writes_no_rows_and_cycle_continues(monkeypatch, tmp_pa
 
     class Slow(FakePage):
         def wait_for_function(self, script, *args, **kwargs):
-            if script == collector.FULL_MARKETS_JS and self.opened and self.opened[-1] == "slow":
+            if script == collector.FULL_MARKETS_JS and self.opened and self.opened[-1] == "16855430":
                 raise PlaywrightTimeoutError("full list never rendered")
 
     page = Slow()
     offline_browser(monkeypatch, page)
-    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("slow"), card("pre")])
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card("16855430"), card("16855432")])
     path = tmp_path / "h.jsonl"
     assert collector.main(["--history", str(path)]) == 0
-    assert page.opened == ["slow", "pre"]
+    assert page.opened == ["16855430", "16855432"]
     rows = [json.loads(line) for line in path.read_text().splitlines()]
-    assert {r["event_id"] for r in rows} == {"pre"} and len(rows) == 3
+    assert {r["event_id"] for r in rows} == {"16855432"} and len(rows) == 3
     assert "events_opened=2 events_missing=0 events_unrendered=1 rows_written=3" in capsys.readouterr().out
 
 
@@ -713,6 +713,256 @@ def test_quick_mode_writes_window_rows(monkeypatch, tmp_path, quick_present):
     assert collector.parse_quick_dumps(dump_dir) == 0
 
 
+def test_captured_hero_event_id():
+    html = json.loads(DUEL_OVERVIEW.read_text(encoding="utf-8"))["html"]
+    assert collector.hero_event_id(html) == "16855095"
+
+
+@pytest.mark.parametrize("html,expected", [
+    ('<img src="/api/cls/event/1/16855095">', None),
+    ('<ww-feature-event-live-center-dsk></ww-feature-event-live-center-dsk>'
+     '<img src="/api/cls/event/1/16855095">', None),
+    ('<img src="/api/cls/event/1/999">'
+     '<ww-feature-event-live-center-dsk><img src="/api/cls/event/2/16855095">'
+     '<img src="/api/cls/event/3/888"></ww-feature-event-live-center-dsk>', "16855095"),
+])
+def test_hero_event_id_is_scoped_to_hero(html, expected):
+    assert collector.hero_event_id(html) == expected
+
+
+class HeroReloadPage(QuickPage):
+    hero_id = "16855095"
+
+    def __init__(self, hero_first=False, ready_error=None, hero_click=True):
+        super().__init__()
+        self.hero_first = hero_first
+        self.ready_error = ready_error
+        self.hero_click = hero_click
+        self.listing_loads = 0
+        self.hero_calls = 0
+        self.ready_calls = []
+        self.quick_text = quick_body()
+
+    def goto(self, url, **kwargs):
+        super().goto(url, **kwargs)
+        if url == collector.LIST_URL:
+            self.listing_loads += 1
+
+    def feed_ids(self):
+        ids = ["16855431", "16855433"]
+        if self.listing_loads == 1:
+            ids.insert(0 if self.hero_first else 1, self.hero_id)
+        return ids
+
+    def content(self):
+        return ('<ww-feature-event-live-center-dsk>'
+                '<img src="https://winline.ru/api/cls/event/123/%s">'
+                '<button class="fast-bets__all-markets">Все маркеты</button>'
+                '</ww-feature-event-live-center-dsk>') % self.hero_id
+
+    def wait_for_selector(self, selector, **kwargs):
+        if selector == "#eventId-" + self.hero_id:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            raise PlaywrightTimeoutError("hero has no feed element")
+
+    def evaluate(self, script, event_id=None):
+        if script == collector.OPEN_EVENT_JS and event_id == self.hero_id:
+            return False
+        if script == getattr(collector, "OPEN_HERO_EVENT_JS", None):
+            self.hero_calls += 1
+            if self.hero_click:
+                super().evaluate(collector.OPEN_EVENT_JS, self.hero_id)
+            return self.hero_click
+        return super().evaluate(script, event_id)
+
+    def wait_for_function(self, script, *args, **kwargs):
+        if script == collector.EVENT_READY_JS:
+            self.ready_calls.append((self.opened[-1], kwargs))
+            if self.opened[-1] == self.hero_id and self.ready_error:
+                raise self.ready_error
+        return super().wait_for_function(script, *args, **kwargs)
+
+
+def hero_reload_browser(monkeypatch, **kwargs):
+    page = HeroReloadPage(**kwargs)
+    offline_browser(monkeypatch, page)
+    enumerate_cards = Mock(side_effect=lambda html: [card(id_, True) for id_ in page.feed_ids()])
+    monkeypatch.setattr(collector, "enumerate_cards", enumerate_cards)
+    return page
+
+
+@pytest.mark.parametrize("hero_first", [False, True], ids=["reload", "initial"])
+def test_hero_card_opens_and_captures(monkeypatch, tmp_path, capsys, hero_first):
+    page = hero_reload_browser(monkeypatch, hero_first=hero_first)
+    history = tmp_path / "h.jsonl"
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(history), "--kinds", "live", "--max-events", "2",
+                           "--max-loads", "4", "--quick-dump-dir", str(dump_dir)]) == 0
+    expected = [page.hero_id, "16855431"] if hero_first else ["16855431", page.hero_id]
+    assert page.opened == expected
+    assert page.hero_calls == 1 and page.listing_loads == 2
+    assert len(list(dump_dir.glob("*_quick.txt"))) == 2
+    rows = [json.loads(line) for line in history.read_text().splitlines()]
+    assert len(rows) == 6 and {r["event_id"] for r in rows} == set(expected)
+    assert all(kwargs == dict(arg=[collector.LIST_URL, card()["team1"], card()["team2"]],
+                              timeout=30000) for _, kwargs in page.ready_calls)
+    output = capsys.readouterr().out
+    assert "events_missing=0" in output and "loads=4" in output
+    assert "events_left_listing=0 events_not_clickable=0" in output
+    assert "events_opened_hero=1 events_hero_open_failed=0" in output
+
+
+def test_hero_ready_timeout_continues_to_next_card(monkeypatch, tmp_path, capsys):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    page = hero_reload_browser(monkeypatch, ready_error=PlaywrightTimeoutError(PROXY + EXIT))
+    history = tmp_path / "h.jsonl"
+    assert collector.main(["--history", str(history), "--kinds", "live",
+                           "--max-events", "3", "--max-loads", "6"]) == 0
+    assert page.opened == ["16855431", page.hero_id, "16855433"]
+    assert page.hero_calls == 1 and page.listing_loads == 3
+    rows = [json.loads(line) for line in history.read_text().splitlines()]
+    assert len(rows) == 6 and {r["event_id"] for r in rows} == {"16855431", "16855433"}
+    output = capsys.readouterr()
+    assert "events_opened_hero=0 events_hero_open_failed=1" in output.out
+    assert "events_missing=0" in output.out and "status=0 error=-" in output.out
+    assert "loads=6" in output.out and "events_left_listing=0" in output.out
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT, "proxy.invalid"))
+
+
+def test_hero_ready_non_timeout_aborts_and_masks(monkeypatch, tmp_path, capsys):
+    page = hero_reload_browser(monkeypatch, ready_error=RuntimeError(PROXY + EXIT))
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live"]) == 5
+    assert page.opened == ["16855431", page.hero_id]
+    output = capsys.readouterr()
+    assert "status=5 error=RuntimeError" in output.out
+    assert "events_hero_open_failed=0" in output.out
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT, "proxy.invalid"))
+
+
+def test_hero_button_absent_keeps_missing_counters(monkeypatch, tmp_path, capsys):
+    page = hero_reload_browser(monkeypatch, hero_click=False)
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live"]) == 0
+    assert page.opened == ["16855431", "16855433"] and page.hero_calls == 1
+    output = capsys.readouterr().out
+    assert "events_missing=1" in output and "events_left_listing=1 events_not_clickable=0" in output
+    assert "events_opened_hero=0 events_hero_open_failed=0" in output
+
+
+class LiveReloadPage(QuickPage):
+    """The second selected live card can render late or leave on listing reload."""
+    def __init__(self, second_state, clock):
+        super().__init__()
+        self.second_state = second_state
+        self.clock = clock
+        self.listing_loads = 0
+        self.second_ready = False
+        self.card_waits = []
+        self.open_attempts = []
+        self.quick_text = quick_body()
+
+    def goto(self, url, **kwargs):
+        super().goto(url, **kwargs)
+        if url == collector.LIST_URL:
+            self.listing_loads += 1
+
+    def content(self):
+        ids = ["16855431", "16855432", "16855433"]
+        if self.listing_loads > 1 and self.second_state == "left":
+            ids.remove("16855432")
+        return json.dumps(ids)
+
+    def wait_for_selector(self, selector, **kwargs):
+        if selector == "[id^=eventId-]":
+            return
+        self.card_waits.append((selector, kwargs["timeout"]))
+        if selector == "#eventId-16855432":
+            self.clock[0] += 6.6
+            if self.second_state == "left":
+                from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+                raise PlaywrightTimeoutError("card left")
+            if self.second_state == "error":
+                raise RuntimeError(PROXY + EXIT)
+            self.second_ready = True
+
+    def evaluate(self, script, event_id=None):
+        if script == collector.OPEN_EVENT_JS:
+            self.open_attempts.append(event_id)
+            if event_id == "16855432" and (
+                    not self.second_ready or self.second_state == "not-clickable"):
+                return False
+        return super().evaluate(script, event_id)
+
+
+def live_reload_browser(monkeypatch, second_state):
+    clock = [100.0]
+    page = LiveReloadPage(second_state, clock)
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector.time, "monotonic", lambda: clock[0])
+    enumerate_cards = Mock(side_effect=lambda html: [card(id_, True) for id_ in json.loads(html)])
+    monkeypatch.setattr(collector, "enumerate_cards", enumerate_cards)
+    return page, enumerate_cards
+
+
+def test_second_live_card_waits_for_delayed_render(monkeypatch, tmp_path, capsys):
+    page, enumerate_cards = live_reload_browser(monkeypatch, "delayed")
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--max-events", "2", "--max-loads", "4",
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    assert page.opened == ["16855431", "16855432"]
+    assert page.card_waits == [("#eventId-16855432", 15000)]
+    assert page.listing_loads == 2 and enumerate_cards.call_count == 1
+    assert len(list(dump_dir.glob("*_quick.txt"))) == 2
+    output = capsys.readouterr().out
+    assert "events_missing=0" in output and "loads=4" in output
+    assert "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=7" in output
+
+
+def test_second_live_card_left_listing_continues_to_third(monkeypatch, tmp_path, capsys):
+    page, enumerate_cards = live_reload_browser(monkeypatch, "left")
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--max-events", "3", "--max-loads", "6"]) == 0
+    assert page.opened == ["16855431", "16855433"]
+    assert page.card_waits == [("#eventId-16855432", 15000), ("#eventId-16855433", 15000)]
+    assert page.listing_loads == 3 and enumerate_cards.call_count == 2
+    output = capsys.readouterr().out
+    assert "events_opened=2 events_missing=1" in output and "loads=6" in output
+    assert "events_left_listing=1 events_not_clickable=0" in output
+
+
+def test_second_live_card_present_but_not_clickable(monkeypatch, tmp_path, capsys):
+    page, enumerate_cards = live_reload_browser(monkeypatch, "not-clickable")
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--max-events", "3", "--max-loads", "6"]) == 0
+    assert page.opened == ["16855431", "16855433"]
+    assert page.open_attempts.count("16855432") == 2
+    assert page.listing_loads == 3 and enumerate_cards.call_count == 2
+    output = capsys.readouterr().out
+    assert "events_missing=1" in output and "loads=6" in output
+    assert "events_left_listing=0 events_not_clickable=1" in output
+
+
+def test_second_live_card_wait_error_aborts_and_masks(monkeypatch, tmp_path, capsys):
+    page, enumerate_cards = live_reload_browser(monkeypatch, "error")
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live"]) == 5
+    assert page.opened == ["16855431"] and enumerate_cards.call_count == 1
+    assert "16855432" not in page.open_attempts
+    output = capsys.readouterr()
+    assert "status=5 error=RuntimeError" in output.out
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT, "proxy.invalid"))
+
+
+def test_non_digit_event_id_never_waited_or_clicked(monkeypatch, tmp_path, capsys):
+    page, _ = live_reload_browser(monkeypatch, "delayed")
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [
+        card("16855431", True), card("1,body", True), card("16855433", True)])
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live"]) == 0
+    assert page.opened == ["16855431", "16855433"]
+    assert page.card_waits == [("#eventId-16855433", 15000)]
+    assert "1,body" not in page.open_attempts and page.listing_loads == 2
+    assert "events_missing=1" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("quick_present", [True, False], ids=["clicked", "no-click"])
 def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, capsys, quick_present):
     page = QuickPage(quick_present=quick_present)
@@ -749,7 +999,9 @@ def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, cap
     assert len(history.read_text().splitlines()) == 3
     assert capsys.readouterr().out == (
         "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
-        "loads=2 country=DE status=5 error=RuntimeError\n")
+        "loads=2 country=DE status=5 error=RuntimeError "
+        "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
+        "events_opened_hero=0 events_hero_open_failed=0\n")
     context.__exit__.assert_called_once()
 
 
@@ -774,7 +1026,9 @@ def test_unrendered_event_skips_expand_and_default_body(monkeypatch, tmp_path, c
     assert not history.exists()
     assert capsys.readouterr().out == (
         "cards=1 events_opened=1 events_missing=0 events_unrendered=1 rows_written=0 "
-        "loads=2 country=DE status=0 error=-\n")
+        "loads=2 country=DE status=0 error=- "
+        "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
+        "events_opened_hero=0 events_hero_open_failed=0\n")
     if quick_mode:
         assert page.tab_calls == 1
         assert inner_text.call_count == 3  # IP echo, default body, quick body.
@@ -890,7 +1144,9 @@ def test_quick_dump_disabled_leaves_outputs_unchanged(monkeypatch, tmp_path, cap
     assert page.tab_calls == 0
     assert capsys.readouterr().out == (
         "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
-        "loads=2 country=DE status=0 error=-\n")
+        "loads=2 country=DE status=0 error=- "
+        "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
+        "events_opened_hero=0 events_hero_open_failed=0\n")
     expected = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n"
                        for row in collector.build_rows(card(live=True), page.default_text, wall=123.0))
     assert history.read_text() == expected
@@ -947,3 +1203,44 @@ def test_quick_dump_each_event_with_existing_load_budget(monkeypatch, tmp_path, 
     assert len(list(dump_dir.glob("*.txt"))) == 2 * len(expected_ids)
     assert page.opened == expected_ids and page.tab_calls == len(expected_ids)
     assert "loads=%d" % max_loads in capsys.readouterr().out
+
+
+def test_normal_card_ready_timeout_still_aborts_with_status5(monkeypatch, tmp_path, capsys):
+    # Hard-verifier 08.10 mutant m6: only the hero path may swallow the EVENT_READY timeout.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    class Page(FakePage):
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.EVENT_READY_JS and self.opened and self.opened[-1] == "16855432":
+                raise PlaywrightTimeoutError("ready")
+
+    page = Page()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards",
+                        lambda html: [card("16855431"), card("16855432"), card("16855433")])
+    rc = collector.main(["--history", str(tmp_path / "h.jsonl")])
+    out = capsys.readouterr().out
+    assert rc == 5 and "error=TimeoutError" in out and "events_hero_open_failed=0" in out
+    assert page.opened == ["16855431", "16855432"]
+
+
+def test_hero_ready_timeout_after_proxy_failure_is_not_success(monkeypatch, tmp_path, capsys):
+    # Hard-verifier 08.10 F1: a proxy failure during the hero click on the last card must not end as status=0.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    page = hero_reload_browser(monkeypatch, ready_error=PlaywrightTimeoutError("ready"))
+    original = page.evaluate
+
+    def evaluate(script, event_id=None):
+        result = original(script, event_id)
+        if script == collector.OPEN_HERO_EVENT_JS:
+            class Request:
+                failure = "NS_ERROR_NET_RESET proxy"
+            page.failure_callback(Request())
+        return result
+
+    page.evaluate = evaluate
+    page.feed_ids = lambda: ["16855431", page.hero_id] if page.listing_loads == 1 else ["16855431"]
+    rc = collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                         "--max-events", "2", "--max-loads", "4"])
+    out = capsys.readouterr().out
+    assert rc == 5 and "error=RuntimeError" in out and "status=5" in out
