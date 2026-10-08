@@ -19,6 +19,89 @@ collector = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = collector
 SPEC.loader.exec_module(collector)
 
+QUICK_FIXTURE = "winline_quick_kill_windows_legion_blasterbi_20261008.txt"
+QUICK_DUMP = "16890543_20261008T184904Z_quick.txt"
+QUICK_MARKETS = [
+    dict(map_num=3, window="5-15", market="1x2", p_t1=1.85, p_draw=7.63, p_t2=2.23),
+    dict(map_num=3, window="5-15", market="odd_even", p_even=1.85, p_odd=1.85),
+    dict(map_num=3, window="5-15", market="handicap",
+         line_t1=-0.5, p_t1=1.85, line_t2=0.5, p_t2=1.85),
+]
+
+
+def quick_body():
+    return (FIXTURES / QUICK_FIXTURE).read_text(encoding="utf-8")
+
+
+def quick_card():
+    return dict(event_id="16890543", team1="LEGION", team2="BLASTERBI", live=True)
+
+
+def test_captured_quick_windows():
+    assert "−0.5" in quick_body()  # The actual capture uses U+2212.
+    assert collector.parse_winline_quick_windows(quick_body(), "LEGION", "BLASTERBI") == QUICK_MARKETS
+
+
+def test_quick_windows_generic_bounds_and_exact_orientation():
+    text = quick_body().replace("5-15 минут", "10-20 минут").replace("1.85", "1,85")
+    rows = collector.parse_winline_quick_windows(text, " blasterbi ", " legion ")
+    assert all(r["window"] == "10-20" for r in rows)
+    assert (rows[0]["p_t1"], rows[0]["p_t2"]) == (2.23, 1.85)
+    assert (rows[2]["line_t1"], rows[2]["line_t2"]) == (0.5, -0.5)
+    traps = collector.parse_winline_quick_windows(text, "LEG", "BLASTERBI")
+    assert traps[0]["p_t1"] is None and traps[0]["p_t2"] is None
+    assert traps[2]["line_t1"] is None and traps[2]["p_t2"] is None
+
+
+def test_quick_windows_multiple_windows_and_duplicate_titles():
+    text = quick_body()
+    section = text[text.index("3 карта исход 1X2 убийств"):text.index("\nWINLINE")]
+    rows = collector.parse_winline_quick_windows(
+        text.replace("\nWINLINE", "\n" + section.replace("5-15 минут", "15-25 минут") + "\nWINLINE"),
+        "LEGION", "BLASTERBI")
+    assert rows == QUICK_MARKETS + [dict(r, window="15-25") for r in QUICK_MARKETS]
+    first_block = section[:section.index("3 карта чет/нечет")]
+    rows = collector.parse_winline_quick_windows(
+        text.replace("3 карта чет/нечет", first_block + "3 карта чет/нечет", 1), "LEGION", "BLASTERBI")
+    assert len(rows) == 3
+    assert all(rows[0][field] is None for field in ("p_t1", "p_draw", "p_t2"))
+    assert rows[1:] == QUICK_MARKETS[1:]
+
+
+@pytest.mark.parametrize("old,new,market,fields", [
+    ("LEGION\n1.85\nНичья", "LEGION\nНичья", "1x2", ("p_t1", "p_draw", "p_t2")),
+    ("Чет\n1.85\nНечет", "Чет\nНечет", "odd_even", ("p_even", "p_odd")),
+    ("−0.5\n1.85\nBLASTERBI", "−0.5\nBLASTERBI", "handicap",
+     ("line_t1", "p_t1", "line_t2", "p_t2")),
+    ("Ничья\n7.63", "Ничья\n1.0", "1x2", ("p_t1", "p_draw", "p_t2")),
+])
+def test_malformed_quick_window_block_is_null(old, new, market, fields):
+    text = quick_body()
+    assert text.count(old) == 1
+    rows = collector.parse_winline_quick_windows(text.replace(old, new, 1), "LEGION", "BLASTERBI")
+    broken, = [r for r in rows if r["market"] == market]
+    assert all(broken[f] is None for f in fields)
+    assert [r for r in rows if r["market"] != market] == [r for r in QUICK_MARKETS if r["market"] != market]
+
+
+def test_quick_dump_backfill_is_offline_and_idempotent(monkeypatch, tmp_path, capsys):
+    entry = dict(quick_card(), ts_utc="20261008T184904Z", quick_clicked=True)
+    (tmp_path / QUICK_DUMP).write_bytes((FIXTURES / QUICK_FIXTURE).read_bytes())
+    (tmp_path / "index.jsonl").write_text(json.dumps(entry) + "\n")
+    monkeypatch.setattr(collector, "_cycle", Mock(side_effect=AssertionError("offline only")))
+    assert collector.main(["--parse-quick-dumps", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "windows_written=3\n"
+    rows = [json.loads(line) for line in (tmp_path / "windows.jsonl").read_text().splitlines()]
+    expected = [dict(r, ts_utc=entry["ts_utc"], source_dump=QUICK_DUMP, **quick_card()) for r in QUICK_MARKETS]
+    assert rows == expected
+    assert collector.parse_quick_dumps(tmp_path) == 0
+    assert len((tmp_path / "windows.jsonl").read_text().splitlines()) == 3
+    # A failed click must never backfill a different, otherwise eligible stale dump.
+    no_click = dict(entry, ts_utc="20261008T185904Z", quick_clicked=False)
+    (tmp_path / "16890543_20261008T185904Z_quick.txt").write_text(quick_body())
+    (tmp_path / "index.jsonl").write_text(json.dumps(no_click) + "\n")
+    assert collector.parse_quick_dumps(tmp_path) == 0
+
 CASES = [
     ("yandex_lgd", ("TEAM YANDEX", "LGD GAMING"), 1, ((31.5, 1.93, 1.88), (18.5, 1.91, 1.89))),
     ("yandex_lgd", ("TEAM YANDEX", "LGD GAMING"), 2, ((31.5, 1.94, 1.87), (18.5, 1.90, 1.90))),
@@ -611,6 +694,25 @@ class QuickPage(FakePage):
         return super().evaluate(script, event_id)
 
 
+@pytest.mark.parametrize("quick_present", [True, False])
+def test_quick_mode_writes_window_rows(monkeypatch, tmp_path, quick_present):
+    page = QuickPage(quick_present=quick_present)
+    page.quick_text = quick_body()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [quick_card()])
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--kinds", "live",
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    if not quick_present:
+        assert not (dump_dir / "windows.jsonl").exists()
+        return
+    entry = json.loads((dump_dir / "index.jsonl").read_text())
+    dump, = dump_dir.glob("*_quick.txt")
+    rows = [json.loads(line) for line in (dump_dir / "windows.jsonl").read_text().splitlines()]
+    assert rows == [dict(r, ts_utc=entry["ts_utc"], source_dump=dump.name, **quick_card()) for r in QUICK_MARKETS]
+    assert collector.parse_quick_dumps(dump_dir) == 0
+
+
 @pytest.mark.parametrize("quick_present", [True, False], ids=["clicked", "no-click"])
 def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, capsys, quick_present):
     page = QuickPage(quick_present=quick_present)
@@ -641,6 +743,7 @@ def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, cap
     assert all_file.read_text() == page.default_text
     assert not list(dump_dir.glob("*_quick.txt"))
     assert not (dump_dir / "index.jsonl").exists()
+    assert not (dump_dir / "windows.jsonl").exists()
     assert not list(dump_dir.glob("*.tmp"))
     # Default history is committed before the quick-tab connection fails.
     assert len(history.read_text().splitlines()) == 3

@@ -185,6 +185,137 @@ def parse_winline_team_kills_totals(body_text, map_num, team1, team2):
     return result
 
 
+_QUICK_HEADER_RE = re.compile(
+    r"(\d+) карта (исход 1X2|чет/нечет|фора) убийств в интервале (\d+)[-–−](\d+) минут", re.I)
+_QUICK_KINDS = {"исход 1x2": "1x2", "чет/нечет": "odd_even", "фора": "handicap"}
+_QUICK_FIELDS = {"1x2": ("p_t1", "p_draw", "p_t2"),
+                 "odd_even": ("p_even", "p_odd"),
+                 "handicap": ("line_t1", "p_t1", "line_t2", "p_t2")}
+
+
+def parse_winline_quick_windows(body_text, team1, team2):
+    """Line-based window markets, exact card orientation; malformed blocks have null fields.
+
+    Only full market titles anchor parsing, never prices in popular blocks or tab strips.
+    Options end at the next map-market title or WINLINE footer; unknown layouts fail closed.
+    Duplicate (map, window, market) titles also invalidate that market rather than pick a price.
+    """
+    if not isinstance(body_text, str):
+        return []
+    lines = [" ".join(line.split()) for line in body_text.splitlines() if line.strip()]
+    boundaries = [i for i, line in enumerate(lines)
+                  if re.match(r"\d+ карта .+", line, re.I) or line.casefold() == "winline"]
+    boundaries.append(len(lines))
+    teams = [" ".join(team.split()).casefold() if isinstance(team, str) else ""
+             for team in (team1, team2)]
+    rows, seen = [], {}
+    for start, end in zip(boundaries, boundaries[1:]):
+        header = _QUICK_HEADER_RE.fullmatch(lines[start])
+        if header is None:
+            continue
+        map_num, kind, lower, upper = header.groups()
+        if int(map_num) < 1 or int(lower) >= int(upper):
+            continue
+        market = _QUICK_KINDS[kind.casefold()]
+        row = dict(map_num=int(map_num), window="%d-%d" % (int(lower), int(upper)), market=market)
+        row.update(dict.fromkeys(_QUICK_FIELDS[market]))
+        key = (row["map_num"], row["window"], market)
+        if key in seen:
+            seen[key].update(dict.fromkeys(_QUICK_FIELDS[market]))
+            continue
+        seen[key] = row
+        rows.append(row)
+        options = lines[start + 1:end]
+        width, count = (3, 2) if market == "handicap" else (2, 3 if market == "1x2" else 2)
+        if len(options) != width * count:
+            continue
+        labels = [options[i].casefold() for i in range(0, len(options), width)]
+        expected = ["чет", "нечет"] if market == "odd_even" else teams + (["ничья"] if market == "1x2" else [])
+        if not all(expected) or len(set(expected)) != count or sorted(labels) != sorted(expected):
+            continue
+        values = {}
+        for i, label in zip(range(0, len(options), width), labels):
+            price_text = options[i + width - 1]
+            line_text = options[i + 1].replace("−", "-") if width == 3 else None
+            if not re.fullmatch(_NUMBER, price_text):
+                break
+            price = _number(price_text)
+            if not math.isfinite(price) or price <= 1.0:
+                break
+            if line_text is not None:
+                if not re.fullmatch(rf"[+-]?{_NUMBER}", line_text):
+                    break
+                line = _number(line_text)
+                if not math.isfinite(line):
+                    break
+                values[label] = (line, price)
+            else:
+                values[label] = price
+        else:
+            if market == "odd_even":
+                row.update(p_even=values["чет"], p_odd=values["нечет"])
+            elif market == "1x2":
+                row.update(p_t1=values[teams[0]], p_draw=values["ничья"], p_t2=values[teams[1]])
+            else:
+                row.update(line_t1=values[teams[0]][0], p_t1=values[teams[0]][1],
+                           line_t2=values[teams[1]][0], p_t2=values[teams[1]][1])
+    return rows
+
+
+def build_quick_window_rows(entry, body_text, source_dump):
+    """Use capture-index metadata for timestamp, identity and card-side orientation."""
+    return [dict(row, ts_utc=entry["ts_utc"], event_id=str(entry["event_id"]),
+                 team1=entry["team1"], team2=entry["team2"], live=bool(entry["live"]),
+                 source_dump=source_dump)
+            for row in parse_winline_quick_windows(body_text, entry["team1"], entry["team2"])]
+
+
+def _append_json_rows(path, rows):
+    if not rows:
+        return
+    with path.open("a", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def parse_quick_dumps(directory):
+    """Offline append-only backfill; index.jsonl is required, repeated captures are skipped.
+
+    Never infer teams/live from the body. Only indexed successful clicks with a matching
+    *_quick.txt are eligible; existing (source_dump, map, window, market) rows are preserved.
+    Run between collector cycles, as with the existing capture index there is no writer lock.
+    """
+    directory = Path(directory)
+    path = directory / "windows.jsonl"
+
+    def key(row):
+        return (row["source_dump"], row["map_num"], row["window"], row["market"])
+
+    seen = set()
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            seen = {key(json.loads(line)) for line in stream}
+    dumps = {dump.name: dump for dump in directory.glob("*_quick.txt")}
+    rows = []
+    with (directory / "index.jsonl").open(encoding="utf-8") as stream:
+        for line in stream:
+            entry = json.loads(line)
+            if not entry.get("quick_clicked"):
+                continue
+            event_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(entry["event_id"]))
+            name = "%s_%s_quick.txt" % (event_id, entry["ts_utc"])
+            if name not in dumps:
+                continue
+            for row in build_quick_window_rows(entry, dumps[name].read_text(encoding="utf-8"), name):
+                if key(row) not in seen:
+                    rows.append(row)
+                    seen.add(key(row))
+    _append_json_rows(path, rows)
+    return len(rows)
+
+
 def enumerate_cards(html):
     """Reuse only the existing pure listing-card helper, imported lazily."""
     if str(REPO / "base") not in sys.path:
@@ -377,7 +508,7 @@ def _write_dump(path, text):
 
 def capture_quick_tab(page, directory, card, body_text, full_markets, private_values,
                       check_connection):
-    """Capture default and optional quick view on the verified page, never parse quick markets."""
+    """Capture default/quick views and append window prices after a verified quick click."""
     secrets = sorted({str(value) for value in private_values if value}, key=len, reverse=True)
 
     def safe(text):
@@ -408,10 +539,10 @@ def capture_quick_tab(page, directory, card, body_text, full_markets, private_va
                  live=bool(card.get("live")), full_markets=full_markets,
                  tabs=[safe(tab) for tab in result.get("tabs", [])],
                  quick_clicked=quick_clicked, chars_all=len(all_text), chars_quick=len(quick_text))
-    with (directory / "index.jsonl").open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    _append_json_rows(directory / "index.jsonl", [entry])
+    if quick_clicked:
+        _append_json_rows(directory / "windows.jsonl",
+                          build_quick_window_rows(entry, quick_text, stem + "_quick.txt"))
 
 
 def _cycle(args, stats):
@@ -565,7 +696,12 @@ def main(argv=None):
                         help="BOOKMAKER_PROXY_POOL index, inventory-verified; default: at most two candidates")
     parser.add_argument("--quick-dump-dir", default=os.getenv("WINLINE_QUICK_DUMP_DIR"),
                         help="opt-in default/Быстрые event body capture directory (WINLINE_QUICK_DUMP_DIR)")
+    parser.add_argument("--parse-quick-dumps", metavar="DIR",
+                        help="offline backfill DIR/windows.jsonl from indexed quick dumps; no browser/network")
     args = parser.parse_args(argv)
+    if args.parse_quick_dumps:
+        print("windows_written=%d" % parse_quick_dumps(args.parse_quick_dumps), flush=True)
+        return 0
     if args.max_events < 0 or args.max_loads < 1:
         parser.error("--max-events must be >=0 and --max-loads must be >=1")
     stats = dict(cards=0, events_opened=0, rows_written=0, loads=0, country="unknown")

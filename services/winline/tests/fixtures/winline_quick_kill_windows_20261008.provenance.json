@@ -1,0 +1,17 @@
+{
+  "capture_date_utc": "2026-10-08T18:49:04Z",
+  "event_id": "16890543",
+  "team1": "LEGION",
+  "team2": "BLASTERBI",
+  "live": true,
+  "source_host": "serv1",
+  "collector_commit": "34235fdd",
+  "collector_command": "--kinds live --max-events 7 --max-loads 16 --quick-dump-dir /root/main/runtime/winline_quick_tab",
+  "proxy_country": "CA",
+  "fixture": "winline_quick_kill_windows_legion_blasterbi_20261008.txt",
+  "source_quick_dump": "runtime/artifacts/odds-winline/quick_tab_20261008/16890543_20261008T184904Z_quick.txt",
+  "source_quick_sha256": "a79b269fd787ba98e4ee69f23b997eca25cc682a468af82ad40b629eba6597be",
+  "source_all_dump": "runtime/artifacts/odds-winline/quick_tab_20261008/16890543_20261008T184904Z_all.txt",
+  "source_all_sha256": "10a94a9b923dc3d97390d0dd460b58843116f62947d5aaca0b8da3e95a1723f6",
+  "provenance_basis": "Capture metadata supplied by owner; source dump hashes verified locally. No network acquisition."
+}
