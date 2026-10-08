@@ -518,3 +518,57 @@ def test_map_2_real_card_survives_the_prop_filter():
 
     assert odds == [1.61, 2.22]
     assert not _duel_leaks(context)
+
+
+# Прод 04.10.2026 12:10-15:35 MSK, EPL World Series, Cloud Dawning — ЯЧЁ123 (лига
+# 18865): строки runtime/winline_odds_history.jsonl, снятые с serv1 08.10 (команда
+# и окно — в самой фикстуре). Собственные карточные опросы sweep брали цену
+# карточки `YACHE123|CLOUD DAWNING` (40 принятых строк), а мостовой ключ с нашим
+# написанием `ЯЧЁ123` — ни разу (0 из 65). Winline пишет команду транслитом:
+# у `Я` и `Ч` нет латинских двойников, свёртка `fold_confusables` даёт `яче123`.
+def _yache_rows():
+    path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "winline_yache123_card_keys_20261004.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))["rows"]
+
+
+def test_captured_yache123_rows_show_the_prod_miss():
+    """Фикстура держит именно дефект: карточка с ценой есть, мост пуст."""
+    rows = _yache_rows()
+    card = [r for r in rows if r["canonical_key"].startswith("winline:league:")]
+    bridge = [r for r in rows if r["canonical_key"].startswith("sourcetv:")]
+
+    assert {tuple(r["canonical_key"].split("|")[-2:]) for r in card} == {
+        ("YACHE123", "CLOUD DAWNING")
+    }
+    assert sum(bool(r["accepted"]) for r in card) == 40
+    assert len(bridge) == 65 and not any(r["accepted"] for r in bridge)
+    assert all("ЯЧЁ123" in r["canonical_key"] for r in bridge)
+
+
+def test_bookmaker_transliteration_of_yache123_is_found():
+    """У нас `ЯЧЁ123`, на карточке Winline `YACHE123` — одна команда."""
+    rows = _yache_rows()
+    card_names = {
+        name
+        for r in rows
+        if r["canonical_key"].startswith("winline:league:")
+        for name in r["canonical_key"].split("|")[-2:]
+    }
+    bridge_names = {
+        name
+        for r in rows
+        if r["canonical_key"].startswith("sourcetv:")
+        for name in r["canonical_key"].split("|")[-2:]
+    }
+
+    # Каждое наше имя моста находит своё имя на карточке, и только одно.
+    for ours in bridge_names:
+        matches = [theirs for theirs in card_names if _teams_equivalent(ours, theirs)]
+        assert len(matches) == 1, f"{ours!r} -> {matches!r}"
+    assert _teams_equivalent("ЯЧЁ123", "YACHE123")
+    assert "YACHE123" in bk._alias_spellings("ЯЧЁ123")
+    assert not _teams_equivalent("ЯЧЁ123", "CLOUD DAWNING")

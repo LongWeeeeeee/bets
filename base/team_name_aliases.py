@@ -117,6 +117,13 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # (в листинге при этом «Победитель 2 карта 1.61 2.22»); снимок страницы —
     # base/tests/fixtures/winline_overview_snapshot_20261008_blast_duel_cards.json.
     "1win": ("1W",),
+    # 08.10.2026, EPL World Series: SourceTV/GC отдаёт `ЯЧЁ123` (кириллица; у Я и Ч
+    # нет латинских двойников, свёртка даёт `яче123`), карточка Winline —
+    # транслит `YACHE123`. 04.10 (Cloud Dawning — ЯЧЁ123) собственные карточные
+    # опросы sweep брали цену `YACHE123|CLOUD DAWNING` 40 раз, мост `ЯЧЁ123` — 0 из
+    # 65; с 26.09 без цены ~20 карт EPL. Строки истории —
+    # base/tests/fixtures/winline_yache123_card_keys_20261004.json.
+    "ЯЧЁ123": ("YACHE123",),
 }
 
 
