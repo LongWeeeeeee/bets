@@ -459,7 +459,12 @@ CARD_KINDS = ("prematch", "live", "all")
 
 
 def select_cards(cards, kinds="prematch", max_events=12):
-    """Cards to open this cycle: owner decision 05.10 = prematch only (live first when 'all')."""
+    """Cards to open this cycle: owner decision 05.10 = prematch only (live first when 'all').
+
+    Player-duel prop cards ("BLAST Slam. Дуэль игроков. Убийства", card['prop_duel'] from
+    the listing parser) hold player kill props, not team totals: never opened and never
+    counted against max_events (card ingame-vl91: 18/116 history rows were duels)."""
+    cards = [c for c in cards if not c.get("prop_duel")]
     if kinds == "prematch":
         pool = [c for c in cards if not c.get("live")]
     elif kinds == "live":

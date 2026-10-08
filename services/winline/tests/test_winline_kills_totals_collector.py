@@ -534,3 +534,34 @@ def test_full_market_marker_on_captured_bodies():
     assert all(r[k] is None for r in rows for k in collector.VALUE_FIELDS)
     full_rows = collector.build_rows(dict(card("16855095"), team1="TEAM AURORA", team2="1W"), full, wall=1)
     assert [r["kills_t1_line"] for r in full_rows] == [28.5, 28.5, 28.5]
+
+
+# Captured prod overview 08.10.2026 18:34 MSK (provenance beside the fixture):
+# BLAST Slam player-duel kill props ("SKITER (TEAM AURORA) PURE (1W)") share the
+# listing with real maps. Before card ingame-vl91 the collector opened them as
+# team kill totals: 18 of 116 serv1 history rows were duels (lines 6.5/7.5), and
+# each one spent a slot of the --max-events budget.
+DUEL_OVERVIEW = ROOT / "base/tests/fixtures/winline_overview_snapshot_20261008_blast_duel_cards.json"
+
+
+def _duel_overview_cards():
+    html = json.loads(DUEL_OVERVIEW.read_text(encoding="utf-8"))["html"]
+    cards = collector.enumerate_cards(html)
+    assert sum(1 for c in cards if c.get("prop_duel")) == 4  # the parser still sees them
+    return cards
+
+
+@pytest.mark.parametrize("kinds,expected", [
+    ("prematch", [("PARIVISION", "TEAM YANDEX")]),
+    ("live", []),
+    ("all", [("PARIVISION", "TEAM YANDEX")]),
+])
+def test_player_duel_prop_cards_are_never_selected(kinds, expected):
+    selected = collector.select_cards(_duel_overview_cards(), kinds, 12)
+    assert [(c["team1"], c["team2"]) for c in selected] == expected
+
+
+def test_player_duel_prop_cards_do_not_consume_the_event_budget():
+    # 'all' puts live cards first; the three live cards here are all duels.
+    selected = collector.select_cards(_duel_overview_cards(), "all", 1)
+    assert [(c["team1"], c["team2"]) for c in selected] == [("PARIVISION", "TEAM YANDEX")]
