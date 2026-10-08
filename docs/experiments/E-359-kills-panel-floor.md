@@ -31,6 +31,19 @@ kills_window bets (rule kills_panel_window, panel w_5_15 calibrated conf >= 0.60
 
 The [0.65, 0.70) bin (n=55, hit 0.527 [0.398, 0.653]) sits below both neighbours. Its CI overlaps the lower bin ([0.508, 0.716]) but NOT the upper bin ([0.664, 0.869]), so the data do not show it is noise. Arguments for treating it as noise anyway: the pattern is non-monotone (0.617 -> 0.527 -> 0.783), no mechanism is known that would make conf 0.65-0.70 worse than 0.60-0.65, and three bins on 196 maps give multiple chances for one outlier. It is NOT excluded. A bet in that band gets a printed floor of 1.52-1.64 (1/(0.70-0.04) to 1/(0.65-0.04)), while that bin's own break-even is 1.90 (CI low 2.51). The pooled per-bet floor is kept, and this bin is the first thing to recheck at the next re-measure (see below).
 
+## Add-on 08.10: do not lower the 0.60 threshold
+Question: would kills_panel_window add bets above break-even (55.6 % at 1.80) if the threshold were lowered? Prediction: the 0.55-0.60 band hits about 57 %. Refuted. Same live first ticks (rows.json, key fresh, 409 of 457 with an outcome):
+
+| conf band | n | hit [Wilson 95%] | break-even price |
+|---|---|---|---|
+| 0.50-0.55 | 108 | 0.417 [0.328, 0.511] | 2.40 |
+| 0.55-0.60 | 105 | 0.524 [0.429, 0.617] | 1.91 |
+| 0.60-0.65 | 81 | 0.617 [0.508, 0.716] | 1.62 |
+| 0.65-0.70 | 55 | 0.527 [0.398, 0.653] | 1.90 |
+| >= 0.70 | 60 | 0.783 [0.664, 0.869] | 1.28 |
+
+The 0.60 threshold stays: the 0.55-0.60 band is below the 1.80 break-even. The 0.65-0.70 dip is already the subject of idea ingame-qioz (~19.10). Run: `venv_catboost/bin/python3 runtime/experiments/star-dispatch/e359_panel_threshold_bands.py` (output `runtime/artifacts/star-dispatch/e342_panel_tier1_20261006/out/threshold_bands_20261008.txt`). Where to look for errors: ties count as losses; these are first ticks (game time ~10 s), the same as the live rule.
+
 ## Decision
 Per-bet floor = 1 / (conf - 0.04) on kills_panel_window bets, printed as "Ставить от кэфа X" (margin = measured pooled gap 0.039). Examples: conf 0.60 -> 1.79, 0.68 -> 1.56, 0.77 -> 1.37. Informational only: Winline kills-window prices are not collected, so there is no block. Env: `ML_DISPATCH_KILLS_FLOOR=0` turns the line off, `ML_DISPATCH_KILLS_MIN_ODDS_MARGIN` (default 0.04) sets the margin.
 
