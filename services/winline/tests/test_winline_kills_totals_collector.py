@@ -1001,7 +1001,7 @@ def test_quick_dump_connection_failure_aborts_capture(monkeypatch, tmp_path, cap
         "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
         "loads=2 country=DE status=5 error=RuntimeError "
         "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
-        "events_opened_hero=0 events_hero_open_failed=0\n")
+        "events_opened_hero=0 events_hero_open_failed=0 events_ready_timeout=0\n")
     context.__exit__.assert_called_once()
 
 
@@ -1028,7 +1028,7 @@ def test_unrendered_event_skips_expand_and_default_body(monkeypatch, tmp_path, c
         "cards=1 events_opened=1 events_missing=0 events_unrendered=1 rows_written=0 "
         "loads=2 country=DE status=0 error=- "
         "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
-        "events_opened_hero=0 events_hero_open_failed=0\n")
+        "events_opened_hero=0 events_hero_open_failed=0 events_ready_timeout=0\n")
     if quick_mode:
         assert page.tab_calls == 1
         assert inner_text.call_count == 3  # IP echo, default body, quick body.
@@ -1146,7 +1146,7 @@ def test_quick_dump_disabled_leaves_outputs_unchanged(monkeypatch, tmp_path, cap
         "cards=1 events_opened=1 events_missing=0 events_unrendered=0 rows_written=3 "
         "loads=2 country=DE status=0 error=- "
         "events_left_listing=0 events_not_clickable=0 card_wait_seconds_max=0 "
-        "events_opened_hero=0 events_hero_open_failed=0\n")
+        "events_opened_hero=0 events_hero_open_failed=0 events_ready_timeout=0\n")
     expected = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n"
                        for row in collector.build_rows(card(live=True), page.default_text, wall=123.0))
     assert history.read_text() == expected
@@ -1205,8 +1205,7 @@ def test_quick_dump_each_event_with_existing_load_budget(monkeypatch, tmp_path, 
     assert "loads=%d" % max_loads in capsys.readouterr().out
 
 
-def test_normal_card_ready_timeout_still_aborts_with_status5(monkeypatch, tmp_path, capsys):
-    # Hard-verifier 08.10 mutant m6: only the hero path may swallow the EVENT_READY timeout.
+def test_normal_card_ready_timeout_continues_to_next_card(monkeypatch, tmp_path, capsys):
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     class Page(FakePage):
@@ -1220,8 +1219,62 @@ def test_normal_card_ready_timeout_still_aborts_with_status5(monkeypatch, tmp_pa
                         lambda html: [card("16855431"), card("16855432"), card("16855433")])
     rc = collector.main(["--history", str(tmp_path / "h.jsonl")])
     out = capsys.readouterr().out
-    assert rc == 5 and "error=TimeoutError" in out and "events_hero_open_failed=0" in out
-    assert page.opened == ["16855431", "16855432"]
+    assert rc == 0 and "status=0 error=-" in out
+    assert "events_ready_timeout=1" in out and "events_hero_open_failed=0" in out
+    assert page.opened == ["16855431", "16855432", "16855433"]
+    assert "loads=6" in out and "rows_written=6" in out
+
+
+def test_readyfail_dump_redacts_private_values(monkeypatch, tmp_path, capsys):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    secrets = (PROXY, "proxy.invalid", "test-user", "test-password", DIRECT, EXIT)
+    event = card()
+    event["team1"] += " " + PROXY
+    scoreboard = ["OTHER TEAM", "LGD GAMING", " ".join(secrets)]
+
+    class Page(FakePage):
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.EVENT_READY_JS:
+                self.url += "?private=" + PROXY
+                raise PlaywrightTimeoutError(" ".join(secrets))
+
+        def evaluate(self, script, event_id=None):
+            if event_id is None:
+                assert '.event-scoreboard-widget .match-card__team-name' in script
+                self.scoreboard_calls += 1
+                return scoreboard
+            return super().evaluate(script, event_id)
+
+        def inner_text(self, **kwargs):
+            if self.event:
+                assert kwargs == {"timeout": 10000}
+                return "READYFAIL BODY\n" + "\n".join(secrets)
+            return super().inner_text(**kwargs)
+
+    page = Page()
+    page.scoreboard_calls = 0
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [event])
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"),
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    dump, = dump_dir.glob("*_readyfail.txt")
+    assert re.fullmatch(r"16855431_\d{8}T\d{6}Z_readyfail\.txt", dump.name)
+    lines = dump.read_text().splitlines()
+    assert lines[0] == "url_path=/stavki/sport/kibersport/dota_2/event/16855431"
+    assert json.loads(lines[1].removeprefix("scoreboard_names=")) == [
+        "OTHER TEAM", "LGD GAMING", " ".join("[redacted]" for _ in secrets)]
+    assert lines[2] == "card_names=TEAM YANDEX [redacted]|LGD GAMING"
+    assert lines[3] == "READYFAIL BODY" and page.scoreboard_calls == 1
+    entry = json.loads((dump_dir / "index.jsonl").read_text())
+    assert entry == dict(ts_utc=entry["ts_utc"], event_id="16855431", kind="readyfail",
+                         hero=False, url_changed=True, names_match=False)
+    assert dump.name == "%s_%s_readyfail.txt" % (entry["event_id"], entry["ts_utc"])
+    assert not list(dump_dir.glob("*.tmp"))
+    output = capsys.readouterr()
+    captured = "".join(f.read_text() for f in dump_dir.iterdir()) + output.out + output.err
+    assert all(secret not in captured for secret in secrets)
+    assert "events_ready_timeout=1" in output.out
 
 
 def test_hero_ready_timeout_after_proxy_failure_is_not_success(monkeypatch, tmp_path, capsys):
@@ -1244,3 +1297,134 @@ def test_hero_ready_timeout_after_proxy_failure_is_not_success(monkeypatch, tmp_
                          "--max-events", "2", "--max-loads", "4"])
     out = capsys.readouterr().out
     assert rc == 5 and "error=RuntimeError" in out and "status=5" in out
+
+
+@pytest.mark.parametrize("proxy_failed", [False, True], ids=["non-timeout", "proxy-timeout"])
+@pytest.mark.parametrize("quick_mode", [False, True])
+def test_normal_ready_failure_aborts_and_masks(monkeypatch, tmp_path, capsys,
+                                              proxy_failed, quick_mode):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    class Page(FakePage):
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.EVENT_READY_JS:
+                if proxy_failed:
+                    request = Mock(failure="NS_ERROR_NET_RESET proxy " + PROXY)
+                    self.failure_callback(request)
+                    raise PlaywrightTimeoutError(PROXY + EXIT)
+                raise ValueError(PROXY + EXIT)
+
+    page = Page()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(), card("16855432")])
+    dump_dir = tmp_path / "quick"
+    args = ["--history", str(tmp_path / "h.jsonl")]
+    if quick_mode:
+        args += ["--quick-dump-dir", str(dump_dir)]
+    assert collector.main(args) == 5
+    assert page.opened == ["16855431"] and not dump_dir.exists()
+    output = capsys.readouterr()
+    assert "status=5 error=%s" % ("RuntimeError" if proxy_failed else "ValueError") in output.out
+    assert "events_ready_timeout=0" in output.out
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT))
+
+
+@pytest.mark.parametrize("hero", [False, True])
+@pytest.mark.parametrize("body_timeout", [False, True])
+@pytest.mark.parametrize("url_changed", [False, True])
+def test_readyfail_dump_hero_and_body_timeout(monkeypatch, tmp_path, capsys,
+                                             hero, body_timeout, url_changed):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    event = card()
+
+    class Page(FakePage):
+        def content(self):
+            return ('<ww-feature-event-live-center-dsk><img src="/api/cls/event/1/%s">'
+                    '</ww-feature-event-live-center-dsk>') % event["event_id"]
+
+        def evaluate(self, script, event_id=None):
+            if script == collector.OPEN_EVENT_JS and hero:
+                return False
+            if script == collector.OPEN_HERO_EVENT_JS:
+                return super().evaluate(collector.OPEN_EVENT_JS, event["event_id"])
+            if event_id is None:
+                assert script == collector.SCOREBOARD_NAMES_JS
+                return [event["team1"].lower(), event["team2"].lower()]
+            return super().evaluate(script, event_id)
+
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.EVENT_READY_JS:
+                if not url_changed:
+                    self.url = collector.LIST_URL
+                raise PlaywrightTimeoutError(PROXY + EXIT)
+
+        def inner_text(self, **kwargs):
+            if self.event:
+                assert kwargs == {"timeout": 10000}
+                if body_timeout:
+                    raise PlaywrightTimeoutError(PROXY + EXIT)
+                return "READYFAIL BODY"
+            return super().inner_text(**kwargs)
+
+    page = Page()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [event])
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"), "--max-loads", "2",
+                           "--quick-dump-dir", str(dump_dir)]) == 0
+    dump, = dump_dir.glob("*_readyfail.txt")
+    lines = dump.read_text().splitlines()
+    assert len(lines) == (3 if body_timeout else 4)
+    assert lines[2] == "card_names=TEAM YANDEX|LGD GAMING"
+    if not body_timeout:
+        assert lines[3] == "READYFAIL BODY"
+    entry = json.loads((dump_dir / "index.jsonl").read_text())
+    assert entry == dict(ts_utc=entry["ts_utc"], event_id=event["event_id"], kind="readyfail",
+                         hero=hero, url_changed=url_changed, names_match=True)
+    out = capsys.readouterr().out
+    assert "events_hero_open_failed=%d events_ready_timeout=%d" % (int(hero), int(not hero)) in out
+    assert "loads=2" in out and page.opened == [event["event_id"]]
+
+
+@pytest.mark.parametrize("stage", ["scoreboard", "body"])
+@pytest.mark.parametrize("proxy_failed", [False, True])
+def test_readyfail_dump_errors_propagate(monkeypatch, tmp_path, capsys, stage, proxy_failed):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    class Page(FakePage):
+        def fail(self):
+            if proxy_failed:
+                self.failure_callback(Mock(failure="NS_ERROR_NET_RESET proxy " + PROXY))
+                return
+            raise ValueError(PROXY + EXIT)
+
+        def wait_for_function(self, script, *args, **kwargs):
+            if script == collector.EVENT_READY_JS:
+                raise PlaywrightTimeoutError(PROXY + EXIT)
+
+        def evaluate(self, script, event_id=None):
+            if event_id is None:
+                if stage == "scoreboard":
+                    self.fail()
+                return ["TEAM YANDEX", "LGD GAMING"]
+            return super().evaluate(script, event_id)
+
+        def inner_text(self, **kwargs):
+            if self.event:
+                assert kwargs == {"timeout": 10000}
+                if stage == "body":
+                    self.fail()
+                    raise PlaywrightTimeoutError(PROXY + EXIT)
+                return "READYFAIL BODY"
+            return super().inner_text(**kwargs)
+
+    page = Page()
+    offline_browser(monkeypatch, page)
+    monkeypatch.setattr(collector, "enumerate_cards", lambda html: [card(), card("16855432")])
+    dump_dir = tmp_path / "quick"
+    assert collector.main(["--history", str(tmp_path / "h.jsonl"),
+                           "--quick-dump-dir", str(dump_dir)]) == 5
+    assert page.opened == ["16855431"] and not dump_dir.exists()
+    output = capsys.readouterr()
+    assert "status=5 error=%s" % ("RuntimeError" if proxy_failed else "ValueError") in output.out
+    assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT))

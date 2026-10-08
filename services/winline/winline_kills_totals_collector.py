@@ -66,6 +66,9 @@ EVENT_READY_JS = """([listing, team1, team2]) => {
   return location.href !== listing && names.includes(normalize(team1))
     && names.includes(normalize(team2)) && text.includes('КАРТА');
 }"""
+SCOREBOARD_NAMES_JS = """() => Array.from(document.querySelectorAll(
+  '.event-scoreboard-widget .match-card__team-name'))
+  .map(el => (el.innerText || '').replace(/\\s+/g, ' ').trim())"""
 QUICK_TAB_JS = """() => {
   const text = el => (el.innerText || '').trim();
   const visible = el => el.getClientRects().length > 0
@@ -525,9 +528,7 @@ def _write_dump(path, text):
     os.replace(str(tmp), str(path))
 
 
-def capture_quick_tab(page, directory, card, body_text, full_markets, private_values,
-                      check_connection):
-    """Capture default/quick views and append window prices after a verified quick click."""
+def _dump_redactor(private_values):
     secrets = sorted({str(value) for value in private_values if value}, key=len, reverse=True)
 
     def safe(text):
@@ -535,6 +536,40 @@ def capture_quick_tab(page, directory, card, body_text, full_markets, private_va
             text = text.replace(secret, "[redacted]")
         return text
 
+    return safe
+
+
+def capture_ready_failure(page, directory, card, hero, private_values, check_connection):
+    """Record readiness diagnostics without navigation or private proxy values."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    safe = _dump_redactor(private_values)
+    url = page.url
+    names = page.evaluate(SCOREBOARD_NAMES_JS)
+    check_connection()
+    names_match = all(re.sub(r"\s+", " ", card[key]).strip().upper() in
+                      [name.upper() for name in names] for key in ("team1", "team2"))
+    text = "url_path=%s\nscoreboard_names=%s\ncard_names=%s|%s\n" % (
+        urlparse(url).path, json.dumps(names, ensure_ascii=False), card["team1"], card["team2"])
+    try:
+        text += page.locator("body").inner_text(timeout=10000)
+    except PlaywrightTimeoutError:
+        pass
+    check_connection()
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    ts_utc = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    event_id = safe(str(card["event_id"]))
+    stem = "%s_%s" % (re.sub(r"[^A-Za-z0-9_-]", "_", event_id), ts_utc)
+    _write_dump(directory / (stem + "_readyfail.txt"), safe(text))
+    _append_json_rows(directory / "index.jsonl", [dict(
+        ts_utc=ts_utc, event_id=event_id, kind="readyfail", hero=bool(hero),
+        url_changed=bool(url != LIST_URL), names_match=names_match)])
+
+
+def capture_quick_tab(page, directory, card, body_text, full_markets, private_values,
+                      check_connection):
+    """Capture default/quick views and append window prices after a verified quick click."""
+    safe = _dump_redactor(private_values)
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     ts_utc = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -680,11 +715,13 @@ def _cycle(args, stats):
                         page.wait_for_function(EVENT_READY_JS,
                                                arg=[LIST_URL, card["team1"], card["team2"]], timeout=30000)
                     except PlaywrightTimeoutError:
-                        if not opened_hero:
-                            raise
-                        # A proxy failure during the hero click must not end the run as status=0.
+                        # A proxy failure during either click must not end the run as status=0.
                         check_connection()
-                        stats["events_hero_open_failed"] = stats.get("events_hero_open_failed", 0) + 1
+                        counter = "events_hero_open_failed" if opened_hero else "events_ready_timeout"
+                        stats[counter] = stats.get(counter, 0) + 1
+                        if args.quick_dump_dir:
+                            capture_ready_failure(page, args.quick_dump_dir, card, opened_hero,
+                                                  private_values, check_connection)
                         continue
                     if opened_hero:
                         stats["events_opened_hero"] = stats.get("events_opened_hero", 0) + 1
@@ -764,19 +801,22 @@ def main(argv=None):
     with quiet_output():
         code = _cycle(args, stats)
     # events_opened counts clicks sent (feed or hero); pages actually loaded =
-    # events_opened - events_hero_open_failed (and - 1 when status=5 aborted on a load).
+    # events_opened - events_hero_open_failed - events_ready_timeout
+    # (and - 1 when status=5 aborted on a load before counting a readiness timeout).
     # events_missing = events_left_listing + events_not_clickable (+ non-digit ids).
     print("cards={cards} events_opened={events_opened} events_missing={missing} events_unrendered={unrendered} "
           "rows_written={rows_written} loads={loads} country={country} status={status} error={error} "
           "events_left_listing={left} events_not_clickable={not_clickable} "
           "card_wait_seconds_max={wait_seconds} "
-          "events_opened_hero={opened_hero} events_hero_open_failed={hero_failed}".format(
+          "events_opened_hero={opened_hero} events_hero_open_failed={hero_failed} "
+          "events_ready_timeout={ready_timeout}".format(
               status=code, missing=stats.get("events_missing", 0), unrendered=stats.get("events_unrendered", 0),
               error=stats.get("error", "-"), left=stats.get("events_left_listing", 0),
               not_clickable=stats.get("events_not_clickable", 0),
               wait_seconds=stats.get("card_wait_seconds_max", 0),
               opened_hero=stats.get("events_opened_hero", 0),
               hero_failed=stats.get("events_hero_open_failed", 0),
+              ready_timeout=stats.get("events_ready_timeout", 0),
               **{k: v for k, v in stats.items() if k not in ("events_missing", "events_unrendered", "error")}),
           flush=True)
     return code
