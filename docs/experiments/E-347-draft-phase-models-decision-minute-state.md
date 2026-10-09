@@ -291,6 +291,8 @@ LL одной и той же подгонки с живыми и канонич�
   пересечение с доставленными Late с ценой 0. Темп: 13 карт с ценой за 02–03.10 (≈ 6,5 в сутки;
   04.10 — 0 из 4: у Winline на серии EPL ЯЧЁ123 — Cloud Dawning рынок `error`/`missing`).
   80 карт ≈ к 14.10, а не через неделю.
+  Пересчёт 09.10 (E-367): 25 карт 31′ с ценой из 87 строк (EV-ставок 18), ≈ 3,6 в сутки → ≈ 24.10;
+  цена есть на 29 % строк 31′ против 62 % на 10′ — разбор ingame-2qdo, проверка правила — ingame-9xrl.
 - **Запуск**:
   `venv_catboost/bin/python3 runtime/experiments/draft-cp/minute_model_eval/augment_ledger.py --src <копия serv1> --older-ledger <копия до ребейза>/live_elo_progress.json --pro-dir pro_heroes_data/json_parts_split_from_object --out <копия>_aug`,
   затем `evaluate.py --src <копия>_aug`. Тесты: `test_evaluate.py` (11 проходят; новая пара
