@@ -145,7 +145,7 @@ def test_extraction_delivery_boundary(tmp_path, monkeypatch, transport, compress
         result = B.backfill_by_id(SINCE, corpus, M=M, now=NOW)
         assert result == dict(candidates=3, fetched=2, new_written=1, replaced=1,
                               still_unparsed=0, stratz_null=1, retry_requested=1,
-                              errors=0, league_skipped=0)
+                              retry_requested_unparsed=0, errors=0, league_skipped=0)
     mids = extract(corpus, tmp_path, monkeypatch)
     assert {C, NEW} <= mids
     assert NULL not in mids
@@ -528,28 +528,27 @@ def test_still_unparsed_never_replaces_or_adds(tmp_path, monkeypatch):
     corpus, _ = tiny_corpus(tmp_path)
     processed, manifest, locations, _ = B.scan_recent(corpus, SINCE, M)
     before = snapshot(corpus)
-    candidates = [C]
-    calls = []
-    def post(url, **kwargs):
-        calls.append(kwargs['json']['query'])
-        # Original captured corpus record is the real unparsed input.
-        return Response({'data': {'m%d' % C: fixture('stored_c.json')}})
-    monkeypatch.setattr(M.cf_requests, 'post', post)
-    monkeypatch.setattr(M, 'proxy_pool', None)
-    monkeypatch.setattr(M, 'STRATZ_PROXY_MAP', {'http://fixture.invalid:80': 'offline-test-token'})
     for existing in (True, False):
+        # Original captured corpus record has ten players without positions.
+        payloads = [{'data': {'m%d' % C: fixture('stored_c.json')}}]
+        if existing:
+            payloads.append({'data': {'retryMatchDownload': True}})
+        calls = offline_batches(monkeypatch, payloads)
         stats = dict(fetched=0, new_written=0, replaced=0, stratz_null=0,
-                     retry_requested=0, still_unparsed=0, errors=0)
-        with B.bounded_stratz(M, 1):
-            B.asyncio.run(B.fetch_and_write(M, corpus, SINCE, candidates,
+                     retry_requested=0, retry_requested_unparsed=0, still_unparsed=0, errors=0)
+        with B.bounded_stratz(M, 2):
+            B.asyncio.run(B.fetch_and_write(M, corpus, SINCE, [C],
                                            locations if existing else {},
                                            processed if existing else set(), manifest,
                                            False, NOW, stats))
         assert stats['still_unparsed'] == 1
         assert stats['new_written'] == stats['replaced'] == 0
-        assert snapshot(corpus) == before
-        # Initialize inside the next event loop (Python 3.9 locks bind at creation).
-        monkeypatch.setattr(M, 'proxy_pool', None)
+        assert stats['retry_requested_unparsed'] == int(existing)
+        assert [q for q in calls if q.startswith('mutation')] == (
+            ['mutation { retryMatchDownload(matchId: %d) }' % C] if existing else [])
+        after = snapshot(corpus)
+        after.pop(B.RETRY_FILE)
+        assert after == before
 
 
 def test_written_records_match_stored_schema(tmp_path, transport):
@@ -598,7 +597,8 @@ def failed_batch_ids(count):
 def run_batches(corpus, candidates, dry_run=False):
     processed, manifest, locations, _ = B.scan_recent(corpus, SINCE, M, NOW)
     stats = dict(fetched=0, new_written=0, replaced=0, stratz_null=0,
-                 retry_requested=0, still_unparsed=0, errors=0, league_skipped=0)
+                 retry_requested=0, retry_requested_unparsed=0,
+                 still_unparsed=0, errors=0, league_skipped=0)
     with B.bounded_stratz(M, 10):
         B.asyncio.run(B.fetch_and_write(M, corpus, SINCE, candidates, locations,
                                        processed, manifest, dry_run, NOW, stats))
@@ -799,17 +799,145 @@ def test_batch_transport_stop_is_immediate(tmp_path, monkeypatch):
     assert len(calls) == 1 and snapshot(corpus) == before
 
 
-def test_mutation_transport_stop_is_immediate(tmp_path, monkeypatch):
+@pytest.mark.parametrize('unparsed', [False, True])
+def test_mutation_transport_stop_is_immediate(tmp_path, monkeypatch, unparsed):
     # A rate-limit/HTTP stop on retryMatchDownload must stop the whole run (it is a
     # BaseException), not be swallowed by the per-id fail-open handler; the receipt
     # written before the request stays, so the mutation is never repeated.
     corpus, _ = tiny_corpus(tmp_path)
     monkeypatch.setattr(B, 'BATCH_SIZE', 2)
     other_null = failed_batch_ids(1)[0]
-    null_batch = {'data': {'m%d' % NULL: None, 'm%d' % other_null: None}}
+    null_batch = {'data': {'m%d' % NULL: (dict(fixture('stored_c.json'), id=NULL)
+                                        if unparsed else None),
+                           'm%d' % other_null: None}}
     calls = offline_batches(monkeypatch, [null_batch, {'message': 'API rate limit exceeded'},
                                          fixture('stratz_response.json')])
     with pytest.raises(B.TransportStop, match='rate limit'):
         run_batches(corpus, [NULL, other_null, C, NEW])
     assert len(calls) == 2 and calls[1].startswith('mutation')
     assert set(B.read_json(corpus / B.RETRY_FILE)) == {str(NULL)}
+
+
+@pytest.mark.parametrize('failure', [None, 'exception', 'missing_boolean'])
+def test_unparsed_retry_persists_before_send_and_throttles(tmp_path, monkeypatch, failure):
+    corpus, _ = tiny_corpus(tmp_path)
+    record = fixture('stored_c.json')
+    assert record.get('parsedDateTime') is None
+    assert len(record['players']) == 10 and all(p.get('position') is None for p in record['players'])
+    response = fixture('stratz_response.json')
+    response['data']['m%d' % C] = record
+    monkeypatch.setattr(B, 'opendota_ids', lambda *args: {C, NEW})
+    payloads = [response]
+    if failure != 'exception':
+        payloads.append({'data': {'retryMatchDownload': None if failure else True}})
+    offline_batches(monkeypatch, payloads)
+    original, mutations = B.stratz, []
+
+    async def send(module, query):
+        if query.startswith('mutation'):
+            mutations.append(query)
+            assert datetime.fromisoformat(B.read_json(corpus / B.RETRY_FILE)[str(C)]).timestamp() == NOW
+            # Complete records must be published before any retry mutation.
+            assert NEW in B.read_json(corpus / 'processed_ids.txt')
+            if failure == 'exception':
+                raise RuntimeError('fixture send failed')
+        return await original(module, query)
+
+    monkeypatch.setattr(B, 'stratz', send)
+    result = B.backfill_by_id(SINCE, corpus, M=M, now=NOW)
+    assert mutations == ['mutation { retryMatchDownload(matchId: %d) }' % C]
+    assert result['still_unparsed'] == 1 and result['retry_requested'] == 0
+    assert result['retry_requested_unparsed'] == int(failure is None)
+    assert result['errors'] == int(failure is not None)
+    receipt = (corpus / B.RETRY_FILE).read_bytes()
+    calls = offline_batches(monkeypatch, [response])
+    result = B.backfill_by_id(SINCE, corpus, M=M, now=NOW + B.RETRY_SECONDS - 1)
+    assert len(mutations) == 1 and not any(q.startswith('mutation') for q in calls)
+    assert result['retry_requested_unparsed'] == result['errors'] == 0
+    assert (corpus / B.RETRY_FILE).read_bytes() == receipt
+    calls = offline_batches(monkeypatch, [response, {'data': {'retryMatchDownload': True}}])
+    monkeypatch.setattr(B, 'stratz', original)
+    result = B.backfill_by_id(SINCE, corpus, M=M, now=NOW + B.RETRY_SECONDS)
+    assert [q for q in calls if q.startswith('mutation')] == mutations
+    assert result['retry_requested_unparsed'] == 1 and result['retry_requested'] == 0
+
+
+@pytest.mark.parametrize('kind', ['unparsed', 'complete', 'null'])
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_retry_record_kinds_and_dry_run(tmp_path, monkeypatch, kind, dry_run):
+    corpus, _ = tiny_corpus(tmp_path)
+    before = snapshot(corpus)
+    record = (fixture('stored_c.json') if kind == 'unparsed' else
+              fixture('stratz_response.json')['data']['m%d' % C] if kind == 'complete' else None)
+    payloads = [{'data': {'m%d' % C: record}}]
+    expected = int(not dry_run and kind != 'complete')
+    if expected:
+        payloads.append({'data': {'retryMatchDownload': True}})
+    calls = offline_batches(monkeypatch, payloads)
+    stats = run_batches(corpus, [C], dry_run=dry_run)
+    assert [q for q in calls if q.startswith('mutation')] == (
+        ['mutation { retryMatchDownload(matchId: %d) }' % C] if expected else [])
+    assert stats['retry_requested'] == int(expected and kind == 'null')
+    assert stats['retry_requested_unparsed'] == int(expected and kind == 'unparsed')
+    assert stats['errors'] == 0
+    if dry_run:
+        assert snapshot(corpus) == before
+
+
+@pytest.mark.parametrize('excluded', ['before', 'after', 'missing_league', 'amateur'])
+def test_unparsed_retry_excludes_outside_window_and_skipped_leagues(tmp_path, monkeypatch, excluded):
+    corpus, _ = tiny_corpus(tmp_path)
+    before = snapshot(corpus)
+    record = fixture('stored_c.json')
+    monkeypatch.setattr(M, 'PRO_REQUIRE_LEAGUE', True)
+    if excluded in ('before', 'after'):
+        record['startDateTime'] = SINCE - 1 if excluded == 'before' else NOW + 1
+    elif excluded == 'missing_league':
+        record['leagueId'], record['league'] = None, {}
+    else:
+        record['league']['tier'] = 'AMATEUR'
+    calls = offline_batches(monkeypatch, [{'data': {'m%d' % C: record}}])
+    stats = run_batches(corpus, [C])
+    assert len(calls) == 1 and not any(q.startswith('mutation') for q in calls)
+    assert stats['still_unparsed'] == 1
+    assert stats['retry_requested_unparsed'] == stats['retry_requested'] == 0
+    assert stats['errors'] == stats['league_skipped'] == 0
+    assert snapshot(corpus) == before
+
+
+@pytest.mark.parametrize('max_calls', [1, 2, 3])
+def test_unparsed_and_null_retries_share_physical_budget(tmp_path, monkeypatch, max_calls):
+    corpus, _ = tiny_corpus(tmp_path)
+    response = fixture('stratz_response.json')
+    response['data']['m%d' % C] = fixture('stored_c.json')
+    calls = offline_batches(monkeypatch, [response] + [{'data': {'retryMatchDownload': True}}] * 2)
+    monkeypatch.setattr(B, 'opendota_ids', lambda *args: {C, NEW, NULL})
+    original = M.cf_requests.post
+    result = B.backfill_by_id(SINCE, corpus, M=M, now=NOW, max_stratz_calls=max_calls)
+    assert len(calls) == max_calls and M.cf_requests.post is original
+    mutations = [q for q in calls if q.startswith('mutation')]
+    assert mutations == ['mutation { retryMatchDownload(matchId: %d) }' % mid
+                         for mid in (C, NULL)][:max_calls - 1]
+    assert result['retry_requested_unparsed'] == int(max_calls >= 2)
+    assert result['retry_requested'] == int(max_calls == 3)
+    assert result['errors'] == int(max_calls < 3)
+    assert result['new_written'] == 1
+
+
+@pytest.mark.parametrize('first_null', [False, True])
+def test_null_and_unparsed_retries_share_receipt_and_dedupe(tmp_path, monkeypatch, first_null):
+    corpus, _ = tiny_corpus(tmp_path)
+    monkeypatch.setattr(B, 'BATCH_SIZE', 1)
+    records = [None, fixture('stored_c.json')]
+    if not first_null:
+        records.reverse()
+    calls = offline_batches(monkeypatch, [
+        {'data': {'m%d' % C: records[0]}}, {'data': {'retryMatchDownload': True}},
+        {'data': {'m%d' % C: records[1]}}])
+    stats = run_batches(corpus, [C, C])
+    assert [q for q in calls if q.startswith('mutation')] == [
+        'mutation { retryMatchDownload(matchId: %d) }' % C]
+    assert stats['retry_requested'] == int(first_null)
+    assert stats['retry_requested_unparsed'] == int(not first_null)
+    assert stats['stratz_null'] == stats['still_unparsed'] == 1
+    assert stats['errors'] == 0

@@ -374,17 +374,25 @@ async def fetch_and_write(M, corpus, since, candidates, locations, processed,
                 return
             continue
         consecutive_errors = 0
-        records, nulls = {}, []
+        records, retries = {}, {}
         for mid in batch:
             alias = "m%d" % mid
             record = data[alias]
             if record is None:
                 stats["stratz_null"] += 1
-                nulls.append(mid)
+                retries[mid] = "retry_requested"
                 continue
             stats["fetched"] += 1
             if not complete(record):
                 stats["still_unparsed"] += 1
+                # Retry only window/league-eligible records; preserve the
+                # existing unparsed, outside-window and league-skip counters.
+                if since <= (record.get("startDateTime") or 0) <= now:
+                    league = record.get("league") or {}
+                    league_id = record.get("leagueId") or league.get("id")
+                    if (not getattr(M, "PRO_REQUIRE_LEAGUE", False)
+                            or (league_id is not None and league.get("tier") != "AMATEUR")):
+                        retries.setdefault(mid, "retry_requested_unparsed")
             elif since <= (record.get("startDateTime") or 0) <= now:
                 if getattr(M, "PRO_REQUIRE_LEAGUE", False):
                     league = record.get("league") or {}
@@ -398,7 +406,7 @@ async def fetch_and_write(M, corpus, since, candidates, locations, processed,
                 print("ВНИМАНИЕ: Stratz match %d outside window" % mid, flush=True)
         if not dry_run:
             write_records(M, corpus, records, locations, processed, manifest, stats)
-            for mid in nulls:
+            for mid, counter in retries.items():
                 previous = retry.get(str(mid))
                 last = datetime.fromisoformat(previous).timestamp() if previous else 0
                 if now - last < RETRY_SECONDS:
@@ -415,7 +423,7 @@ async def fetch_and_write(M, corpus, since, candidates, locations, processed,
                     print("ВНИМАНИЕ: backfill-by-id retryMatchDownload %d failed: %s" %
                           (mid, str(exc)[:300]), flush=True)
                     continue
-                stats["retry_requested"] += 1
+                stats[counter] += 1
 
 
 def backfill_by_id(since=None, corpus_dir=None, dry_run=False, max_pages=15,
@@ -426,7 +434,8 @@ def backfill_by_id(since=None, corpus_dir=None, dry_run=False, max_pages=15,
     since = now - int(os.getenv("TOPUP_DAYS", "10")) * 86400 if since is None else int(since)
     corpus = Path(corpus_dir) if corpus_dir is not None else Path(M.PRO_HEROES_DIR) / "json_parts_split_from_object"
     stats = dict.fromkeys(("candidates", "fetched", "new_written", "replaced",
-                          "still_unparsed", "stratz_null", "retry_requested", "errors",
+                          "still_unparsed", "stratz_null", "retry_requested",
+                          "retry_requested_unparsed", "errors",
                           "league_skipped"), 0)
     try:
         processed, manifest, locations, unfinished = scan_recent(corpus, since, M, now)
