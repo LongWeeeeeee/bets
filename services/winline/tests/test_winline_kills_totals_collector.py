@@ -634,10 +634,13 @@ def _duel_overview_cards():
     return cards
 
 
+# Since 15695442 (card ingame-fgbt) the listing parser also returns the overview hero block -
+# the pinned live real match TEAM AURORA - 1W (event 16855095, not a duel) - so it is the one
+# live card here; the four duel props stay excluded.
 @pytest.mark.parametrize("kinds,expected", [
     ("prematch", [("PARIVISION", "TEAM YANDEX")]),
-    ("live", []),
-    ("all", [("PARIVISION", "TEAM YANDEX")]),
+    ("live", [("TEAM AURORA", "1W")]),
+    ("all", [("TEAM AURORA", "1W"), ("PARIVISION", "TEAM YANDEX")]),
 ])
 def test_player_duel_prop_cards_are_never_selected(kinds, expected):
     selected = collector.select_cards(_duel_overview_cards(), kinds, 12)
@@ -645,9 +648,11 @@ def test_player_duel_prop_cards_are_never_selected(kinds, expected):
 
 
 def test_player_duel_prop_cards_do_not_consume_the_event_budget():
-    # 'all' puts live cards first; the three live cards here are all duels.
-    selected = collector.select_cards(_duel_overview_cards(), "all", 1)
-    assert [(c["team1"], c["team2"]) for c in selected] == [("PARIVISION", "TEAM YANDEX")]
+    # 'all' puts live cards first; the three live listing cards here are all duels, the hero
+    # (TEAM AURORA - 1W) is the only real live card: two slots go to it and the prematch card.
+    selected = collector.select_cards(_duel_overview_cards(), "all", 2)
+    assert [(c["team1"], c["team2"]) for c in selected] == [
+        ("TEAM AURORA", "1W"), ("PARIVISION", "TEAM YANDEX")]
 
 
 class QuickPage(FakePage):
