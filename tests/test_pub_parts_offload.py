@@ -13,7 +13,9 @@ from __future__ import annotations
 import fcntl
 import importlib.util
 import json
+import plistlib
 import shlex
+import shutil
 import os
 import subprocess
 import sys
@@ -60,6 +62,30 @@ MUTATIONS = {
     "name_safety": [('if not NAME_RE.match(f["name"]) or "/" in f["name"]:', "if False:")],
     "control_backup": [("                shutil.copy2(target, bak)", "                pass")],
     "local_reader": [("            if hit is not None and pid not in mine:", "            if False:")],
+    "local_reader_waiter": [('            probe = _SEARCH_CMD_RE.sub(" ", cmd)', "            probe = cmd")],
+    # --- temp_files phase (card ingame-xmas.2) ---
+    "temp_status_complete": [('        if info.get("status") != "complete" or not _is_epoch(info.get("completed_at")):', "        if False:")],
+    "temp_parts_remaining": [("        if left and not cfg.dry_run:", "        if False:")],
+    "temp_lock_free": [("        if remote.lock_busy(cfg.remote_lock):", "        if False:")],
+    "temp_merge_process": [("        if remote.merge_procs():", "        if False:")],
+    "temp_quiescent": [("            self._guard_quiescent(fresh)", "            pass")],
+    "temp_verdict_ok_only": [('if v.get("ok") is True and', "if True and")],
+    "tc_newer_than_sweep": [('    if st["mtime_ns"] >= completed_ns:', "    if False:")],
+    "tc_too_large": [('    if st["size"] > max_bytes:', "    if False:")],
+    "tc_unparsable": [("        doc = strict_loads(raw)\n",
+                       "        try:\n            doc = strict_loads(raw)\n        except Exception:\n"
+                       "            doc = {k.decode(): {} for k in re.findall(rb'\"(\\d+)\": ', raw)}\n")],
+    "tc_not_object": [("    if not isinstance(doc, dict):", "    if False:")],
+    "tc_empty": [("    if not n_keys:", "    if False:")],
+    "tc_bad_key": [("        if n is None:", "        if False:")],
+    "tc_ids_missing": [("    if n_missing:", "    if False:")],
+    "dt_lock_held": [('        fail(11, "pub_recrawl.lock is held: a sweep started before the temp_files delete")', "        pass")],
+    "dt_status": [('    if cur_state is None or cur_state.get("status") != "complete" or cur_state.get("completed_at") != want_completed:', "    if False:")],
+    "dt_parts_remain": [("    if left_parts:", "    if False:")],
+    "dt_stamp": [("def unchanged_temp(path, want):\n    return same(path, want)", "def unchanged_temp(path, want):\n    return True")],
+    "dt_guards": [('        if not same(gd["path"], gd):', "        if False:")],
+    "dt_newer": [('        if f["mtime_ns"] >= want_completed * 10 ** 9:', "        if False:")],
+    "dt_name_safety": [('if not TEMP_NAME_RE.match(f["name"]) or "/" in f["name"]:', "if False:")],
 }
 
 
@@ -115,6 +141,12 @@ class World:
         self.set_json(self.mparent / "pub_player_steam_ids.json", {"ids": [1, 2], "source": "mac"})
         self.remote = mod.Remote("fake", use_ssh=False, python=sys.executable, io_prefix=[],
                                  sha_argv=["shasum", "-a", "256"], runner=self._runner)
+        # temp-phase attributes are set after construction so that the pre-temp-phase module can still be loaded
+        self.remote.np_python, self.remote.nice_prefix = sys.executable, []
+        self.rtemp = self.rparent / "temp_files"
+        self.state_file = self.lock.parent / "pub_recrawl.json"
+        self.manifest_file = tmp / "temp_manifest.jsonl"
+        self.completed_at = None
 
     # -- fixtures helpers -------------------------------------------------------------
     @staticmethod
@@ -144,18 +176,61 @@ class World:
             h(argv, res)
         return res
 
+    # -- temp_files fixtures -----------------------------------------------------------
+    def write_state(self, status="complete", completed_ago_h=5.0, **extra):
+        st = {"status": status, "started_at": int(NOW - 30 * HOUR), "cutoff": int(NOW - 60 * HOUR)}
+        if status == "complete":
+            self.completed_at = int(NOW - completed_ago_h * HOUR)
+            st["completed_at"] = self.completed_at
+        st.update(extra)
+        self.state_file.write_text(json.dumps(st))
+
+    def enable_temps(self, status="complete", completed_ago_h=5.0):
+        """serv1 temp_files/ plus pub_recrawl.json of a finished sweep (completed `completed_ago_h` ago)."""
+        self.rtemp.mkdir(parents=True, exist_ok=True)
+        self.write_state(status, completed_ago_h)
+
+    def add_temp(self, name, ids, *, known=True, age_h=20, raw=None):
+        """known: True = all ids go to serv1 processed_ids.txt, False = none, or a list of ids to register."""
+        p = self.rtemp / name
+        p.write_text(raw if raw is not None else json.dumps({str(i): {"id": i, "payload": "yyyy"} for i in ids}))
+        self.age(p, age_h)
+        reg = list(ids) if known is True else ([] if known is False else list(known))
+        if reg:
+            pid = self.rdir / "processed_ids.txt"
+            self.set_json(pid, json.loads(pid.read_text()) + reg)
+            self.age(pid, 3)
+        return p
+
+    def remote_temps(self):
+        return sorted(p.name for p in self.rtemp.iterdir()) if self.rtemp.exists() else []
+
+    def manifest(self):
+        if not self.manifest_file.exists():
+            return []
+        return [json.loads(line) for line in self.manifest_file.read_text().splitlines() if line.strip()]
+
+    def temp_ops(self):
+        return [op_of(c) for c in self.cmds if op_of(c) in ("tempcheck", "delete_temp")]
+
     # -- run ---------------------------------------------------------------------------
     def cfg(self, **over):
         c = self.mod.Config(remote_dir=str(self.rdir), remote_parent=str(self.rparent), remote_lock=str(self.lock),
                             mac_dir=self.mdir, mac_parent=self.mparent, log_path=self.tmp / "offload.log",
                             min_free_margin_bytes=0, local_reader_markers=("__no_such_reader_marker__",))
+        for k, v in dict(remote_temp_dir=str(self.rtemp), remote_state=str(self.state_file),
+                         state_path=self.tmp / "offload_state.json", temp_manifest_path=self.manifest_file).items():
+            setattr(c, k, v)  # setattr: tolerated by the pre-temp-phase Config, which is how the red run works
         for k, v in over.items():
             setattr(c, k, v)
         return c
 
     def run(self, **over) -> int:
+        now = over.pop("now", None)
         cfg = self.cfg(**over)
-        return self.mod.execute(cfg, self.remote, self.mod.Log(cfg.log_path, echo=False), notify=self.notified.append)
+        kw = {"now": now} if now is not None else {}
+        return self.mod.execute(cfg, self.remote, self.mod.Log(cfg.log_path, echo=False),
+                                notify=self.notified.append, **kw)
 
     # -- observations ------------------------------------------------------------------
     def remote_parts(self):
@@ -416,8 +491,10 @@ def test_transport_failure_before_delete_reports_nothing_deleted(tmp_path, failu
     w.hooks_before.append(lose_connection)
     assert w.run() == REAL.EXIT_ABORT
     assert w.all_remote_still_there()
-    assert len(w.notified) == 1 and "nothing deleted on serv1" in w.notified[0]
-    assert "UNKNOWN" not in w.notified[0]
+    # hourly job: a first connect failure is only logged; it is notified once it persists (tests below)
+    assert w.notified == []
+    log = (w.tmp / "offload.log").read_text()
+    assert "ABORT" in log and "nothing deleted on serv1" in log and "UNKNOWN" not in log
     assert not any(op_of(c) == "delete" for c in w.cmds)
 
 
@@ -571,6 +648,344 @@ def test_main_turns_sigterm_and_sighup_into_terminated(tmp_path, monkeypatch):
 
 
 # ======================================================================================
+# temp_files phase (card ingame-xmas.2): serv1 keeps only map-id state; merged temp files go away
+# ======================================================================================
+def _temp_world(mod, tmp, **kw):
+    w = World(mod, tmp, nums=(), **kw)
+    w.enable_temps()
+    w.add_temp("t1.txt", [2000, 2001, 2002])
+    w.add_temp("t2.txt", [2003, 2004])
+    return w
+
+
+def test_temp_happy_path_deletes_merged_files_and_records_manifest(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    ctl = {n: (w.rdir / n).read_bytes() for n in ("processed_ids.txt", "part_counters.json")}
+    ctl_player = (w.rparent / "pub_player_steam_ids.json").read_bytes()
+    mac_before = sorted(p.name for p in w.mdir.iterdir())
+    assert w.run() == 0
+    assert w.remote_temps() == []
+    # serv1 keeps the map-id state untouched; the Mac corpus dir gets nothing from the temp phase
+    assert {n: (w.rdir / n).read_bytes() for n in ctl} == ctl
+    assert (w.rparent / "pub_player_steam_ids.json").read_bytes() == ctl_player
+    assert sorted(p.name for p in w.mdir.iterdir()) == mac_before
+    assert w.notified == []
+    events = {m["event"]: m for m in w.manifest()}
+    assert {f["name"]: f["n_ids"] for f in events["temp_delete_intent"]["files"]} == {"t1.txt": 3, "t2.txt": 2}
+    assert events["temp_deleted"]["count"] == 2 and events["temp_deleted"]["completed_at"] == w.completed_at
+    assert "deleted 2 temp files" in (w.tmp / "offload.log").read_text()
+
+
+def test_temp_phase_runs_after_the_parts_were_moved_in_the_same_run(tmp_path):
+    w = World(REAL, tmp_path)  # 3 parts, all older than the min age
+    w.enable_temps()
+    w.add_temp("t1.txt", [2000, 2001])
+    assert w.run() == 0
+    assert w.remote_parts() == [] and w.mac_parts() == [w.pname(n) for n in (1, 2, 3)]
+    assert w.remote_temps() == []
+    ops = [op_of(c) for c in w.cmds if op_of(c) in ("delete", "tempcheck", "delete_temp")]
+    assert ops == ["delete", "tempcheck", "delete_temp"]  # parts first, temp files only afterwards
+    assert w.notified == []
+
+
+def test_temp_not_attempted_when_the_part_phase_aborts(tmp_path):
+    w = World(REAL, tmp_path)
+    w.enable_temps()
+    w.add_temp("t1.txt", [2000, 2001])
+    p = w.rdir / w.pname(2)
+    p.write_text(p.read_text()[:-30])  # truncated part: the whole part phase aborts
+    w.age(p, 10)
+    assert w.run() == 1
+    assert w.temp_ops() == [] and w.remote_temps() == ["t1.txt"]
+
+
+def test_temp_kept_files_are_reported_with_reasons_and_never_deleted(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    w.add_temp("miss.txt", [2005, 99999], known=[2005])
+    full = json.dumps({str(i): {"id": i} for i in (2000, 2001)})
+    w.add_temp("trunc.txt", [], raw=full[:-5])
+    w.add_temp("fresh.txt", [2000], age_h=1)  # newer than the sweep's completed_at
+    w.add_temp("empty.txt", [], raw="{}")
+    w.add_temp("list.txt", [], raw="[2000, 2001]")
+    w.add_temp("badkey.txt", [], raw=json.dumps({"abc": {"id": 2000}}))
+    keep = {"miss.txt", "trunc.txt", "fresh.txt", "empty.txt", "list.txt", "badkey.txt"}
+    assert w.run() == 0
+    assert set(w.remote_temps()) == keep
+    log = (w.tmp / "offload.log").read_text()
+    for reason in ("ids_missing", "unparsable", "newer_than_sweep", "empty", "not_object", "bad_key"):
+        assert reason in log
+    for name in keep:
+        assert name in log
+    assert "deleted 2 temp files" in log and w.notified == []
+    kept = w.manifest()[0]["kept"]
+    assert {n for names in kept.values() for n in names} == keep
+
+
+def test_temp_non_txt_files_and_subdirs_are_never_touched(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    (w.rtemp / "notes.json").write_text("{}")
+    (w.rtemp / "x.txt.bak").write_text("{}")
+    (w.rtemp / "sub").mkdir()
+    (w.rtemp / "sub" / "inner.txt").write_text("{}")
+    assert w.run() == 0
+    assert w.remote_temps() == ["notes.json", "sub", "x.txt.bak"]
+    assert (w.rtemp / "sub" / "inner.txt").exists()
+
+
+@pytest.mark.parametrize("state", [
+    {"status": "running"}, {"status": "failed", "failed_at": 1}, {"status": "preparing"},
+    {"status": "complete"}, {"status": "complete", "completed_at": "soon"}, {"status": "complete", "completed_at": True},
+    None, "corrupt"])
+def test_temp_phase_skipped_unless_the_sweep_is_complete(tmp_path, state):
+    w = _temp_world(REAL, tmp_path)
+    if state is None:
+        w.state_file.unlink()
+    elif state == "corrupt":
+        w.state_file.write_text("{not json")
+    else:
+        w.state_file.write_text(json.dumps(state))
+    assert w.run() == 0
+    assert w.temp_ops() == [] and w.remote_temps() == ["t1.txt", "t2.txt"]
+    assert w.notified == []
+    assert "temp phase skipped" in (w.tmp / "offload.log").read_text()
+
+
+def test_temp_phase_off_switch(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    assert w.run(temp_phase=False) == 0
+    assert w.temp_ops() == [] and w.remote_temps() == ["t1.txt", "t2.txt"]
+
+
+def test_temp_dry_run_is_read_only(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    w.add_temp("miss.txt", [99999], known=False)
+    assert w.run(dry_run=True) == 0
+    assert w.remote_temps() == ["miss.txt", "t1.txt", "t2.txt"]
+    assert w.temp_ops() == ["tempcheck"]  # parsed on serv1, nothing deleted
+    assert w.manifest() == [] and not (w.tmp / "offload_state.json").exists()
+    assert not (w.mparent / "_offload_staging").exists()
+    log = (w.tmp / "offload.log").read_text()
+    assert "dry-run: WOULD delete 2 temp files" in log and "miss.txt" in log
+    assert w.notified == []
+
+
+def test_temp_unchanged_verdict_is_not_recomputed_every_hour(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+    w.add_temp("miss.txt", [99999], known=False)
+    assert w.run() == 0
+    assert w.remote_temps() == ["miss.txt"] and w.temp_ops().count("tempcheck") == 1
+    w.cmds.clear()
+    assert w.run() == 0  # same sweep, same leftover, same processed_ids: nothing can have changed
+    assert w.temp_ops() == []
+    assert "unchanged" in (w.tmp / "offload.log").read_text()
+    w.age(w.rtemp / "miss.txt", 19)  # the leftover changes -> checked again
+    assert w.run() == 0
+    assert w.temp_ops() == ["tempcheck"]
+
+
+def test_temp_delete_lost_reply_reports_unknown_and_rerun_is_clean(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+
+    def lose_reply(argv, res):
+        if op_of(argv) == "delete_temp":
+            assert res.returncode == 0  # the fake remote really deleted the files
+            res.returncode, res.stderr = 255, b"connection lost"
+
+    w.hooks_after.append(lose_reply)
+    assert w.run() == REAL.EXIT_ABORT
+    assert w.remote_temps() == []
+    assert len(w.notified) == 1
+    msg = w.notified[0]
+    assert "temp_files delete outcome UNKNOWN" in msg and str(w.manifest_file) in msg
+    assert "nothing deleted" not in msg
+    assert [m["event"] for m in w.manifest()] == ["temp_delete_intent"]  # intent is on disk before the delete is sent
+    w.hooks_after.clear()
+    w.cmds.clear()
+    assert w.run() == 0 and w.temp_ops() == []
+    assert len(w.notified) == 1
+
+
+def test_temp_refused_when_a_newer_sweep_completed_before_the_delete(tmp_path):
+    w = _temp_world(REAL, tmp_path)
+
+    def newer_sweep(argv):
+        if op_of(argv) == "delete_temp":
+            w.write_state("complete", 1.0)  # another sweep finished meanwhile: different completed_at
+
+    w.hooks_before.append(newer_sweep)
+    assert w.run() == 1
+    assert w.remote_temps() == ["t1.txt", "t2.txt"]
+    assert "nothing deleted on serv1" in w.notified[0]
+
+
+def test_abort_after_a_successful_part_move_does_not_claim_nothing_was_deleted(tmp_path):
+    w = World(REAL, tmp_path)
+    w.enable_temps()
+    w.add_temp("t1.txt", [2000, 2001])
+
+    def sweep_starts(argv):
+        if op_of(argv) == "delete_temp":
+            w.write_state("running")
+
+    w.hooks_before.append(sweep_starts)
+    assert w.run() == 1
+    assert w.remote_parts() == [] and w.remote_temps() == ["t1.txt"]
+    msg = w.notified[0]
+    assert "parts of this run were already moved" in msg and "no temp file was deleted" in msg
+    assert "UNKNOWN" not in msg
+
+
+# ---- schedule-safe notifications: hourly runs must not spam -------------------------------
+@pytest.mark.parametrize("failure", ["ssh255", "timeout"])
+def test_transient_connect_failure_is_silent_until_persistent(tmp_path, failure):
+    w = World(REAL, tmp_path, nums=())
+    t0 = NOW
+    assert w.run(now=lambda: t0) == 0  # a good contact with serv1 first
+
+    def down(argv):
+        if op_of(argv) == "list":
+            if failure == "ssh255":
+                raise REAL.RemoteError("list", 255, "ssh: connect to host serv1 port 22: Operation timed out")
+            raise subprocess.TimeoutExpired(argv, 300)
+
+    w.hooks_before.append(down)
+    assert w.run(now=lambda: t0 + 1 * HOUR) == REAL.EXIT_ABORT
+    assert w.run(now=lambda: t0 + 5 * HOUR) == REAL.EXIT_ABORT
+    assert w.notified == []  # < 6 h since the last contact: logged only
+    assert (w.tmp / "offload.log").read_text().count("ABORT") == 2
+    assert w.run(now=lambda: t0 + 7 * HOUR) == REAL.EXIT_ABORT
+    assert len(w.notified) == 1 and "unreachable" in w.notified[0] and "7.0 h" in w.notified[0]
+    assert w.run(now=lambda: t0 + 8 * HOUR) == REAL.EXIT_ABORT
+    assert w.run(now=lambda: t0 + 20 * HOUR) == REAL.EXIT_ABORT
+    assert len(w.notified) == 1  # not hourly
+    assert w.run(now=lambda: t0 + 32 * HOUR) == REAL.EXIT_ABORT
+    assert len(w.notified) == 2  # a reminder after 24 h
+    w.hooks_before.clear()
+    assert w.run(now=lambda: t0 + 33 * HOUR) == 0  # recovered: the failure clock resets
+    w.hooks_before.append(down)
+    assert w.run(now=lambda: t0 + 34 * HOUR) == REAL.EXIT_ABORT
+    assert len(w.notified) == 2
+
+
+def test_transient_failure_without_any_previous_contact_starts_the_clock_at_the_first_failure(tmp_path):
+    w = World(REAL, tmp_path, nums=())
+
+    def down(argv):
+        raise REAL.RemoteError("list", 255, "ssh: Could not resolve hostname serv1")
+
+    w.hooks_before.append(down)
+    t0 = NOW
+    for h in (0, 3, 5):
+        assert w.run(now=lambda h=h: t0 + h * HOUR) == REAL.EXIT_ABORT
+    assert w.notified == []
+    assert w.run(now=lambda: t0 + 6.5 * HOUR) == REAL.EXIT_ABORT
+    assert len(w.notified) == 1
+
+
+def test_connect_failure_rule_does_not_hide_a_real_abort(tmp_path):
+    w = World(REAL, tmp_path)
+    w.set_json(w.rdir / "processed_ids.txt", w.base_ids)  # parts' ids missing: a real fail-closed abort
+    w.age(w.rdir / "processed_ids.txt", 3)
+    assert w.run(now=lambda: NOW) == 1
+    assert len(w.notified) == 1 and "NOT in serv1 processed_ids" in w.notified[0]
+
+
+def test_repeated_identical_abort_is_notified_once_per_day(tmp_path):
+    w = World(REAL, tmp_path)
+    w.set_json(w.rdir / "processed_ids.txt", w.base_ids)
+    w.age(w.rdir / "processed_ids.txt", 3)
+    t0 = NOW
+    for h in (0, 1, 2, 3):
+        assert w.run(now=lambda h=h: t0 + h * HOUR) == 1
+    assert len(w.notified) == 1
+    assert (w.tmp / "offload.log").read_text().count("ABORT") == 4  # every failure stays in the log
+    # a different failure is a new signal
+    w.set_json(w.rdir / "processed_ids.txt", w.base_ids + [i for v in w.part_ids.values() for i in v])
+    w.age(w.rdir / "processed_ids.txt", 3)
+    w.set_json(w.rdir / "part_counters.json", {PATCH: 1})
+    w.age(w.rdir / "part_counters.json", 3.5)  # other mtime: rsync's quick check would reuse the staged copy
+    assert w.run(now=lambda: t0 + 4 * HOUR) == 1
+    assert len(w.notified) == 2 and "part counter" in w.notified[1]
+    assert w.run(now=lambda: t0 + 5 * HOUR) == 1
+    assert len(w.notified) == 2
+    assert w.run(now=lambda: t0 + 30 * HOUR) == 1
+    assert len(w.notified) == 3  # daily reminder while it persists
+
+
+def test_dry_run_never_writes_the_state_file(tmp_path):
+    w = World(REAL, tmp_path)
+    w.set_json(w.rdir / "processed_ids.txt", w.base_ids)
+    w.age(w.rdir / "processed_ids.txt", 3)
+    assert w.run(dry_run=True) == 1
+    assert not (w.tmp / "offload_state.json").exists()
+
+
+def test_unwritable_state_file_never_breaks_a_run(tmp_path):
+    w = World(REAL, tmp_path)
+    assert w.run(state_path=Path("/nonexistent_root_dir/deeper/state.json")) == 0
+    assert w.remote_parts() == []
+
+
+# ---- schedule / defaults ------------------------------------------------------------------
+def test_defaults_hourly_friendly():
+    cfg = REAL.Config()
+    assert cfg.min_age_hours == 1.0 and cfg.quiet_minutes == 30.0
+    assert cfg.min_age_hours * 60 > cfg.quiet_minutes  # a moved part is always older than the processed_ids quiet window
+    assert cfg.temp_phase is True
+    assert cfg.remote_temp_dir == "/root/main/bets_data/analise_pub_matches/temp_files"
+    assert cfg.remote_state == "/root/main/runtime/pub_recrawl.json"
+    assert cfg.transient_notify_hours == 6.0 and cfg.abort_renotify_hours == 24.0
+
+
+def test_cli_flags_reach_config(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_execute(cfg, remote, log, notify=None, **kw):
+        seen["cfg"] = cfg
+        return 0
+
+    monkeypatch.setattr(REAL, "execute", fake_execute)
+    import signal
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        assert REAL.main(["--log", str(tmp_path / "x.log")]) == 0
+        assert seen["cfg"].min_age_hours == 1.0 and seen["cfg"].temp_phase is True
+        assert REAL.main(["--log", str(tmp_path / "x.log"), "--no-temp-phase", "--min-age-hours", "2"]) == 0
+        assert seen["cfg"].temp_phase is False and seen["cfg"].min_age_hours == 2.0
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+
+
+def test_part_younger_than_one_hour_waits_and_older_moves(tmp_path):
+    w = World(REAL, tmp_path, nums=(1, 2))
+    w.age(w.rdir / w.pname(2), 0.5)
+    assert w.run() == 0
+    assert w.mac_parts() == [w.pname(1)] and w.remote_parts() == [w.pname(2)]
+
+
+PLIST = ROOT / "scripts/ops/launchd/com.ingame.pub-parts-offload.plist"
+
+
+def test_plist_is_hourly_calendar_interval():
+    d = plistlib.loads(PLIST.read_bytes())
+    sci = d["StartCalendarInterval"]
+    assert set(sci) == {"Minute"} and 0 <= sci["Minute"] < 60  # no Hour key -> every hour
+    assert "StartInterval" not in d and not d.get("RunAtLoad", False)
+    assert d["ProgramArguments"][-1].endswith("scripts/ops/pub_parts_offload.sh")
+    if shutil.which("plutil"):
+        r = subprocess.run(["plutil", "-lint", str(PLIST)], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_docs_describe_the_temp_phase_and_the_schedule():
+    layout = (ROOT / "docs/SERVER_LAYOUT.md").read_text()
+    assert "temp_files" in layout and "pub_recrawl.json" in layout and "каждый час" in layout
+    assert "ежедневно 06:40" not in layout
+    assert "temp_files" in REAL.__doc__ and "hourly" in REAL.__doc__.lower()
+
+
+# ======================================================================================
 # guard scenarios: pass on the real module, must FAIL when the guard is mutated away
 # ======================================================================================
 def scn_merge_process(mod, tmp):
@@ -626,7 +1041,7 @@ def scn_in_progress_tmp(mod, tmp):
 def scn_candidate_age(mod, tmp):
     w = World(mod, tmp, nums=(1, 2))
     w.write_part(w.rdir, 3, [7000, 7001])
-    w.age(w.rdir / w.pname(3), 1)  # 1 h old: still being written / too fresh
+    w.age(w.rdir / w.pname(3), 0.5)  # 30 min old (< the 1 h default): too fresh
     w.set_json(w.rdir / "processed_ids.txt", w.base_ids + [7000, 7001] + w.part_ids[1] + w.part_ids[2])
     w.set_json(w.rdir / "part_counters.json", {PATCH: 3})
     for f in ("processed_ids.txt", "part_counters.json"):
@@ -779,6 +1194,8 @@ LIVE_READER_CMDLINES = [
     "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app"
     "/Contents/MacOS/Python runtime/artifacts/pubs-rebuild/rebuild_20261006/build_driver.py",
     "/bin/bash scripts/run/rebuild_dicts.sh",
+    # 08.10.2026 22:53 MSK `pgrep -fl build_driver` (ingame-g5yv stage-2 rebuild): the dated driver name
+    "caffeinate -ims venv_catboost/bin/python3 runtime/experiments/pubs-rebuild/build_driver_20261008.py",
 ]
 
 
@@ -851,6 +1268,243 @@ def test_dict_build_starting_mid_run_aborts_before_mac_commit(tmp_path):
     assert "nothing deleted on serv1" in w.notified[0]
 
 
+# ---- temp_files phase guards -------------------------------------------------------------
+def _kept_ok(w, keep, deleted=("t1.txt", "t2.txt")):
+    """Everything in `keep` is still on serv1, every file in `deleted` is gone, exit 0 already asserted."""
+    left = set(w.remote_temps())
+    assert set(keep) <= left, f"deleted a file that must stay: {set(keep) - left}"
+    assert not (set(deleted) & left), f"did not delete {set(deleted) & left}"
+
+
+def scn_temp_status_complete(mod, tmp):
+    w = _temp_world(mod, tmp)
+    # a sweep is mid-way; its merge has not run: temp files are its dedupe set. The stale completed_at of the
+    # previous sweep is left in the file so that only the status check can stop the phase.
+    w.write_state("running", completed_at=int(NOW - 40 * HOUR))
+    assert w.run() == 0
+    assert w.remote_temps() == ["t1.txt", "t2.txt"] and w.temp_ops() == []
+
+
+def scn_temp_parts_remaining(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.write_part(w.rdir, 1, [3000, 3001])
+    w.age(w.rdir / w.pname(1), 0.2)  # not a candidate yet (< min age), but still a part on serv1
+    assert w.run() == 0
+    assert w.remote_parts() == [w.pname(1)]
+    assert w.remote_temps() == ["t1.txt", "t2.txt"] and w.temp_ops() == []
+
+
+def scn_temp_lock_free(mod, tmp):
+    w = _temp_world(mod, tmp)
+    fh = open(w.lock, "a+")
+    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert w.run() == 0
+        assert w.remote_temps() == ["t1.txt", "t2.txt"] and w.temp_ops() == []
+    finally:
+        fh.close()
+
+
+def scn_temp_merge_process(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.remote.merge_procs = lambda: [{"pid": 1, "cmd": "python maps_research.py --merge-temp-files"}]
+    assert w.run() == 0
+    assert w.remote_temps() == ["t1.txt", "t2.txt"] and w.temp_ops() == []
+
+
+def scn_temp_quiescent(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.age(w.rdir / "processed_ids.txt", 5 / 60)  # rewritten 5 min ago: a merge may still be writing
+    assert w.run() == 0
+    assert w.remote_temps() == ["t1.txt", "t2.txt"] and w.temp_ops() == []
+
+
+def scn_temp_verdict_ok_only(mod, tmp):
+    w = _temp_world(mod, tmp)
+    real_check = w.remote.temp_check
+
+    def forged(*a, **k):
+        res = real_check(*a, **k)
+        res["files"]["t2.txt"].update(ok=False, reason="forged")
+        return res
+
+    w.remote.temp_check = forged
+    assert w.run() == 0
+    assert w.remote_temps() == ["t2.txt"]
+
+
+def scn_tc_newer_than_sweep(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("fresh.txt", [2000, 2001], age_h=1)  # written after the sweep completed (5 h ago)
+    assert w.run() == 0
+    _kept_ok(w, ["fresh.txt"])
+
+
+def scn_tc_too_large(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("big.txt", list(range(3000, 3200)))  # ~8 KB, all ids known
+    assert w.run(temp_max_file_bytes=4000) == 0
+    _kept_ok(w, ["big.txt"])
+
+
+def scn_tc_unparsable(mod, tmp):
+    w = _temp_world(mod, tmp)
+    full = json.dumps({str(i): {"id": i, "payload": "yyyy"} for i in (2000, 2001, 2002)})
+    w.add_temp("trunc.txt", [], raw=full[:-30])  # every id that is still readable is known to serv1
+    assert w.run() == 0
+    _kept_ok(w, ["trunc.txt"])
+    assert "unparsable" in (w.tmp / "offload.log").read_text()
+
+
+def scn_tc_not_object(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("list.txt", [], raw="[2000, 2001]")
+    assert w.run() == 0
+    _kept_ok(w, ["list.txt"])
+
+
+def scn_tc_empty(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("empty.txt", [], raw="{}")
+    assert w.run() == 0
+    _kept_ok(w, ["empty.txt"])
+
+
+def scn_tc_bad_key(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("badkey.txt", [], raw=json.dumps({"abc": {"id": 2000}}))
+    assert w.run() == 0
+    _kept_ok(w, ["badkey.txt"])
+
+
+def scn_tc_ids_missing(mod, tmp):
+    w = _temp_world(mod, tmp)
+    w.add_temp("miss.txt", [2005, 99999], known=[2005])  # one map of this file is unknown to processed_ids.txt
+    assert w.run() == 0
+    _kept_ok(w, ["miss.txt"])
+    assert "ids_missing" in (w.tmp / "offload.log").read_text()
+
+
+def _delete_refused(mod, tmp, hook, expect_in_log=None, files=("t1.txt", "t2.txt")):
+    w = _temp_world(mod, tmp)
+    held = []
+    w.hooks_before.append(lambda argv: hook(w, argv, held) if op_of(argv) == "delete_temp" else None)
+    try:
+        assert w.run() == 1
+        assert w.remote_temps() == sorted(files)  # not even the unchanged file was deleted
+        assert len(w.notified) == 1 and "nothing deleted on serv1" in w.notified[0]
+        if expect_in_log:
+            assert expect_in_log in (w.tmp / "offload.log").read_text()
+    finally:
+        for fh in held:
+            fh.close()
+    return w
+
+
+def scn_dt_lock_held(mod, tmp):
+    def hook(w, argv, held):  # a sweep starts between the checks and the delete
+        fh = open(w.lock, "a+")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.append(fh)
+
+    _delete_refused(mod, tmp, hook, "pub_recrawl.lock is held")
+
+
+def scn_dt_status(mod, tmp):
+    _delete_refused(mod, tmp, lambda w, argv, held: w.write_state("running"), "no longer complete")
+
+
+def scn_dt_parts_remain(mod, tmp):
+    def hook(w, argv, held):
+        w.write_part(w.rdir, 9, [7000])  # a part appeared on serv1 meanwhile
+
+    w = _delete_refused(mod, tmp, hook, "part file")
+    assert w.remote_parts() == [w.pname(9)]
+
+
+def scn_dt_stamp(mod, tmp):
+    def hook(w, argv, held):
+        with open(w.rtemp / "t2.txt", "ab") as f:  # modified after it was verified
+            f.write(b" ")
+
+    _delete_refused(mod, tmp, hook, "changed since the check")
+
+
+def scn_dt_guards(mod, tmp):
+    def hook(w, argv, held):
+        p = w.rdir / "processed_ids.txt"  # a merge rewrote the dedupe state during the run
+        p.write_text(p.read_text() + " ")
+
+    _delete_refused(mod, tmp, hook, "control file changed during the run")
+
+
+def _stamp_entry(path):
+    st = path.stat()
+    return {"name": path.name, "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _direct_delete(w, entries):
+    guards = [{"path": str(w.rdir / g), "size": (w.rdir / g).stat().st_size, "mtime_ns": (w.rdir / g).stat().st_mtime_ns}
+              for g in ("processed_ids.txt", "part_counters.json")]
+    try:
+        w.remote.delete_temp(str(w.rtemp), str(w.lock), str(w.state_file), str(w.rdir), w.completed_at, entries, guards)
+    except w.mod.RemoteError:
+        pass
+
+
+def scn_dt_newer(mod, tmp):
+    w = _temp_world(mod, tmp)
+    fresh = w.add_temp("fresh.txt", [2000], age_h=1)  # newer than completed_at, stamp is exactly right
+    _direct_delete(w, [_stamp_entry(fresh)])
+    assert fresh.exists()
+
+
+def scn_dt_name_safety(mod, tmp):
+    w = _temp_world(mod, tmp)
+    outside = w.rparent / "escape.txt"
+    outside.write_text("{}")
+    w.age(outside, 20)
+    non_txt = w.rtemp / "t3.json"
+    non_txt.write_text("{}")
+    w.age(non_txt, 20)
+    inner = w.rtemp / "sub"
+    inner.mkdir()
+    (inner / "x.txt").write_text("{}")
+    w.age(inner / "x.txt", 20)
+    for name, path in (("../escape.txt", outside), ("t3.json", non_txt), ("sub/x.txt", inner / "x.txt")):
+        entry = _stamp_entry(path)
+        entry["name"] = name
+        _direct_delete(w, [entry])
+    assert outside.exists() and non_txt.exists() and (inner / "x.txt").exists()
+
+
+# 09.10.2026 02:00 MSK: an agent waiter shell (ingame-59, pid 68861, alive 7 h) had this shape; its
+# command line named explore_database.py only as a pgrep pattern, so the 00:40 and 01:40 runs SKIPped
+# on it (and after the real build pid 5160 ended, every later run would have).
+WAITER_CMDLINE = ("/bin/zsh -c source /Users/alex/.claude/shell-snapshots/snapshot-zsh-1791453677202-b9i3pi.sh "
+                  "2>/dev/null || true && cd /Users/alex/Documents/ingame && until ! pgrep -f explore_database.py "
+                  ">/dev/null && [ \"$(memory_pressure | tail -1 | grep -o '[0-9]*')\" -ge 50 ]; do sleep 300; done")
+
+
+def scn_local_reader_waiter(mod, tmp):
+    # a live shell that only WAITS for a build (marker inside a pgrep pattern) is not a corpus reader
+    proc = subprocess.Popen(["/bin/sh", "-c", "sleep 60; pgrep -f base/explore_database.py >/dev/null; true"])
+    try:
+        w = World(mod, tmp)
+        assert w.run(local_reader_markers=mod.Config().local_reader_markers) == 0
+        assert "reads the Mac pub corpus" not in (w.tmp / "offload.log").read_text()
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_captured_waiter_cmdline_is_not_a_reader_but_builders_still_are():
+    probe = REAL._SEARCH_CMD_RE.sub(" ", WAITER_CMDLINE)
+    assert not any(m in probe for m in REAL.Config().local_reader_markers)
+    for cmd in LIVE_READER_CMDLINES:
+        assert any(m in REAL._SEARCH_CMD_RE.sub(" ", cmd) for m in REAL.Config().local_reader_markers)
+
+
 SCENARIOS = {
     "merge_process": scn_merge_process,
     "sweep_lock": scn_sweep_lock,
@@ -870,6 +1524,27 @@ SCENARIOS = {
     "name_safety": scn_name_safety,
     "control_backup": scn_control_backup,
     "local_reader": scn_local_reader,
+    "local_reader_waiter": scn_local_reader_waiter,
+    "temp_status_complete": scn_temp_status_complete,
+    "temp_parts_remaining": scn_temp_parts_remaining,
+    "temp_lock_free": scn_temp_lock_free,
+    "temp_merge_process": scn_temp_merge_process,
+    "temp_quiescent": scn_temp_quiescent,
+    "temp_verdict_ok_only": scn_temp_verdict_ok_only,
+    "tc_newer_than_sweep": scn_tc_newer_than_sweep,
+    "tc_too_large": scn_tc_too_large,
+    "tc_unparsable": scn_tc_unparsable,
+    "tc_not_object": scn_tc_not_object,
+    "tc_empty": scn_tc_empty,
+    "tc_bad_key": scn_tc_bad_key,
+    "tc_ids_missing": scn_tc_ids_missing,
+    "dt_lock_held": scn_dt_lock_held,
+    "dt_status": scn_dt_status,
+    "dt_parts_remain": scn_dt_parts_remain,
+    "dt_stamp": scn_dt_stamp,
+    "dt_guards": scn_dt_guards,
+    "dt_newer": scn_dt_newer,
+    "dt_name_safety": scn_dt_name_safety,
 }
 assert SCENARIOS.keys() == MUTATIONS.keys()
 
