@@ -39979,6 +39979,11 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 def get_text(self, *args, **kwargs):
                     return self.text
 
+            # Фоновый съём Winline (в нём пишутся и предматчевые цены) стартует
+            # на первом же цикле после рестарта, а не с первым живым матчем:
+            # вызов обязан стоять ДО ранних return ниже (нет файла, битый json,
+            # нет свежих матчей). Идемпотентен и под гейтом _winline_first_active.
+            _ensure_winline_overview_refresher()
             json_path = SOURCETV_MATCHES_PATH
             if not os.path.exists(json_path):
                 print(f"⚠️ SourceTV mode: файл {json_path} не найден! Запустите sourcetv_probe.py")
@@ -40026,7 +40031,6 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # Ниже лишь греем общий снимок Winline, чтобы per-card join на
             # team_id-гейте брал его из кэша.
             _skipped_by_league = 0
-            _ensure_winline_overview_refresher()
             for mid, m in matches.items():
                 # Ручной допуск (опция C): запись подтверждена глазами, deny-гейты
                 # проверены внутри `_manual_sourcetv_admission_for`. Общий
