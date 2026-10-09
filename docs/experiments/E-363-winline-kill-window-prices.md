@@ -5,7 +5,7 @@ date: "2026-10-08"
 area: odds
 status: partial
 corpus: "живые первые тики панели conf≥0,60 12.09–05.10, 196 карт (runtime/artifacts/star-dispatch/e342_panel_tier1_20261006/out/rows.json, ключ fresh), исход STRATZ [5:00,15:00); цены — один снимок вкладки «Быстрые» Winline 08.10 21:49 MSK (событие 16890543 LEGION–BLASTERBI, PR Universe Qualifier, 3-я карта на старте), сборщик services/winline с --quick-dump-dir (34235fdd)"
-verdict: "рынок найден: окна килов есть только во вкладке «Быстрые» (на тир-3 FREEDOM FIGHTERS её нет); при плоском 1,85 правило в плюсе с ДИ выше нуля (−0,5: +0,189 [+0,067; +0,312]; +0,5: +0,340 [+0,227; +0,454]), безубыточность 1,56 (−0,5) / 1,38 (+0,5); решения пока нет — нужна цена на каждую ставку, сбор идёт (ingame-2hyy)"
+verdict: "рынок найден: окна килов есть только во вкладке «Быстрые» (на тир-3 FREEDOM FIGHTERS её нет); при плоском 1,85 правило в плюсе с ДИ выше нуля (−0,5: +0,189 [+0,067; +0,312]; +0,5: +0,340 [+0,227; +0,454]), безубыточность 1,56 (−0,5) / 1,38 (+0,5); решения пока нет — нужна цена на каждую ставку; 09.10: из 9 отправленных ставок 08–09.10 цена окна у Winline есть у 1, все 7 ставок 09.10 на парах тир-2/3 без «Быстрых» (после снятия гейта Tier-1 07.10) — нужен второй источник цены (BetBoom, ingame-784i)"
 harness: "runtime/experiments/odds-winline/kills_window_handicap_roi.py; services/winline/winline_kills_totals_collector.py --quick-dump-dir"
 ---
 # E-363. Сколько Winline платит за окно килов 5–15
@@ -53,6 +53,25 @@ venv_catboost/bin/python3 runtime/experiments/odds-winline/kills_window_handicap
 Сбор идёт: цикл на serv1 каждые 10 минут (`winline-quicktab-loop`, до 40 снимков «Быстрые»), разбор рынков
 в строки — задача доставки winline-quick-windows-parser-20261008. Следующий шаг: связать снимки с боевыми
 ставками kills_panel_window по матчу и карте и посчитать ROI по цене на момент ставки (карточка ingame-2hyy).
+
+## Покрытие ценой отправленных ставок (09.10)
+
+Сбор «Быстрых» на serv1 (`winline-quicktab-day`, `quicktab_loop_v2.sh`, ITER=90): к 19:39 MSK 45 проходов без
+ошибок, вкладка «Быстрые» нашлась в 7 снимках из 117 файлов дампа; разобрано 24 строки окон
+(`runtime/artifacts/odds-winline/quick_tab_20261009/windows_20261009_eve.jsonl`). Связь с журналом доставки
+serv1 `base/runtime/bet_dispatch_ledger.jsonl` (копия `bet_dispatch_ledger_20261009T2030.jsonl`):
+
+| отправлено kills_panel_window 08–09.10 | с ценой окна Winline | без цены | доля без цены |
+|---:|---:|---:|---:|
+| 9 | 1 (LEGION–BLASTERBI 08.10, цена за 986 с до ставки) | 8 | 89 % |
+
+Все 7 ставок 09.10 — пары тир-2/3 (Kinetix–Ivory, KUKUYS–Ivory, Blasterbl–LVL UP academy, Shadow Dance–EGOISTO,
+Blasterbl–Team Spirit Academy, Shadow Dance–OPERGROUP, PuckChamp–1nter t1de), у всех причина
+`no_live_team_pair_map_window_market`. **Механизм:** 07.10 (56a0b1f5) с правила снят гейт Tier-1, и правило
+стреляет в основном на тир-2/3, где Winline окно не продаёт. Значит, по ценам Winline ROI этих ставок
+не измерить ни при каком сроке сбора; нужен второй источник (BetBoom: окно в обычной вкладке матча, но с прокси CA
+антибот-проверка — нужен отдельный RU-маршрут, карточка-идея ingame-784i) либо возврат гейта
+(`ML_DISPATCH_PANEL_KILLS_REQUIRE_TIER1=1`). Исходы карт 09.10 STRATZ ещё не разобрал (18 «retry later»).
 
 ## Где искать ошибку
 
