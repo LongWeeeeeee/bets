@@ -1122,6 +1122,18 @@ esports/...` и обрубки в 1-2 символа поисковыми фор
 создания ключа серии/опроса, одна строка лога на ключ, счётчик `skipped_props` в сводке.
 Env `WINLINE_CARD_SWEEP_SKIP_PROPS` (1; `0`/`false`/`off` = откат ТОЛЬКО фильтра проп-карточек; алиас `1win` ↔ `1W` остаётся в любом случае).
 Тест — `base/tests/test_winline_card_sweep_skips_duels.py` (снимок 08.10.2026).
+Запись цен листинга (идея ingame-yxst, цены карты ДО старта): sweep сразу после свежего снимка зовёт
+`_winline_record_listing_prices(html, fetched_at)` (`base/cyberscore_try.py`), которая через чистый
+`winline_listing_price_rows` (`base/bookmaker_selenium_odds.py`, один разбор страницы: карточки ленты и «герой»,
+цены победителя `Матч`/`N карта` из узла САМОГО ряда, не из `card__body`) дописывает JSONL
+`runtime/winline_listing_prices.jsonl` — строка при смене (p1, p2, locked, live, header_map) ключа
+(event_id, team1, team2, kind, map_num) и keepalive раз в 600 с; поля строки: wall (время снимка), event_id, league,
+team1/team2 (написание Winline, порядок узла-владельца: ряд целиком — имена, цены, live, header_map, map_num — из ОДНОГО DOM-узла ленты или «героя»; слияние только выбирает ряды), live, header_map, prop_duel, source feed|hero, kind match|map, map_num,
+p1, p2 (None при блокировке), locked, keepalive. Проп-дуэли и рынки не из двух исходов не пишутся. Fail-open, один писатель
+(поток обзора). Env: `WINLINE_LISTING_PRICES` (1; `0`/`false`/`off` = откат), `WINLINE_LISTING_PRICES_PATH`,
+`WINLINE_LISTING_PRICES_MAX_MB` (512; выше — запись стоп с одной строкой лога, файл не усекается).
+header_map ряда «героя» — «N карта» закреплённой выбранной карточки (`ww-pinned-card .new-card--selected`) только если она про ТО ЖЕ событие (пара имён Winline по `_winline_pair_key` и, когда есть у обеих, id события из логотипа; `_winline_pinned_map_for_hero`), иначе первый ряд «N карта» героя. Этот же header_map читает запасной путь сборщика тоталов киллов; live-sweep карты берёт из рядов. В проде с 6883b5b5 (09.10.2026).
+Тест — `base/tests/test_winline_listing_prices.py` (снимки 10.09, 15.09, 05.10, 08.10).
 Тот же флаг выключает проп-карточки и при выборе карточки матча для цены текущей карты: общий предикат
 `winline_league_is_prop_duel` (`base/bookmaker_selenium_odds.py`) пропускает `eventId-*` карточки под заголовком
 турнира с «дуэль игроков» (DOM: решение по КАЖДОЙ карточке из её собственного контейнера `ww-feature-block-tournament-dsk`, без контейнера/заголовка — не дуэль; текст: окно заголовка кончается на следующем `DOTA 2 |`/`,`, начале пары команд или h+100) в `_winline_matched_card_context` и в трёх циклах `_winline_structured_current_map_winner`
