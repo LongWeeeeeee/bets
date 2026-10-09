@@ -2323,7 +2323,47 @@ def _winline_hero_event_id(node: Any, names: List[str], league: str,
     return next(iter(ids)) if ids else ""
 
 
-def _winline_hero_cards(soup: Any) -> List[Dict[str, Any]]:
+def _winline_pinned_map_for_hero(
+    soup: Any, hero_names: List[str], hero_event_id: str,
+) -> Optional[int]:
+    """Номер карты («N карта») закреплённой карточки, если она про ТО ЖЕ событие, что герой.
+
+    Закреплённая выбранная карточка (`ww-pinned-card .new-card--selected`) глобальна для
+    страницы и может быть другим матчем (раунд 4, ревью astra 09.10: чужая «5 карта»
+    делала header_map героя AURORA-1W равным 5). Карточка берётся, только если обе
+    команды героя найдены в ней по ядру имени (имена Winline против имён Winline, не
+    наших алиасов) и, когда id есть у обеих сторон, id события совпадает. Иначе None -
+    вызывающий берёт номер из рядов героя.
+    """
+    try:
+        hero_pair = _winline_pair_key(hero_names[0], hero_names[1])
+        for card in soup.select("ww-pinned-card .new-card--selected"):
+            names = [
+                el.get_text(" ", strip=True)
+                for el in card.select(".card-teams__names > span")
+            ]
+            names = [n for n in names if n]
+            if len(names) != 2 or _winline_pair_key(names[0], names[1]) != hero_pair:
+                continue
+            pinned_ids = set(_WINLINE_HERO_EVENT_ID_RE.findall(" ".join(
+                str(img.get("src") or "") for img in card.select("img"))))
+            if len(pinned_ids) > 1:
+                continue
+            if hero_event_id and pinned_ids and hero_event_id not in pinned_ids:
+                continue
+            right = card.select_one(".card-top__right")
+            hit = re.search(
+                r"(\d+)\s*карта", right.get_text(" ", strip=True)) if right else None
+            if hit:
+                return int(hit.group(1))
+    except Exception:
+        return None
+    return None
+
+
+def _winline_hero_cards(
+    soup: Any, _nodes_out: Optional[Dict[int, Any]] = None,
+) -> List[Dict[str, Any]]:
     """Событие из верхнего «героя» обзора (`ww-feature-event-live-center-dsk`).
 
     Выбранный живой матч Winline показывает сверху (счёт, видео, «Популярные на
@@ -2420,15 +2460,13 @@ def _winline_hero_cards(soup: Any) -> List[Dict[str, Any]]:
                         rows.append({"kind": kind, "map_num": map_num,
                                      "has_prices": has_prices})
             header_map: Optional[int] = None
-            pinned = soup.select_one("ww-pinned-card .new-card--selected .card-top__right")
-            pinned_hit = re.search(
-                r"(\d+)\s*карта", pinned.get_text(" ", strip=True)) if pinned else None
-            if pinned_hit:
-                header_map = int(pinned_hit.group(1))
+            pinned_map = _winline_pinned_map_for_hero(soup, names, event_id)
+            if pinned_map is not None:
+                header_map = pinned_map
             else:
                 current = [r["map_num"] for r in rows if r["kind"] == "map"]
                 header_map = current[0] if current else None
-            heroes.append({
+            hero_card = {
                 "event_id": event_id,
                 "league": league,
                 "prop_duel": winline_league_is_prop_duel(league),
@@ -2439,14 +2477,28 @@ def _winline_hero_cards(soup: Any) -> List[Dict[str, Any]]:
                 "rows": rows,
                 "source": "hero",
                 "start_date": bool(start_date),
-            })
+            }
+            heroes.append(hero_card)
+            if _nodes_out is not None:
+                # Узел героя для `winline_listing_price_rows` (цены строк); возвращаемые
+                # словари не меняются, по умолчанию приёмника нет.
+                _nodes_out[id(hero_card)] = node
         except Exception:
             continue
     return heroes
 
 
+def _winline_listing_owner_snapshot(card: Dict[str, Any]) -> Dict[str, Any]:
+    """Поля карточки, которыми строка цен владеет вместе со своим узлом (до слияния)."""
+    return {
+        "team1": card.get("team1"), "team2": card.get("team2"),
+        "live": bool(card.get("live")), "header_map": card.get("header_map"),
+    }
+
+
 def _winline_merge_hero_cards(
     cards: List[Dict[str, Any]], heroes: List[Dict[str, Any]],
+    _merges_out: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Один раз на событие: герой сливается с карточкой ленты или добавляется.
 
@@ -2462,6 +2514,12 @@ def _winline_merge_hero_cards(
       предматч будущей встречи); нет ни одной карточки с парой — герой отдельный;
       иначе (несколько карточек, предматч, дата, спор по лиге) — отбрасываем;
     - два героя с одним id — снимок противоречив, оба прочь.
+
+    `_merges_out` - только для `winline_listing_price_rows`: `id(карточка ленты) ->
+    {"hero": словарь героя, "replaced": bool, "feed": снимок полей самой карточки
+    ленты ДО слияния (team1/team2/live/header_map)}` для каждого слияния (предматчевая
+    карточка ленты заменена рядами героя / обе живые); первое слияние карточки не
+    перезаписывается. Результат от него не зависит.
     """
     result = list(cards)
     prepend: List[Dict[str, Any]] = []
@@ -2510,10 +2568,18 @@ def _winline_merge_hero_cards(
             # Ленточная карточка того же id была предматчевой: её ряды - линия до начала,
             # живыми они не становятся. Живое событие несёт ряды живого героя, и только их
             # (ревью astra, раунд 3: предматчевая карта 1 опрашивалась и вытесняла живую 2).
+            if _merges_out is not None and id(target) not in _merges_out:
+                _merges_out[id(target)] = {
+                    "hero": hero, "replaced": True,
+                    "feed": _winline_listing_owner_snapshot(target)}
             target["live"] = True
             target["header_map"] = hero.get("header_map")
             target["rows"] = [dict(hrow) for hrow in hero.get("rows") or []]
             continue
+        if _merges_out is not None and id(target) not in _merges_out:
+            _merges_out[id(target)] = {
+                "hero": hero, "replaced": False,
+                "feed": _winline_listing_owner_snapshot(target)}
         target["live"] = bool(target.get("live") or hero.get("live"))
         if target.get("header_map") is None:
             target["header_map"] = hero.get("header_map")
@@ -2530,7 +2596,13 @@ def _winline_merge_hero_cards(
     return prepend + result
 
 
-def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
+def winline_enumerate_live_cards(
+    html: str,
+    _soup: Any = None,
+    _feed_nodes: Optional[Dict[int, Any]] = None,
+    _hero_nodes: Optional[Dict[int, Any]] = None,
+    _merges_out: Optional[Dict[int, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """Все карточки событий обзора Winline: лига, пара, live-флаг, ряды карт.
 
     Чистая функция поверх захваченного HTML (структура Angular Winline:
@@ -2542,10 +2614,16 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
     добавляется той же формой карточки и сливается с карточкой ленты по id события.
     Нужна sweep кэфов без моста: какие карточки вообще есть в эфире.
     Гейты (allow/deny лиг) — дело рантайма, парсер перечисляет всё.
+
+    `_soup`/`_feed_nodes`/`_hero_nodes`/`_merges_out` - только для
+    `winline_listing_price_rows`: готовый разбор страницы и приёмники «id словаря
+    карточки -> её DOM-узел» и «карточка ленты -> слитый с ней герой».
+    Возвращаемое значение от них не зависит.
     """
     cards: List[Dict[str, Any]] = []
     try:
-        soup = BeautifulSoup(str(html or ""), "html.parser")
+        soup = _soup if _soup is not None else BeautifulSoup(
+            str(html or ""), "html.parser")
     except Exception:
         return cards
     current_league = ""
@@ -2633,7 +2711,7 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
                     rows.append(
                         {"kind": kind, "map_num": map_num, "has_prices": has_prices})
             if len(names) == 2:
-                cards.append({
+                feed_card = {
                     "event_id": event_id,
                     "league": current_league,
                     # Дуэль решает СОБСТВЕННЫЙ блок турнира карточки (то же правило,
@@ -2644,16 +2722,274 @@ def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
                     "live": bool(live),
                     "header_map": header_map,
                     "rows": rows,
-                })
+                }
+                cards.append(feed_card)
+                if _feed_nodes is not None:
+                    _feed_nodes[id(feed_card)] = node
     # Верхний «герой» (выбранный живой матч) — того же вида карточка, один раз на
     # событие; ошибка разбора героя не должна ронять перечисление ленты.
     try:
-        heroes = _winline_hero_cards(soup)
+        heroes = _winline_hero_cards(soup, _nodes_out=_hero_nodes)
         if heroes:
-            cards = _winline_merge_hero_cards(cards, heroes)
+            cards = _winline_merge_hero_cards(
+                cards, heroes, _merges_out=_merges_out)
     except Exception:
         pass
     return cards
+
+
+_WINLINE_LISTING_PRICE_RE = re.compile(r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)")
+
+
+def _winline_listing_bump(stats: Optional[Dict[str, int]], key: str) -> None:
+    if stats is not None:
+        stats[key] = int(stats.get(key) or 0) + 1
+
+
+def _winline_listing_read_pair(
+    buttons: List[Any],
+    unbettable: Any,
+    stats: Optional[Dict[str, int]],
+) -> Optional[Tuple[Optional[float], Optional[float], bool]]:
+    """Две кнопки исходов -> `(p1, p2, locked)`; не двухисходный ряд -> None.
+
+    Заморожена любая кнопка (класс — `unbettable`) или цена не читается/не выше
+    1.01 -> `(None, None, True)`: у такого ряда нет пригодной цены, число под
+    классом `_locked` остаётся на экране, но записывать его нельзя.
+    """
+    if len(buttons) == 3:
+        _winline_listing_bump(stats, "skipped_three_way")
+        return None
+    if len(buttons) != 2:
+        _winline_listing_bump(stats, "skipped_outcome_count")
+        return None
+    if any(unbettable(button) for button in buttons):
+        return None, None, True
+    prices: List[float] = []
+    for button in buttons:
+        hit = _WINLINE_LISTING_PRICE_RE.search(" ".join(button.stripped_strings))
+        if hit is None:
+            return None, None, True
+        try:
+            price = float(hit.group(1).replace(",", "."))
+        except ValueError:
+            return None, None, True
+        if price <= 1.01:
+            return None, None, True
+        prices.append(price)
+    return prices[0], prices[1], False
+
+
+def _winline_listing_feed_node_rows(
+    node: Any, stats: Optional[Dict[str, int]],
+) -> Dict[Tuple[str, Optional[int]], Tuple[Optional[float], Optional[float], bool]]:
+    """Ряды `Матч` / `N карта` карточки ленты: `(kind, map_num) -> (p1, p2, locked)`.
+
+    Цены ТОЛЬКО своего ряда: подпись -> соседний `.card__coeffs` -> ПЕРВЫЙ рынок
+    (`ww-feature-event-market-dsk`) = победитель; фора и тотал стоят следом, а
+    `has_prices` перечислителя считан по тексту всего `card__body` и их цены тоже
+    «видит». Рынок с ничьей (`_generic3`) пропускается.
+    """
+    rows: Dict[Tuple[str, Optional[int]], Tuple[Optional[float], Optional[float], bool]] = {}
+    for label in node.select(".match-row-label, .period-name"):
+        text = label.get_text(" ", strip=True)
+        map_hit = re.search(r"(\d+)\s*карта", text)
+        if map_hit:
+            kind, map_num = "map", int(map_hit.group(1))
+        elif "матч" in text.lower():
+            kind, map_num = "match", None
+        else:
+            continue
+        coeffs = label.find_next_sibling(True)
+        if coeffs is None or "card__coeffs" not in _winline_node_classes(coeffs):
+            _winline_listing_bump(stats, "skipped_no_coeffs")
+            continue
+        markets = coeffs.find_all("ww-feature-event-market-dsk", recursive=False)
+        if not markets:
+            _winline_listing_bump(stats, "skipped_no_market")
+            continue
+        buttons = [
+            child for child in markets[0].find_all(True, recursive=False)
+            if _WINLINE_COEFF_BUTTON_CLASS in _winline_node_classes(child)
+        ]
+        if any(_WINLINE_THREE_WAY_MARKET_BUTTON_CLASS in _winline_node_classes(b)
+               for b in buttons):
+            _winline_listing_bump(stats, "skipped_three_way")
+            continue
+        winner = [
+            b for b in buttons
+            if _WINLINE_WINNER_MARKET_BUTTON_CLASS in _winline_node_classes(b)
+        ]
+        if not winner:
+            # Первый рынок ряда - заполнители `coefficient-button_empty` ("-"):
+            # победителя на листинге нет (проп-дуэль, рынок снят).
+            parsed: Any = (None, None, True)
+        else:
+            parsed = _winline_listing_read_pair(
+                winner, _winline_price_node_unbettable, stats)
+        if parsed is None:
+            continue
+        key = (kind, map_num)
+        prev = rows.get(key)
+        if prev is None or (prev[2] and not parsed[2]):
+            rows[key] = parsed
+    return rows
+
+
+def _winline_listing_hero_node_rows(
+    node: Any, stats: Optional[Dict[str, int]],
+) -> Dict[Tuple[str, Optional[int]], Tuple[Optional[float], Optional[float], bool]]:
+    """Ряды «Победитель» панели выбранного события (`odd-btn`).
+
+    Матч: обёртка `Популярные на матч`, период пустой или `матч`; карта:
+    `Популярные на карту`, период `N карта`. Только линия с названием рынка
+    `Победитель`: рядом стоит `Тотал` с периодом `матч` (08.10.2026 он показывал
+    1.61/2.22 - те же числа, что победитель карты 2), его брать нельзя.
+    """
+    rows: Dict[Tuple[str, Optional[int]], Tuple[Optional[float], Optional[float], bool]] = {}
+    for wrapper in node.select(".event-live-center__markets .fast-bets__wrapper"):
+        title_el = wrapper.select_one(".fast-bets__title")
+        title = " ".join(title_el.stripped_strings).lower() if title_el else ""
+        if title not in {"популярные на матч", "популярные на карту"}:
+            continue
+        for line in wrapper.select(".bet-line"):
+            name = line.select_one(".bet-line__market-name")
+            if name is None or " ".join(name.stripped_strings).lower() != "победитель":
+                continue
+            period_el = line.select_one(".bet-line__period")
+            period = " ".join(period_el.stripped_strings).lower() if period_el else ""
+            if title == "популярные на матч":
+                if period not in {"", "матч"}:
+                    continue
+                key: Tuple[str, Optional[int]] = ("match", None)
+            else:
+                map_hit = re.fullmatch(r"(\d+)\s*карта", period)
+                if map_hit is None:
+                    continue
+                key = ("map", int(map_hit.group(1)))
+            parsed = _winline_listing_read_pair(
+                line.select(".bet-line__coefs-wrapper .odd-btn"),
+                _winline_button_is_unbettable, stats)
+            if parsed is None:
+                continue
+            prev = rows.get(key)
+            if prev is None or (prev[2] and not parsed[2]):
+                rows[key] = parsed
+    return rows
+
+
+def winline_listing_price_rows(
+    html: str, stats: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
+    """Цены победителя из обзора Winline: по строке на (событие, `Матч`/`N карта`).
+
+    Чистая функция поверх захваченного HTML, ОДИН разбор страницы. Карточки и
+    их порядок - те же, что видит sweep (`winline_enumerate_live_cards`: лента и
+    слитый «герой»), цены - из узла самой строки (не из текста всего `card__body`).
+    Поля: event_id, league, team1, team2 (написание Winline, порядок УЗЛА-владельца),
+    live, header_map, prop_duel, source ('feed'|'hero'), kind ('match'|'map'),
+    map_num, p1, p2 (порядок УЗЛА-владельца; None, когда заморожено/нет рынка), locked.
+    Рынок не из двух исходов пропускается (счётчик в `stats`). Проп-дуэли
+    возвращаются с `prop_duel=True`: решать, писать ли их, - дело вызывающего.
+
+    ИНВАРИАНТ «ряд принадлежит одному узлу» (раунд 3, ревью astra + Opus 09.10: ряд
+    героя с названиями ленты в другом порядке приписывал цену одной команды другой):
+    team1, team2, live, header_map, source, kind, map_num, p1, p2, locked КАЖДОЙ строки
+    берутся из ОДНОГО DOM-узла - карточки ленты или героя, который её владеет. p1/p2
+    стоят в порядке кнопок этого узла, team1/team2 - в порядке имён ТОГО ЖЕ узла.
+    Слияние лишь ВЫБИРАЕТ, чьи ряды события остаются; ни одно поле не копируется с
+    одного узла на ряд другого (имена ленты - к ценам героя и наоборот - невозможны:
+    владелец передаёт строке готовый набор полей). С уровня события (оба узла
+    подтверждены слиянием как одно событие: тот же id / пара / лига) берутся только
+    идентификаторы события: event_id, league, prop_duel карточки перечислителя.
+    Ключ дедупа рекордера - (event_id, team1, team2, kind, map_num): ряд героя и ряд
+    ленты одного события, у которых порядок имён разный, имеют разные ключи - это
+    допустимо (по одному ряду `kind/map_num` события выбирает слияние, одновременно
+    в файл оба не попадают, а пара с цифрами в её собственном порядке однозначна).
+
+    Выбор рядов события (правило слияния то же, что у `_winline_merge_hero_cards`):
+    - карточка ленты без героя - её узел, её live/header_map;
+    - живой герой слился с НЕ-живой карточкой ленты того же события: ряды ленты -
+      линия до начала, их в снимок не пишем, событие = только ряды героя;
+    - обе живые: ряды обоих узлов; ряд есть в обоих - берётся ряд ленты, а ряд героя
+      только когда ряд ленты заморожен/без цены, а у героя с ценой; ряд только героя
+      берётся у героя. live/header_map ряда ленты - самой карточки ленты до слияния
+      (снимок слияния), ряда героя - героя.
+    """
+    out: List[Dict[str, Any]] = []
+    soup = BeautifulSoup(str(html or ""), "html.parser")
+    feed_nodes: Dict[int, Any] = {}
+    hero_nodes: Dict[int, Any] = {}
+    merges: Dict[int, Dict[str, Any]] = {}
+    cards = winline_enumerate_live_cards(
+        html, _soup=soup, _feed_nodes=feed_nodes, _hero_nodes=hero_nodes,
+        _merges_out=merges)
+
+    def owner(rows: Dict[Tuple[str, Optional[int]], Tuple[Any, Any, bool]],
+              source: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        # Весь набор «узловых» полей одного узла; других источников у строки нет.
+        return {
+            "rows": rows, "source": source,
+            "team1": fields.get("team1"), "team2": fields.get("team2"),
+            "live": bool(fields.get("live")), "header_map": fields.get("header_map"),
+        }
+
+    for card in cards:
+        feed_node = feed_nodes.get(id(card))
+        merge = merges.get(id(card)) if feed_node is not None else None
+        hero_card = merge["hero"] if merge is not None else card
+        hero_node = hero_nodes.get(id(hero_card))
+        if feed_node is None and hero_node is None:
+            _winline_listing_bump(stats, "skipped_card_no_node")
+            continue
+        if merge is not None and hero_node is None:
+            _winline_listing_bump(stats, "skipped_card_no_node")
+            continue
+        owners: List[Dict[str, Any]] = []
+        try:
+            if feed_node is None:
+                # Герой сам по себе (карточки ленты нет): `card` и есть герой.
+                owners.append(owner(
+                    _winline_listing_hero_node_rows(hero_node, stats), "hero", card))
+            elif merge is None:
+                owners.append(owner(
+                    _winline_listing_feed_node_rows(feed_node, stats), "feed", card))
+            elif merge["replaced"]:
+                owners.append(owner(
+                    _winline_listing_hero_node_rows(hero_node, stats), "hero",
+                    hero_card))
+            else:
+                feed_rows = _winline_listing_feed_node_rows(feed_node, stats)
+                hero_rows = _winline_listing_hero_node_rows(hero_node, stats)
+                keep_feed = {
+                    key: value for key, value in feed_rows.items()
+                    if not (value[2] and key in hero_rows and not hero_rows[key][2])}
+                keep_hero = {
+                    key: value for key, value in hero_rows.items()
+                    if key not in keep_feed}
+                owners.append(owner(keep_feed, "feed", merge["feed"]))
+                owners.append(owner(keep_hero, "hero", hero_card))
+        except Exception:
+            _winline_listing_bump(stats, "skipped_card_error")
+            continue
+        for own in owners:
+            for (kind, map_num), (p1, p2, locked) in own["rows"].items():
+                out.append({
+                    "event_id": card.get("event_id") or "",
+                    "league": card.get("league") or "",
+                    "team1": own["team1"],
+                    "team2": own["team2"],
+                    "live": own["live"],
+                    "header_map": own["header_map"],
+                    "prop_duel": bool(card.get("prop_duel")),
+                    "source": own["source"],
+                    "kind": kind,
+                    "map_num": map_num,
+                    "p1": p1,
+                    "p2": p2,
+                    "locked": bool(locked),
+                })
+    return out
 
 
 def winline_live_card_league(page_text: str, team1: str, team2: str) -> str:

@@ -20994,6 +20994,167 @@ def _winline_overview_persist_snapshot(text: Any, html: Any) -> bool:
         return False
 
 
+# --- Winline listing prices: пассивный регистратор цен обзора -----------------
+# Идея ingame-yxst: цены победителя карты ДО её начала. Мост опрашивает карту
+# только когда она live в SourceTV (первый опрос на 814-848 с позже старта,
+# 09.10.2026: 0 из 90 карт с ценой в [ts-600, ts]), а обзор, который sweep и так
+# читает раз в ~45 с, всегда показывает ряды `Матч` и `N карта` с ценами. Здесь
+# они дописываются в JSONL; новых загрузок страниц нет, ставки/мост/sweep не
+# затрагиваются. Откат: WINLINE_LISTING_PRICES=0.
+WINLINE_LISTING_PRICES_ENV = "WINLINE_LISTING_PRICES"
+WINLINE_LISTING_PRICES_PATH_ENV = "WINLINE_LISTING_PRICES_PATH"
+WINLINE_LISTING_PRICES_MAX_MB_ENV = "WINLINE_LISTING_PRICES_MAX_MB"
+_WINLINE_LISTING_KEEPALIVE_S = 600.0
+_WINLINE_LISTING_FORGET_S = 6 * 3600.0
+# Состояние и счётчики трогает ТОЛЬКО поток обзора (`_winline_overview_loop` ->
+# sweep -> регистратор): один писатель, замок не нужен.
+# key -> [sig, last_written_wall, last_seen_wall]
+_winline_listing_state: Dict[Tuple[Any, ...], List[Any]] = {}
+_winline_listing_last_wall: float = 0.0
+_winline_listing_errors: Dict[str, int] = {}
+_winline_listing_stats: Dict[str, int] = {}
+_winline_listing_cap_logged: bool = False
+
+
+def _winline_listing_prices_enabled() -> bool:
+    raw = str(os.getenv(WINLINE_LISTING_PRICES_ENV, "1") or "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _winline_listing_prices_path() -> Path:
+    raw = str(os.getenv(WINLINE_LISTING_PRICES_PATH_ENV) or "").strip()
+    if raw:
+        return Path(raw)
+    return PROJECT_ROOT / "runtime" / "winline_listing_prices.jsonl"
+
+
+def _winline_listing_prices_cap_bytes() -> float:
+    try:
+        mb = float(os.getenv(WINLINE_LISTING_PRICES_MAX_MB_ENV, "512") or 512)
+    except (TypeError, ValueError):
+        mb = 512.0
+    return mb * 1024.0 * 1024.0
+
+
+def _winline_listing_error(stage: str, exc: BaseException) -> None:
+    """Ошибку считаем всегда, печатаем одну строку на вид (print: прод читает его)."""
+    kind = f"{stage}:{type(exc).__name__}"
+    count = int(_winline_listing_errors.get(kind) or 0) + 1
+    _winline_listing_errors[kind] = count
+    if count == 1:
+        print(f"🧾 WINLINE_LISTING_PRICES_ERROR {kind}: {str(exc)[:200]}")
+
+
+def _winline_record_listing_prices(html: Any, fetched_wall: Any) -> int:
+    """Дописать в JSONL цены ряд `Матч`/`N карта` обзора, изменившиеся с прошлой записи.
+
+    Ключ состояния - (event_id, team1, team2, kind, map_num); состояние - (p1, p2,
+    locked, live, header_map). Строка пишется при смене состояния и как keepalive
+    раз в 600 с на ключ (`keepalive: true`). `wall` строки - время съёма снимка.
+    Проп-дуэли не пишутся. Fail-open: любая ошибка считается и не выходит наружу.
+    Возвращает число записанных строк.
+    """
+    global _winline_listing_last_wall, _winline_listing_cap_logged
+    stage = "setup"
+    try:
+        if not _winline_listing_prices_enabled():
+            return 0
+        path = _winline_listing_prices_path()
+        cap = _winline_listing_prices_cap_bytes()
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0  # нет файла/каталога: пусть скажет запись
+        if size >= cap:
+            if not _winline_listing_cap_logged:
+                _winline_listing_cap_logged = True
+                print(
+                    f"🧾 WINLINE_LISTING_PRICES_CAP: {path} is {size} bytes "
+                    f">= {int(cap)}; recording stopped (file kept as is)"
+                )
+            return 0
+        wall = float(fetched_wall)
+        if not html or wall <= 0.0 or wall == _winline_listing_last_wall:
+            return 0
+        stage = "parse"
+        import bookmaker_selenium_odds as _odds_mod
+        parse_stats: Dict[str, int] = {}
+        rows = _odds_mod.winline_listing_price_rows(str(html), parse_stats)
+        for name, value in parse_stats.items():
+            _winline_listing_stats[name] = (
+                int(_winline_listing_stats.get(name) or 0) + int(value))
+        stage = "diff"
+        lines: List[str] = []
+        updates: List[Tuple[Tuple[Any, ...], List[Any]]] = []
+        seen_keys: set = set()
+        keepalives = 0
+        for row in rows:
+            if row.get("prop_duel"):
+                _winline_listing_stats["skipped_duel"] = (
+                    int(_winline_listing_stats.get("skipped_duel") or 0) + 1)
+                continue
+            key = (row.get("event_id"), row.get("team1"), row.get("team2"),
+                   row.get("kind"), row.get("map_num"))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            sig = (row.get("p1"), row.get("p2"), bool(row.get("locked")),
+                   bool(row.get("live")), row.get("header_map"))
+            prev = _winline_listing_state.get(key)
+            record = {"wall": wall}
+            record.update(row)
+            if prev is None or prev[0] != sig:
+                written_wall = wall
+            elif wall - float(prev[1]) >= _WINLINE_LISTING_KEEPALIVE_S:
+                record["keepalive"] = True
+                keepalives += 1
+                written_wall = wall
+            else:
+                updates.append((key, [prev[0], prev[1], wall]))
+                continue
+            lines.append(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+            updates.append((key, [sig, written_wall, wall]))
+        if lines:
+            payload = ("\n".join(lines) + "\n").encode("utf-8")
+            if size + len(payload) > cap:
+                # Потолок считаем вместе с ожидающей пачкой: файл не должен его
+                # превысить (и не усекается). Состояние не двигаем - пачка не записана.
+                if not _winline_listing_cap_logged:
+                    _winline_listing_cap_logged = True
+                    print(
+                        f"🧾 WINLINE_LISTING_PRICES_CAP: {path} is {size} bytes, "
+                        f"next batch {len(payload)} bytes would exceed {int(cap)}; "
+                        f"recording stopped (file kept as is)"
+                    )
+                return 0
+            stage = "write"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "ab") as handle:
+                handle.write(payload)
+            _winline_listing_cap_logged = False
+        # Состояние принимаем только после записи: сбой записи повторится на
+        # следующем снимке тем же набором строк.
+        for key, value in updates:
+            _winline_listing_state[key] = value
+        horizon = wall - _WINLINE_LISTING_FORGET_S
+        for key in [k for k, v in _winline_listing_state.items() if v[2] < horizon]:
+            del _winline_listing_state[key]
+        _winline_listing_last_wall = wall
+        _winline_listing_stats["snapshots"] = (
+            int(_winline_listing_stats.get("snapshots") or 0) + 1)
+        _winline_listing_stats["rows_written"] = (
+            int(_winline_listing_stats.get("rows_written") or 0) + len(lines))
+        _winline_listing_stats["keepalive_rows"] = (
+            int(_winline_listing_stats.get("keepalive_rows") or 0) + keepalives)
+        return len(lines)
+    except Exception as exc:
+        try:
+            _winline_listing_error(stage, exc)
+        except Exception:
+            pass
+        return 0
+
+
 WINLINE_CARD_SWEEP_ENABLED = _env_flag("WINLINE_CARD_SWEEP_ENABLED", "1")
 WINLINE_CARD_SWEEP_MAX_CARDS = int(os.getenv("WINLINE_CARD_SWEEP_MAX_CARDS", "6") or 6)
 WINLINE_CARD_SWEEP_ROWS_PER_CARD = int(os.getenv("WINLINE_CARD_SWEEP_ROWS_PER_CARD", "2") or 2)
@@ -21313,7 +21474,8 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
     try:
         with _winline_overview_lock:
             html = str(_winline_overview_state.get("html") or "")
-            age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+            fetched_wall = float(_winline_overview_state.get("fetched_at") or 0.0)
+            age = time.time() - fetched_wall
         max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
     except (TypeError, ValueError):
         print(f"🧹 Winline card sweep: {summary}")
@@ -21325,6 +21487,13 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
         summary["stale"] = 1
         print(f"🧹 Winline card sweep: {summary}")
         return summary
+    # Пассивная запись цен рядов обзора (идея ingame-yxst) - до фильтров
+    # live/лиг sweep: нужны и предматчевые карточки. Сама fail-open; здесь
+    # дополнительно глушим, чтобы sweep не зависел от неё ни при каких условиях.
+    try:
+        _winline_record_listing_prices(html, fetched_wall)
+    except Exception:
+        pass
     try:
         import bookmaker_selenium_odds as _odds_mod
         cards = _odds_mod.winline_enumerate_live_cards(html)

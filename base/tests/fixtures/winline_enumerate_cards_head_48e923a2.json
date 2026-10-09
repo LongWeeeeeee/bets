@@ -1,0 +1,506 @@
+{
+ "winline_overview_legion_blasterbi_20261005.json": [
+  {
+   "event_id": "16858346",
+   "header_map": 2,
+   "league": "PR Universe, Qualifier",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 2
+    }
+   ],
+   "team1": "LEGION",
+   "team2": "BLASTERBI"
+  },
+  {
+   "event_id": "16858347",
+   "header_map": null,
+   "league": "PR Universe, Qualifier",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "MOUZ",
+   "team2": "NEMIGA GAMING"
+  },
+  {
+   "event_id": "16868325",
+   "header_map": null,
+   "league": "PR Universe, Qualifier",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "HULIGANI",
+   "team2": "CYBERHERO"
+  },
+  {
+   "event_id": "16855431",
+   "header_map": null,
+   "league": "BLAST Slam",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "TEAM YANDEX",
+   "team2": "LGD GAMING"
+  },
+  {
+   "event_id": "16855095",
+   "header_map": null,
+   "league": "BLAST Slam",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "TEAM AURORA",
+   "team2": "1W"
+  }
+ ],
+ "winline_overview_snapshot_20260910.json": [
+  {
+   "event_id": "16659473",
+   "header_map": 2,
+   "league": "WINLINE Star Series",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 3
+    }
+   ],
+   "team1": "RECRENT CLUB",
+   "team2": "DAXAK CLUB"
+  },
+  {
+   "event_id": "16674794",
+   "header_map": 1,
+   "league": "BLAST Slam, Qualifier",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "ZERO TENACITY",
+   "team2": "DEVIL KINGS"
+  },
+  {
+   "event_id": "16674833",
+   "header_map": null,
+   "league": "BLAST Slam, Qualifier",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "CYBER NOVA",
+   "team2": "DAWN BULLS"
+  },
+  {
+   "event_id": "16674209",
+   "header_map": 2,
+   "league": "Mad Dogs League",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    }
+   ],
+   "team1": "PEACEKEEPERS",
+   "team2": "STORMRIDERS"
+  },
+  {
+   "event_id": "16659474",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "ROSTIKFACEKID CLUB",
+   "team2": "YBN CLUB"
+  },
+  {
+   "event_id": "16665472",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "NS CLUB",
+   "team2": "VOODOOSH CLUB"
+  },
+  {
+   "event_id": "16674853",
+   "header_map": null,
+   "league": "EPL Masters",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "NATUS VINCERE",
+   "team2": "KLIM SANI4"
+  },
+  {
+   "event_id": "16662969",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "COOMAN CLUB",
+   "team2": "YBN CLUB"
+  }
+ ],
+ "winline_overview_snapshot_20261008_blast_duel_cards.json": [
+  {
+   "event_id": "16855095",
+   "header_map": 2,
+   "league": "BLAST Slam",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 2
+    }
+   ],
+   "source": "hero",
+   "start_date": false,
+   "team1": "TEAM AURORA",
+   "team2": "1W"
+  },
+  {
+   "event_id": "16882199",
+   "header_map": 2,
+   "league": "BLAST Slam. Дуэль игроков. Убийства",
+   "live": true,
+   "prop_duel": true,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 3
+    }
+   ],
+   "team1": "SKITER (TEAM AURORA)",
+   "team2": "PURE (1W)"
+  },
+  {
+   "event_id": "16882198",
+   "header_map": 2,
+   "league": "BLAST Slam. Дуэль игроков. Убийства",
+   "live": true,
+   "prop_duel": true,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 3
+    }
+   ],
+   "team1": "MIKOTO (TEAM AURORA)",
+   "team2": "BZM (1W)"
+  },
+  {
+   "event_id": "16882197",
+   "header_map": 2,
+   "league": "BLAST Slam. Дуэль игроков. Убийства",
+   "live": true,
+   "prop_duel": true,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 3
+    }
+   ],
+   "team1": "WS (TEAM AURORA)",
+   "team2": "33 (1W)"
+  },
+  {
+   "event_id": "16889471",
+   "header_map": null,
+   "league": "BLAST Slam. Дуэль игроков. Убийства",
+   "live": false,
+   "prop_duel": true,
+   "rows": [
+    {
+     "has_prices": false,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "SATANIC (PARIVISION)",
+   "team2": "WATSON (TEAM YANDEX)"
+  },
+  {
+   "event_id": "16889364",
+   "header_map": null,
+   "league": "BLAST Slam",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "PARIVISION",
+   "team2": "TEAM YANDEX"
+  }
+ ],
+ "winline_unpriced_overview_20260915.json.gz": [
+  {
+   "event_id": "16705509",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": true,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    }
+   ],
+   "team1": "DAXAK CLUB",
+   "team2": "VOODOOSH CLUB"
+  },
+  {
+   "event_id": "16712373",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "STRAY CLUB",
+   "team2": "COOMAN CLUB"
+  },
+  {
+   "event_id": "16712375",
+   "header_map": null,
+   "league": "WINLINE Star Series",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "ROSTIKFACEKID CLUB",
+   "team2": "ROSTIK999 CLUB"
+  },
+  {
+   "event_id": "16708327",
+   "header_map": null,
+   "league": "European Pro League",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "NEMIGA GAMING",
+   "team2": "ZERO TENACITY"
+  },
+  {
+   "event_id": "16708584",
+   "header_map": null,
+   "league": "European Pro League",
+   "live": false,
+   "prop_duel": false,
+   "rows": [
+    {
+     "has_prices": true,
+     "kind": "match",
+     "map_num": null
+    },
+    {
+     "has_prices": true,
+     "kind": "map",
+     "map_num": 1
+    }
+   ],
+   "team1": "YELLOW SUBMARINE",
+   "team2": "URALAN"
+  }
+ ]
+}
