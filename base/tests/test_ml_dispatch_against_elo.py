@@ -57,6 +57,9 @@ def _ctx(name, **overrides):
 
 
 def _cfg(**env):
+    # 09.10.2026 (card ingame-8ht2): ``from_env`` defaults the block OFF. These tests
+    # exercise the 03.10 gate itself, so they pass the rollback env explicitly.
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
     # Underdog kills_window is OFF by default since 05.10.2026 (card ingame-h9b5);
     # these tests exercise that path, so enable it explicitly.
     env.setdefault("ML_DISPATCH_UNDERDOG_KILLS_WINDOW", "1")
@@ -138,7 +141,7 @@ def test_fixture_rows_are_what_they_claim():
 # -- the gate ---------------------------------------------------------------
 
 @pytest.mark.parametrize("name", UNDERDOG_CASES)
-def test_default_env_blocks_win_on_the_elo_underdog(name):
+def test_rollback_env_blocks_win_on_the_elo_underdog(name):
     record = _record(name)
     journaled = [d for d in record["decisions"] if d["market"] == "win"][0]
     side = journaled["target_side"]
@@ -191,7 +194,9 @@ def test_reason_constant_is_the_journaled_string():
 
 def test_hand_built_config_keeps_the_old_behaviour():
     assert md.Config().win_underdog_block is False
-    assert md.Config.from_env({}).win_underdog_block is True
+    rollback = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "1"})
+    assert rollback.win_underdog_block is True
+    assert rollback.win_underdog_block_min_diff == 50.0
     assert md.Config.from_env({}).win_underdog_block_min_diff == 50.0
     result = md.evaluate(_ctx("underdog_single_model_delivered"), md.Config())
     assert len(_wins(result)) == 1
@@ -364,7 +369,10 @@ RELEASE_MARK = "underdog_realized_release"
 
 
 def _prod_cfg(**env):
-    """Production defaults (``from_env`` of an empty environment) plus overrides."""
+    """Rollback env: ``from_env`` with ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1`` (since 09.10.2026
+    the block is off by default, so the E-365 release is only live under this env) plus
+    overrides; a test may pass its own BLOCK value."""
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
     return md.Config.from_env(dict(env))
 
 
@@ -492,6 +500,8 @@ def test_env_is_read_from_the_process_environment(monkeypatch):
     for name in list(os.environ):
         if name.startswith("ML_DISPATCH_"):
             monkeypatch.delenv(name, raising=False)
+    # Rollback env read from the process environment: block on, release (default) on.
+    monkeypatch.setenv("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
     assert len(_wins(md.evaluate(_rctx(YANGON), md.Config.from_env()))) == 1
     monkeypatch.setenv("ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE", "0")
     assert _wins(md.evaluate(_rctx(YANGON), md.Config.from_env())) == []
@@ -618,3 +628,39 @@ def test_dire_underdog_on_the_single_model_path_uses_the_dire_sign():
     behind = md.evaluate(_ctx(name, radiant_networth_lead=500.0, **rating), cfg)
     assert _wins(behind) == []
     assert len(_win_skips(behind, REASON_AGAINST_ELO)) == 1
+
+
+# -- 09.10.2026 (owner request, card ingame-8ht2): the ban is lifted by default -------
+
+def test_production_default_lifts_the_win_ban_on_the_captured_underdog_ticks():
+    """Delivery boundary: ``Config.from_env({})`` (what cyberscore_try builds in prod) on
+    the captured underdog rows yields the same WIN Decision as an explicit BLOCK=0 and
+    no ``win_against_elo_blocked`` skip; BLOCK=1 is the rollback to the 08.10 behaviour."""
+    prod = md.Config.from_env({})
+    explicit_off = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "0"})
+    rollback = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "1"})
+    assert prod.win_underdog_block is False
+    assert rollback.win_underdog_block is True
+    # the release switch stays on (inert while the block is off, active again on rollback)
+    assert prod.win_underdog_realized_release is True
+
+    # (1) 03.10 journal row: Radiant is the ELO underdog by >= 50 and the tick is delivered.
+    name = "underdog_single_model_delivered"
+    side = _record(name)["decisions"][0]["target_side"]
+    got, want = md.evaluate(_ctx(name), prod), md.evaluate(_ctx(name), explicit_off)
+    assert [(d.target_side, d.rule, d.timing) for d in _wins(got)] == [
+        (side, "win_single_model_confirm", "now")]
+    assert _wins(got) == _wins(want)
+    assert _win_skips(got, REASON_AGAINST_ELO) == []
+    assert _released_marks(_wins(got)[0]) == []          # no release mark: the gate is off
+
+    # (2) 08.10 tick: Aurora is the underdog (-155.7) and TRAILING at 613 s - blocked on
+    # 08.10, delivered now.
+    got, want = md.evaluate(_rctx(AURORA), prod), md.evaluate(_rctx(AURORA), explicit_off)
+    assert [(d.target_side, d.timing) for d in _wins(got)] == [("Radiant", "now")]
+    assert _wins(got) == _wins(want) and _released_marks(_wins(got)[0]) == []
+    assert _win_skips(got, REASON_AGAINST_ELO) == []
+    # rollback: exactly the 08.10 outcome (blocked)
+    blocked = md.evaluate(_rctx(AURORA), rollback)
+    assert _wins(blocked) == []
+    assert [s.side for s in _win_skips(blocked, REASON_AGAINST_ELO)] == ["Radiant"]

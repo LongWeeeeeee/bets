@@ -190,7 +190,9 @@ def test_dedup_is_checked_before_the_gate():
 def test_nw_gate_comes_before_the_against_elo_gate():
     # tick 3: Dire is the ELO underdog by 106 (against-ELO gate would block). With a 12k Dire
     # deficit set on top of the captured tick, the NW gate must be the reported reason.
-    cfg = md.Config.from_env({})  # production defaults: both gates on
+    # Rollback env: since 09.10.2026 the against-ELO block is OFF by default, so this
+    # test (NW gate precedence over the against-ELO gate) turns it on explicitly.
+    cfg = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "1"})
     result = md.evaluate(_ctx(3, radiant_networth_lead=12000.0), cfg)
     assert _wins(result) == []
     assert len(_win_skips(result, REASON)) == 1

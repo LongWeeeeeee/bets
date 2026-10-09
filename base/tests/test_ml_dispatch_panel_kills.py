@@ -421,9 +421,13 @@ class _Ledger:
 
 
 def _drive_tick(monkeypatch, blocks, *, tier1=True, game_time=100.0,
-                match_key="https://example/m", captured=None):
+                match_key="https://example/m", captured=None, pin_underdog_block=True):
     """``_ml_dispatch_tick`` the way prod runs it: prematch ML off (no index), the
     real card blocks, the real details extractor.
+
+    ``pin_underdog_block`` (captured ticks only): run under the rollback env
+    ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1`` so the kills assertions are not mixed with the
+    ELO-underdog WIN the 09.10.2026 default now lets through; ``False`` = production default.
 
     ``captured`` (a journal row of ``ml_dispatch_panel_tier1_ticks_20261006.jsonl``) replaces
     the card blocks by the verdicts, ELO, team names/ids and game_time of that real tick:
@@ -436,6 +440,12 @@ def _drive_tick(monkeypatch, blocks, *, tier1=True, game_time=100.0,
         monkeypatch.setattr(laning_serving, "verdicts",
                             lambda *a, **k: {"all": None, "lane": None})
     else:
+        # These 06.10 ticks predate the 09.10.2026 lift of the win-underdog ban (card
+        # ingame-8ht2): with the new default their ELO-underdog Radiant win would now be
+        # delivered next to the kills rule under test. Run them under the rollback env so
+        # the assertions stay on the kills path.
+        if pin_underdog_block:
+            monkeypatch.setenv("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
         v = captured["verdicts"]
         details = {k: v[k] for k in ("early_nw", "early_win", "late", "panel_w_5_15", "kills30")}
         monkeypatch.setattr(C, "_ml_dispatch_extract_index_details",
@@ -581,6 +591,38 @@ def test_tick_synthetic_non_tier1_panel_bet_default_and_rollback(monkeypatch):
     monkeypatch.setattr(C, "PANEL_KILLS_REQUIRE_TIER1", True)
     delivered, logged = _drive_tick(monkeypatch, blocks, tier1=False)
     assert delivered == [] and len(_tier1_skips(logged)) == 1
+
+
+def test_tick_production_default_delivers_the_underdog_win_next_to_the_panel_bet(monkeypatch):
+    """09.10.2026 (ingame-8ht2): under the production default (no BLOCK=1 pin) the captured
+    DIREBORN_Xipto tick delivers the kills 5-15 Dire panel bet unchanged AND the WIN on the
+    ELO-underdog Radiant side; BLOCK=1 (rollback) delivers only the kills bet."""
+    row = TIER1_TICKS[0]
+    monkeypatch.delenv("ML_DISPATCH_WIN_UNDERDOG_BLOCK", raising=False)
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=False, captured=row,
+                                    pin_underdog_block=False)
+    markets = sorted(k["stake_multiplier_context"]["ml_market"] for _a, k in delivered)
+    assert markets == ["kills_window", "win"]
+    (kw_args, kw_kwargs), = _window_calls(delivered)
+    assert kw_kwargs["stake_multiplier_context"]["ml_rule"] == "kills_panel_window"
+    assert kw_kwargs["stake_multiplier_context"]["target_side"] == "dire"
+    assert kw_args[1].splitlines()[0] == C._format_signal_header(
+        stake_team_name=row["teams"]["dire"], stake_multiplier=None,
+        special_header_mode="early_kills", kills_window_label="5_15")
+    (win_args, win_kwargs), = [(a, k) for a, k in delivered
+                               if k["stake_multiplier_context"]["ml_market"] == "win"]
+    context = win_kwargs["stake_multiplier_context"]
+    assert (context["origin"], context["ml_rule"], context["target_side"]) == (
+        "ml_dispatch", "win_single_model_confirm", "radiant")
+    assert any(line.startswith("Ставить от кэфа") for line in win_args[1].splitlines())
+    assert [(d["market"], d["rule"], d["target_side"]) for d in logged[0]["decisions"]] == [
+        ("win", "win_single_model_confirm", "Radiant"),
+        ("kills_window", "kills_panel_window", "Dire")]
+    assert not any(s["reason"] == "win_against_elo_blocked" for s in logged[0]["skipped"])
+    # rollback: the same tick loses the win and keeps the kills bet
+    delivered, logged = _drive_tick(monkeypatch, None, tier1=False, captured=row)
+    assert [k["stake_multiplier_context"]["ml_market"] for _a, k in delivered] == ["kills_window"]
+    assert any(s["reason"] == "win_against_elo_blocked" for s in logged[0]["skipped"])
 
 
 def test_tick_exemption_is_rule_specific_the_underdog_window_stays_gated(monkeypatch):

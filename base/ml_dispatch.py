@@ -97,7 +97,10 @@ Rules implemented (owner decisions, 12.09.2026 — see
   untouched: the kills underdog path bets on the underdog by design.
   Missing/nonfinite ELO or a smaller diff keeps the old behavior.
   ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=0`` (also ``false``/``off``) disables the
-  gate. The dataclass default is off (hand-built ``Config()``); ``from_env`` is on.
+  gate. Since 09.10.2026 (owner request, card ingame-8ht2) the block is OFF by
+  default in BOTH the dataclass (hand-built ``Config()``) and ``from_env``;
+  ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1`` (``true``/``on``) is the rollback that
+  re-enables it (and, with it, the E-365 realized release below).
 - Owner decision 08.10.2026 (E-365, ``_win_underdog_realized``): the block above is
   released for an ELO underdog that is REALIZING the models' edge at the tick:
   ``game_time >= ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME`` (default 300 s) AND the
@@ -115,7 +118,10 @@ Rules implemented (owner decisions, 12.09.2026 — see
   deficit> lead=<target NW lead> game_time=<t>"`` in ``Decision.reasons``. Garbage
   threshold values (nonfinite/negative) fall back to the defaults.
   ``ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE=0`` (also ``false``/``off``) restores
-  the 03.10 block exactly; the dataclass default is off, ``from_env`` is on.
+  the 03.10 block exactly; the dataclass default is off, ``from_env`` is on, but
+  the release only acts while the block itself is on: since 09.10.2026 the block
+  defaults OFF in ``from_env``, so the release is inert (and ``Decision.reasons``
+  carries no ``underdog_realized_release``) unless ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1``.
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -484,7 +490,9 @@ class Config:
     # production reads ``from_env`` where the default is on.
     floor_calibration: bool = False
     # Owner decision 03.10.2026: no ``win`` decision on the ELO underdog. Dataclass
-    # default off (hand-built ``Config()`` keeps the old behavior); ``from_env`` on.
+    # default off (hand-built ``Config()`` keeps the old behavior); since 09.10.2026
+    # (ingame-8ht2) the ``from_env`` default is off too; ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1``
+    # is the rollback.
     win_underdog_block: bool = False
     win_underdog_block_min_diff: float = 50.0
     # Owner decision 08.10.2026 (E-365): the underdog block above is released while the
@@ -593,7 +601,7 @@ class Config:
                 env.get("ML_DISPATCH_FLOOR_CALIBRATION", "1")
             ).strip().lower() not in ("0", "false", "off"),
             win_underdog_block=str(
-                env.get("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
+                env.get("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "0")
             ).strip().lower() not in ("0", "false", "off"),
             win_underdog_block_min_diff=_win_underdog_min_diff(
                 _float("ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF", 50.0)),
