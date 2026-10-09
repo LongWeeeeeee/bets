@@ -49,7 +49,7 @@ run_topup() {
   # по возрасту снимка на проде. Одна строка в админ-чат в любом исходе.
   if [ "$rc" -ne 0 ] || grep -qE 'ВНИМАНИЕ|Traceback|Unexpected error|Все [0-9]+ прокси' "$LOG"; then
     { echo "${NP}⚠️ добор про-корпуса: rc=$rc ($(date '+%F %T'))";
-      grep -E 'ВНИМАНИЕ|Traceback|Unexpected error|прокси|свежайшая карта|файлов в корпусе' "$LOG" | tail -6; } \
+      grep -E 'STRATZ batches:|ВНИМАНИЕ|Traceback|Unexpected error|прокси|свежайшая карта|файлов в корпусе' "$LOG" | tail -6; } \
       | "$PY" scripts/ops/notify_admin.py
   else
     grep -E 'файлов в корпусе|свежайшая карта' "$LOG" | sed "s/^/${NP}✅ добор: /" | "$PY" scripts/ops/notify_admin.py

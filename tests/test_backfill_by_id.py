@@ -457,7 +457,7 @@ def test_topup_backfill_exception_restores_visited(tmp_path, monkeypatch, capsys
     visited_path.write_text('[11, 12]')
     monkeypatch.setattr(M, 'PRO_HEROES_DIR', pro)
     monkeypatch.setattr(M, '_seed_team_ids', lambda: [11])
-    monkeypatch.setattr(M, 'get_pros', lambda **kwargs: None)
+    monkeypatch.setattr(M, 'get_pros', lambda **kwargs: dict(ok=1, failed=0, auth_failed=0))
     monkeypatch.setattr(T, 'LOCK', tmp_path / 'topup.lock')
     monkeypatch.setattr(T, '_newest_map_ts', lambda path: int(B.time.time()))
     monkeypatch.setattr(B, 'backfill_by_id', lambda **kwargs: (_ for _ in ()).throw(RuntimeError('fixture failure')))

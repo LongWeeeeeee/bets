@@ -277,9 +277,10 @@ def _build_tier_team_ids():
 class StratzBatchError(RuntimeError):
     """Неполный pro-сбор; успешно опрошенные команды сохраняются при отказе."""
 
-    def __init__(self, message, completed_ids=()):
+    def __init__(self, message, completed_ids=(), batch_stats=None):
         super().__init__(message)
         self.completed_ids = set(completed_ids)
+        self.batch_stats = dict(batch_stats or {"ok": 0, "failed": 0, "auth_failed": 0})
 
 
 class StratzAuthError(StratzBatchError):
@@ -636,7 +637,10 @@ class ProxyAPIPool:
             **request_kwargs,
         )
         try:
-            return response.json(), response.headers
+            data = response.json()
+            if _is_auth_failure(data) and response.status_code not in (401, 403):
+                raise RuntimeError(f"HTTP {response.status_code}: unexpected authentication response")
+            return data, response.headers
         except ValueError as exc:
             body = response.text[:300].replace('\n', ' ')
             raise RuntimeError(f"HTTP {response.status_code}: {body}") from exc
@@ -702,7 +706,8 @@ class ProxyAPIPool:
                 except Exception as e:
                     # Без Accept: application/json шлюз Kong отдаёт 403 HTML-страницей,
                     # и _post_json_with_requests превращает её в RuntimeError.
-                    if 'A bearer token is required' in str(e):
+                    if (str(e).startswith(('HTTP 401:', 'HTTP 403:'))
+                            and 'A bearer token is required' in str(e)):
                         await tracker.mark_auth_dead(str(e)[-80:])
                         if all(t.auth_dead for t in self.trackers):
                             raise StratzAuthError("Stratz не принял ни один ключ пула") from e
@@ -1086,6 +1091,7 @@ async def get_maps_new(ids, mkdir,
     ids_set = set(int(id) for id in ids)
     maps_counter = 0
     failed_batches = 0
+    batch_stats = {"ok": 0, "failed": 0, "auth_failed": 0}
     auth_error = None
     run_map_ids = set()
     for map_id in output_data.keys():
@@ -1163,10 +1169,13 @@ async def get_maps_new(ids, mkdir,
                 ], return_exceptions=True)
                 for batch, result in zip(batch_group, results):
                     if isinstance(result, BaseException):
+                        batch_stats["failed"] += 1
                         if isinstance(result, StratzAuthError):
                             auth_error = result
+                            batch_stats["auth_failed"] += 1
                         yield set(), [], set(), set(batch)
                     else:
+                        batch_stats["ok"] += 1
                         matches, page_player_ids = result
                         yield set(batch), matches, page_player_ids, set()
                 if auth_error is not None:
@@ -1368,15 +1377,19 @@ async def get_maps_new(ids, mkdir,
     if pro and incomplete_crawl:
         completed_ids = processed_ids & ids_set
         if auth_error is not None:
-            raise StratzAuthError(str(auth_error), completed_ids) from auth_error
-        raise StratzBatchError(f"pro crawl incomplete: {failed_batches} batch(es) failed", completed_ids)
+            raise StratzAuthError(str(auth_error), completed_ids, batch_stats) from auth_error
+        raise StratzBatchError(f"pro crawl incomplete: {failed_batches} batch(es) failed",
+                              completed_ids, batch_stats)
     if incomplete_pub_crawl:
         raise RuntimeError(f"pub crawl incomplete: {failed_batches} page batch(es) failed")
-    return {
+    result = {
         "maps_collected": maps_counter,
         "failed_batches": failed_batches,
         "merged_files": list(merged_files),
     }
+    if pro:
+        result["batch_stats"] = batch_stats
+    return result
 
 
 def _process_single_json_file(file_path, maps, output):
@@ -3844,6 +3857,7 @@ def get_pros(max_waves=None):
     batch_concurrency = max(1, min(10, proxy_count))
 
     wave = 0
+    batch_stats = {"ok": 0, "failed": 0, "auth_failed": 0}
     while queue:
         wave += 1
         if max_waves is not None and wave > int(max_waves):
@@ -3851,15 +3865,20 @@ def get_pros(max_waves=None):
             break
         print(f"\n🌊 волна {wave}: опрашиваю {len(queue):,} команд", flush=True)
         try:
-            asyncio.run(get_maps_new(ids=list(queue), pro=True,
-                                     mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
-                                     batch_concurrency=batch_concurrency))
+            result = asyncio.run(get_maps_new(ids=list(queue), pro=True,
+                                             mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
+                                             batch_concurrency=batch_concurrency))
         except Exception as exc:
             if isinstance(exc, StratzBatchError):
+                for key in batch_stats:
+                    batch_stats[key] += exc.batch_stats[key]
+                exc.batch_stats = batch_stats
                 visited |= exc.completed_ids
                 _save_visited_teams(visited_path, visited)
             print(f"ОШИБКА: добор про-корпуса не завершён: {exc}", flush=True)
-            raise  # topup обязан завершиться с ненулевым rc, а не с 0 карт.
+            raise  # Обычный обход строгий; ночной topup отдельно принимает частичный успех.
+        for key in batch_stats:
+            batch_stats[key] += result["batch_stats"][key]
         visited |= set(queue)
         _save_visited_teams(visited_path, visited)
 
@@ -3868,6 +3887,7 @@ def get_pros(max_waves=None):
         print(f"🔎 волна {wave} закончена: всего команд в корпусе {len(discovered):,}, "
               f"новых для следующей волны {len(queue):,}", flush=True)
     print(f"\n✅ снежный ком остановился: опрошено команд {len(visited):,}, волн {wave}")
+    return batch_stats
 
 
 # ----------------------------------------------------------------------------

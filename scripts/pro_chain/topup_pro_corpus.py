@@ -115,10 +115,12 @@ def main() -> int:
         age_min = (time.time() - LOCK.stat().st_mtime) / 60.0
         if age_min < 180:
             say(f"уже идёт другой добор (замок {age_min:.0f} мин назад) — выхожу")
+            say("STRATZ batches: ok=0 failed=0 auth_failed=0")
             return 0
         say(f"замок протух ({age_min:.0f} мин) — перехватываю")
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     LOCK.write_text(str(os.getpid()), encoding="utf-8")
+    batch_stats = {"ok": 0, "failed": 0, "auth_failed": 0}
 
     try:
         window_from = int(time.time()) - WINDOW_DAYS * 86400
@@ -147,12 +149,25 @@ def main() -> int:
 
         M._save_visited_teams(str(visited_path), visited - set(seeds))
         try:
-            M.get_pros(max_waves=1)
+            try:
+                batch_stats = M.get_pros(max_waves=1)
+                M.live_stratz_pairs(M.STRATZ_PROXY_MAP.items())  # Проверить expiry и при пустой очереди.
+            except M.StratzBatchError as exc:
+                if exc.batch_stats["failed"]:
+                    batch_stats = exc.batch_stats
+                # Частичный сетевой отказ не обнуляет успешный ночной добор.
+                # AuthError означает, что живых ключей нет, даже после успехов.
+                if isinstance(exc, M.StratzAuthError) or not batch_stats["ok"]:
+                    return 4
             try:
                 from backfill_by_id import backfill_by_id
                 backfill_by_id(since=window_from, corpus_dir=corpus, M=M)
             except Exception as exc:
                 say(f"ВНИМАНИЕ: id-backfill не завершён: {exc}")
+            if (M.proxy_pool is not None and M.proxy_pool.trackers
+                    and all(t.auth_dead for t in M.proxy_pool.trackers)):
+                say("ОШИБКА: добор про-корпуса: все ключи STRATZ отклонены")
+                return 4
         finally:
             # Восстанавливаем ВСЕГДА: обрыв на середине волны не должен оставить
             # 625 команд «неопрошенными» — следующий обычный get_pros() тогда
@@ -174,6 +189,7 @@ def main() -> int:
         say(f"=== {time.strftime('%F %T')} готово ===")
         return 0
     finally:
+        say("STRATZ batches: ok={ok} failed={failed} auth_failed={auth_failed}".format(**batch_stats))
         LOCK.unlink(missing_ok=True)
 
 

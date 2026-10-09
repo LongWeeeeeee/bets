@@ -1,0 +1,8 @@
+{
+  "captured_date": "2026-10-07",
+  "source": "STRATZ answer to a dead bearer token, captured in task stratz-dead-keys-20261007 and pinned as CAPTURED_403 in base/tests/test_stratz_dead_keys.py:22 (the 08.10 serv1 probe returned the same 'A bearer token is required' prefix)",
+  "status_code": 403,
+  "body": {
+    "message": "A bearer token is required for a request. View more at https://stratz.com/api"
+  }
+}
