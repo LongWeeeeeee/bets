@@ -93,7 +93,9 @@ def convert(input_dir: Path, excluded_ids: set[int]) -> tuple[dict[str, dict], d
             "leagueId": league_id,
             "league": {"id": league_id, "tier": tier.upper() if isinstance(tier, str) else None,
                        "name": row.get("league_name") or ""},
-            "series": {"id": row.get("series_id"),
+            # OpenDota answers 0 (and null) when it has no series; 0 would group unrelated
+            # maps of the same pair in ELO/series_data.py, so only a positive id is kept.
+            "series": {"id": row.get("series_id") if _positive_int(row.get("series_id")) else None,
                        "type": SERIES_TYPES.get(series_type) if isinstance(series_type, int)
                        and not isinstance(series_type, bool) else None},
             **teams,

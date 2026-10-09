@@ -18,6 +18,7 @@
 #
 # Переменные: PROD_ROOT (/root/main), PRO_CHAIN_BUILD_ROOT (/root/pro_chain),
 #   PRO_CHAIN_SHADOW=1 — собрать, ничего не доставлять (проходит насквозь).
+#   PRO_CHAIN_ELO_SUPPLEMENT=0 — пропустить добор ELO-добавки OpenDota и собрать снимок без неё (ELO_SUPPLEMENT_DIR=/nonexistent).
 # Коды выхода: 0 ок или уже идёт другой прогон; 2 неверная конфигурация;
 #   1 дерево сборки грязное / сорвалась синхронизация; иначе код пересборки.
 # Совместимо с bash 3.2 (тесты на macOS): без ассоциативных массивов и mapfile.
@@ -143,9 +144,18 @@ wait_no_live_map "${PRO_CHAIN_HEAVY_WAIT_SECONDS:-2700}" "добор про-ко
 run_step "добор про-корпуса" "$TOPUP_TIMEOUT" "$BUILD_ROOT/scripts/run/topup_pro_corpus.sh" || topup_rc=$?
 [ "$topup_rc" -eq 0 ] || echo "добор упал (rc=$topup_rc), пересобираю на текущем корпусе"
 
+supplement_rc=skipped
+if [ "${PRO_CHAIN_ELO_SUPPLEMENT:-1}" != 0 ]; then
+  supplement_rc=0
+  run_step "ELO-добавка OpenDota" 1800 "$BUILD_ROOT/scripts/pro_chain/update_elo_supplement.sh" || supplement_rc=$?
+else
+  # Полный откат одним флагом: снимок строится без добавки, даже если файл прошлой ночи лежит в data/elo_supplement.
+  export ELO_SUPPLEMENT_DIR="${ELO_SUPPLEMENT_DIR:-/nonexistent}"
+fi
+
 rebuild_rc=0
 wait_no_live_map "${PRO_CHAIN_HEAVY_WAIT_SECONDS:-2700}" "пересборка снимка"
 run_step "пересборка снимка" "$REBUILD_TIMEOUT" "$BUILD_ROOT/scripts/run/rebuild_prematch_snapshot.sh" || rebuild_rc=$?
 
-echo "=== $(date '+%F %T') цепочка завершена: добор rc=$topup_rc, пересборка rc=$rebuild_rc ==="
+echo "=== $(date '+%F %T') цепочка завершена: добор rc=$topup_rc, пересборка rc=$rebuild_rc, ELO-добавка rc=$supplement_rc ==="
 exit "$rebuild_rc"
