@@ -155,3 +155,9 @@ Native Opus hard-verifier (08.10, скрипты `/private/tmp/claude-501/underd
 - У отсеянных строк нет `min_odds` в журнале — прохождение пола по кэфу для них не оценено.
 - Котировка архивная, не исполненная ставка; рынки «дуэль игроков» отфильтрованы по E-353.
 - Перевес журнала — `radiant_networth_lead` на тике (> 0 — Radiant впереди); ориентация проверена на 2 картах.
+- Исходы трёх карт R1 с одним источником сверены с OpenDota `/api/matches/<id>` 09.10.2026 ~03:20 МСК (после
+  сброса квоты): 9015752629 Team GPK – Team Cake `radiant_win=False`, 9030822324 Blasterbl – LEGION `False`,
+  9031536047 Yangon Galacticos – InterActive Philippines `True` — все три совпадают со строками (стороны тоже);
+  клетка R1 не меняется.
+- Ключи серий в `rows.jsonl`: 24 группы «пара × день» разбиты между `pairday:` и `s…` (найдено в E-366) — бутстрап по
+  сериям здесь слегка недокластеризован; склейка — `runtime/experiments/draft-cp/underdog_ev_gate_20261009/run.py` v2.
