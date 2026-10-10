@@ -72,6 +72,9 @@ def _cfg(**env):
     # it, so switch it off here to keep these tests on the 03.10 block itself. The release
     # is tested below with production defaults (``_prod_cfg``).
     env.setdefault("ML_DISPATCH_WIN_UNDERDOG_REALIZED_RELEASE", "0")
+    # 10.10.2026 underdog trio gate is a different gate (tested in
+    # test_ml_dispatch_underdog_trio.py); pin it off so BLOCK=0 here is the 09.10 lift.
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN", "0")
     return md.Config.from_env(env)
 
 
@@ -373,6 +376,8 @@ def _prod_cfg(**env):
     the block is off by default, so the E-365 release is only live under this env) plus
     overrides; a test may pass its own BLOCK value."""
     env.setdefault("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "1")
+    # 10.10.2026 trio gate pinned off: these tests assert the 09.10 BLOCK=0 behaviour.
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN", "0")
     return md.Config.from_env(dict(env))
 
 
@@ -636,9 +641,13 @@ def test_production_default_lifts_the_win_ban_on_the_captured_underdog_ticks():
     """Delivery boundary: ``Config.from_env({})`` (what cyberscore_try builds in prod) on
     the captured underdog rows yields the same WIN Decision as an explicit BLOCK=0 and
     no ``win_against_elo_blocked`` skip; BLOCK=1 is the rollback to the 08.10 behaviour."""
-    prod = md.Config.from_env({})
-    explicit_off = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "0"})
-    rollback = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "1"})
+    # 10.10.2026: the trio gate (new prod default 0.60) is pinned off here so this test
+    # keeps asserting the 09.10 lift; its own default is asserted in
+    # test_ml_dispatch_underdog_trio.py.
+    pin = {"ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN": "0"}
+    prod = md.Config.from_env(dict(pin))
+    explicit_off = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "0", **pin})
+    rollback = md.Config.from_env({"ML_DISPATCH_WIN_UNDERDOG_BLOCK": "1", **pin})
     assert prod.win_underdog_block is False
     assert rollback.win_underdog_block is True
     # the release switch stays on (inert while the block is off, active again on rollback)

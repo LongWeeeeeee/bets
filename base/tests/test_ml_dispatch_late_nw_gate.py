@@ -68,6 +68,9 @@ def _cfg(**env):
     # The 03.10.2026 against-ELO gate is a different gate: switch it off so these
     # ticks (several are ELO-underdog Late bets journaled before it) isolate the NW gate.
     env.setdefault("ML_DISPATCH_WIN_UNDERDOG_BLOCK", "0")
+    # 10.10.2026 underdog trio gate is a different gate too (tested in
+    # test_ml_dispatch_underdog_trio.py); pin it off so these ticks isolate the NW gate.
+    env.setdefault("ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN", "0")
     return md.Config.from_env(env)
 
 

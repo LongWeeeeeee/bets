@@ -122,6 +122,29 @@ Rules implemented (owner decisions, 12.09.2026 — see
   the release only acts while the block itself is on: since 09.10.2026 the block
   defaults OFF in ``from_env``, so the release is inert (and ``Decision.reasons``
   carries no ``underdog_realized_release``) unless ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1``.
+- Lead decision 10.10.2026 (E-374 follow-up, card ingame-vmwo,
+  ``_win_underdog_trio_skip``): while the full ban above is OFF (the default), a
+  ``win`` decision of ANY rule (``win_single_model_confirm``, ``win_late_after_wait``)
+  whose target is the ELO underdog (same definition as the ban: both ELOs finite, target
+  strictly lower by >= ``ML_DISPATCH_WIN_UNDERDOG_BLOCK_MIN_DIFF``, default 50; missing
+  ELO = no gate) is kept only when Early Win, Early NW and All EACH give the TARGET
+  side ``p_target`` >= ``ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN`` (default 0.60), where
+  ``p_target`` = P of the TARGET side (the verdict's confidence when it names the target,
+  ``1 - confidence`` when it names the opponent; confidence = P of the verdict's own side).
+  A missing verdict or a ``p_target`` below the threshold (so, at thresholds > 0.5, any
+  opposite-side verdict) removes the decision from ``decisions`` and records ``Skipped("win",
+  target, "win_underdog_trio_unsupported", <the three ``model=side:conf(p_target=..)`` values,
+  both ELOs, deficit, trio_min>)``; kills markets and ELO-favourite WIN decisions are
+  untouched. Evidence: the
+  dispatcher's own underdog WIN decisions 12.09-10.10, min(Early Win, Early NW, All toward
+  the underdog) < 0.60 -> 50 maps, 32% won, Winline ROI -47% [-76;-12] (n26 priced); >= 0.60
+  -> 30 maps, 43% won, ROI +48% [-27;+129] (n18); Winline's price is flat across the buckets
+  (35-36%); offline 14402 underdog maps: WR 26% -> 53% with min-trio at constant ELO P.
+  Parsing: ``0``/``off``/``false``/empty or a value <= 0 disables the gate, non-numeric or
+  non-finite falls back to 0.60, values above 0.95 clamp to 0.95. The dataclass default is
+  0.0 (off, hand-built ``Config()`` keeps the 09.10 behaviour); ``from_env`` default 0.60.
+  With ``ML_DISPATCH_WIN_UNDERDOG_BLOCK=1`` the gate never runs (the ban and the E-365
+  release behave exactly as before). Rollback: ``ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN=0``.
 - Dedup is persistent and keyed by ``(base_url, map_num, market, side)``.
   :func:`evaluate` is a pure function: it only *consults*
   ``ctx.already_sent`` (a plain ``set`` of such tuples, or ``None``) to
@@ -336,6 +359,8 @@ REASON_KILLS30_MISSING = "kills30_missing"
 REASON_KILLS30_BELOW = "kills30_below_threshold"
 REASON_EARLY_SOLO_BLOCKED = "early_solo_blocked"
 REASON_WIN_AGAINST_ELO = "win_against_elo_blocked"
+REASON_WIN_UNDERDOG_TRIO_UNSUPPORTED = "win_underdog_trio_unsupported"
+WIN_UNDERDOG_TRIO_MODELS = ("early_win", "early_nw", "all")
 
 RULE_WIN_LATE_AFTER_WAIT = "win_late_after_wait"
 RULE_KILLS_LATE_CONFLICT_EARLY_SIDE = "kills_late_conflict_early_side"
@@ -502,6 +527,11 @@ class Config:
     win_underdog_realized_release: bool = False
     win_underdog_realized_min_time: float = 300.0
     win_underdog_realized_min_lead: float = 0.0
+    # Lead decision 10.10.2026 (E-374 follow-up, card ingame-vmwo): with the full ban
+    # off, an ELO-underdog ``win`` decision needs early_win, early_nw and all each for
+    # the TARGET at >= this confidence; 0 disables. Dataclass default off (hand-built
+    # ``Config()`` keeps the 09.10 behaviour); ``from_env`` default 0.60.
+    win_underdog_trio_min: float = 0.0
     sent_path: str = "runtime/ml_dispatch_sent.json"
     max_game_time: Optional[float] = None
     late_conflict_mode: str = "wait"
@@ -612,6 +642,8 @@ class Config:
                 _float("ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_TIME", 300.0), 300.0),
             win_underdog_realized_min_lead=_win_underdog_realized_threshold(
                 _float("ML_DISPATCH_WIN_UNDERDOG_REALIZED_MIN_LEAD", 0.0), 0.0),
+            win_underdog_trio_min=_win_underdog_trio_min(
+                env.get("ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN", "0.60")),
             sent_path=str(env.get("ML_DISPATCH_SENT_PATH", "runtime/ml_dispatch_sent.json")),
             max_game_time=max_game_time,
             late_conflict_mode=late_conflict_mode,
@@ -963,6 +995,100 @@ def _win_against_elo_state(
 def _win_against_elo(ctx: Ctx, cfg: Config, target_side: str) -> Optional[str]:
     """Block detail of :func:`_win_against_elo_state` (``None`` = not blocked)."""
     return _win_against_elo_state(ctx, cfg, target_side)[0]
+
+
+def _win_underdog_trio_min(raw) -> float:
+    """Env parsing of ``ML_DISPATCH_WIN_UNDERDOG_TRIO_MIN`` (lead decision 10.10.2026).
+
+    ``0``/``off``/``false``/empty or any value <= 0 -> 0.0 (gate disabled); a
+    non-numeric or non-finite value -> the default 0.60; values above 0.95 clamp to
+    0.95 (a higher bar would block every underdog WIN)."""
+    text = str(raw).strip().lower()
+    if text in ("", "0", "off", "false"):
+        return 0.0
+    try:
+        value = float(text)
+    except ValueError:
+        return 0.60
+    if not math.isfinite(value):
+        return 0.60
+    if value <= 0:
+        return 0.0
+    return min(value, 0.95)
+
+
+def _win_underdog_trio_skip(ctx: Ctx, cfg: Config, decision: Decision) -> Optional[Skipped]:
+    """Lead decision 10.10.2026 (E-374 follow-up): ``Skipped`` for a ``win`` decision on
+    the ELO underdog that lacks Early Win + Early NW + All support, else ``None``.
+
+    Inert while the full ban (``cfg.win_underdog_block``) is on or the threshold is 0.
+    Underdog = the :func:`_win_against_elo_state` definition (both ELOs finite, target
+    strictly lower by >= ``cfg.win_underdog_block_min_diff``); missing/nonfinite ELO or
+    a smaller deficit leaves the decision alone. Support = each of the three verdicts
+    present (side in ``SIDES``, finite confidence) with ``p_target >= cfg.win_underdog_trio_min``,
+    where ``p_target`` is P of the TARGET side: ``confidence`` when the verdict's side is the
+    target, ``1 - confidence`` when it is the opponent (the measured E-374 definition: min over
+    the three of P(underdog)). Producers emit ``confidence = max(p, 1-p) >= 0.5``, so at
+    thresholds > 0.5 an opposite-side verdict (p_target <= 0.5) never supports; the conversion
+    only matters for thresholds <= 0.5.
+    """
+    threshold = float(cfg.win_underdog_trio_min)
+    if cfg.win_underdog_block or not (math.isfinite(threshold) and threshold > 0):
+        return None
+    side = decision.target_side
+    if decision.market != "win" or side not in SIDES:
+        return None
+    try:
+        elo_r, elo_d = float(ctx.elo_radiant), float(ctx.elo_dire)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(elo_r) and math.isfinite(elo_d)):
+        return None
+    deficit = (elo_d - elo_r) if side == "Radiant" else (elo_r - elo_d)
+    if deficit <= 0 or deficit < float(cfg.win_underdog_block_min_diff):
+        return None
+
+    supported = True
+    parts = []
+    for name in WIN_UNDERDOG_TRIO_MODELS:
+        verdict = ctx.model(name)
+        try:
+            conf = float(verdict.confidence) if verdict is not None else float("nan")
+        except (TypeError, ValueError):
+            conf = float("nan")
+        if verdict is None or verdict.side not in SIDES or not math.isfinite(conf):
+            supported = False
+            parts.append(f"{name}=none")
+            continue
+        p_target = conf if verdict.side == side else 1.0 - conf
+        if p_target < threshold:
+            supported = False
+        parts.append(f"{name}={verdict.side}:{conf:.4f}(p_target={p_target:.4f})")
+    if supported:
+        return None
+    return Skipped(
+        "win", side, REASON_WIN_UNDERDOG_TRIO_UNSUPPORTED,
+        f"{' '.join(parts)}; target {side} is ELO underdog: elo_radiant={elo_r:.1f} "
+        f"elo_dire={elo_d:.1f} deficit={deficit:.1f} >= "
+        f"{float(cfg.win_underdog_block_min_diff):.1f}; trio_min={threshold:.2f} "
+        f"rule={decision.rule}",
+    )
+
+
+def _apply_win_underdog_trio_gate(
+    ctx: Ctx, cfg: Config, decisions: List[Decision], skipped: List[Skipped],
+) -> Tuple[List[Decision], List[Skipped]]:
+    """Drop ``win`` decisions failing :func:`_win_underdog_trio_skip`, one record each.
+    Applied to the finished win result so it sees every win rule."""
+    kept: List[Decision] = []
+    out_skipped = list(skipped)
+    for decision in decisions:
+        skip = _win_underdog_trio_skip(ctx, cfg, decision)
+        if skip is None:
+            kept.append(decision)
+        else:
+            out_skipped.append(skip)
+    return kept, out_skipped
 
 
 def _underdog(ctx: Ctx, cfg: Config) -> Tuple[Optional[str], float]:
@@ -1681,6 +1807,8 @@ def evaluate(ctx: Ctx, cfg: Config) -> EvalResult:
     underdog_side, elo_diff = _underdog(ctx, cfg)
     late_conflict = _detect_late_conflict(ctx, cfg)
     win_decisions, win_skipped = _evaluate_win(ctx, cfg, late_conflict)
+    win_decisions, win_skipped = _apply_win_underdog_trio_gate(
+        ctx, cfg, win_decisions, win_skipped)
     kills_decisions, kills_skipped = _evaluate_kills(ctx, cfg, underdog_side, late_conflict)
     kills_decisions, kills_skipped = _apply_kills_total_gate(
         ctx, cfg, underdog_side, kills_decisions, kills_skipped
