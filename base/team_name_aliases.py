@@ -29,6 +29,9 @@ __all__ = [
     "compact_key",
     "fold_confusables",
     "match_key",
+    "GENERIC_TEAM_TOKENS",
+    "names_match_loosely",
+    "search_forms",
 ]
 
 
@@ -124,6 +127,13 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # 65; с 26.09 без цены ~20 карт EPL. Строки истории —
     # base/tests/fixtures/winline_yache123_card_keys_20261004.json.
     "ЯЧЁ123": ("YACHE123",),
+    # 10.10.2026, ревью гейта присутствия: частые расхождения тега и полного имени
+    # у команд тир-1 (Winline любит короткий тег: `NAVI`, `PSG.LGD`; кириллицей
+    # пишут `Тим Спирит`). Ложное несовпадение держит ставку, поэтому тег и имя
+    # сведены явно. `Team Spirit` и `TEAM SPIRIT ACADEMY` остаются РАЗНЫМИ.
+    "Natus Vincere": ("NAVI",),
+    "LGD Gaming": ("PSG.LGD",),
+    "Team Spirit": ("Тим Спирит",),
 }
 
 
@@ -216,3 +226,90 @@ def canonical_team_key(name: str) -> str:
     if not group:
         return key
     return match_key(group[0])
+
+
+# Слова-обёртки, которые букмекер добавляет или отбрасывает произвольно:
+# `Aurora Gaming` (наше) и `TEAM AURORA` (Winline) - одна команда.
+GENERIC_TEAM_TOKENS = frozenset(
+    {"team", "gaming", "esports", "esport", "club", "gg", "the"})
+LOOSE_RATIO_MIN = 0.85
+LOOSE_RATIO_MIN_LEN = 4
+
+
+def _loose_forms(name: str) -> List[str]:
+    """Формы имени для ослабленного сравнения: полная и без слов-обёрток."""
+    full = match_key(name)
+    if not full:
+        return []
+    forms = [full]
+    core = " ".join(t for t in full.split() if t not in GENERIC_TEAM_TOKENS)
+    if core and core != full:
+        forms.append(core)
+    return forms
+
+
+def names_match_loosely(ours: str, theirs: str) -> bool:
+    """Одна ли это команда по двум написаниям (чистая функция).
+
+    Для гейта присутствия матча в листинге Winline: ложное СОВПАДЕНИЕ там
+    безвредно (ставка уходит, как до гейта), ложное НЕСОВПАДЕНИЕ держит ставку,
+    поэтому правило щедрое. Проверки по порядку:
+    1) равны после `match_key` (регистр, пунктуация, кириллица-двойники);
+    2) общая группа справочника написаний (`alias_spellings`: ручной + переименования);
+    3) равны после отбрасывания слов-обёрток (`GENERIC_TEAM_TOKENS`) или без
+       пробелов (`Iron Wing` / `ironwing`);
+    4) `difflib` >= 0.85 на формах длиной >= 4 (`Blasterbl` / `BLASTERBI`).
+    """
+    left, right = _loose_forms(ours), _loose_forms(theirs)
+    if not left or not right:
+        return False
+    if left[0] == right[0]:
+        return True
+    group_left = {left[0]} | {match_key(s) for s in alias_spellings(ours)}
+    group_right = {right[0]} | {match_key(s) for s in alias_spellings(theirs)}
+    group_left.discard("")
+    group_right.discard("")
+    if group_left & group_right:
+        return True
+    forms_left = set(left) | group_left
+    forms_right = set(right) | group_right
+    if forms_left & forms_right:
+        return True
+    if {f.replace(" ", "") for f in forms_left} & {f.replace(" ", "") for f in forms_right}:
+        return True
+    import difflib
+
+    for a in forms_left:
+        if len(a) < LOOSE_RATIO_MIN_LEN:
+            continue
+        for b in forms_right:
+            if len(b) >= LOOSE_RATIO_MIN_LEN and difflib.SequenceMatcher(
+                    None, a, b).ratio() >= LOOSE_RATIO_MIN:
+                return True
+    return False
+
+
+def search_forms(name: str, min_len: int = 2) -> List[str]:
+    """Формы имени для ПОИСКА в тексте страницы (в виде `match_key`).
+
+    Полное имя, имя без слов-обёрток, написания из справочника и слитная форма
+    (`ironwing`). Формы короче `min_len` и состоящие только из слов-обёрток
+    (`team`, `gaming`) не возвращаются: одно такое слово не доказывает команду.
+    Порядок стабильный, без повторов.
+    """
+    out: List[str] = []
+    seen = set()
+
+    def _add(form: str) -> None:
+        if len(form) >= min_len and form not in seen:
+            seen.add(form)
+            out.append(form)
+
+    for spelling in [name] + list(alias_spellings(name)):
+        for form in _loose_forms(spelling):
+            if all(token in GENERIC_TEAM_TOKENS for token in form.split()):
+                continue
+            _add(form)
+            if " " in form:
+                _add(form.replace(" ", ""))
+    return out

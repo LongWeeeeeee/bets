@@ -39,6 +39,8 @@ import shlex
 import shutil
 import sqlite3
 import tempfile
+from array import array as _pg_array
+from bisect import bisect_left as _pg_bisect_left
 from itertools import combinations, permutations
 import numpy as np
 from datetime import datetime, timezone, timedelta
@@ -58,8 +60,14 @@ except ImportError:
     from base import winline_dom_history as _winline_dom_history
 try:
     from team_name_aliases import canonical_team_key as _canonical_team_key
+    from team_name_aliases import match_key as _team_match_key
+    from team_name_aliases import names_match_loosely as _names_match_loosely
+    from team_name_aliases import search_forms as _team_search_forms
 except ImportError:  # Supports both direct-script and package imports.
     from base.team_name_aliases import canonical_team_key as _canonical_team_key
+    from base.team_name_aliases import match_key as _team_match_key
+    from base.team_name_aliases import names_match_loosely as _names_match_loosely
+    from base.team_name_aliases import search_forms as _team_search_forms
 try:
     import camoufox
     CAMOUFOX_AVAILABLE = True
@@ -20782,6 +20790,9 @@ _winline_overview_state: Dict[str, Any] = {
     "fetched_at": 0.0,
     "status": "",
     "error": "",
+    # Время последнего съёма, НЕ сохранившего снимок (гейт присутствия: см.
+    # `_winline_overview_refresh_attempt`); 0.0 после успешного сохранения.
+    "refresh_failed_at": 0.0,
 }
 _winline_overview_thread: Any = None
 _winline_first_parser_fns_cache: Any = None
@@ -20850,6 +20861,7 @@ def _winline_overview_inject_for_tests(text: str, html: str = "") -> None:
         _winline_overview_state["fetched_at"] = time.time() if text else 0.0
         _winline_overview_state["status"] = "test" if text else ""
         _winline_overview_state["error"] = ""
+        _winline_overview_state["refresh_failed_at"] = 0.0
 
 
 def _winline_overview_snapshot_text() -> Optional[str]:
@@ -20954,6 +20966,7 @@ def _winline_overview_refresh_once() -> bool:
         _winline_overview_state["fetched_at"] = time.time()
         _winline_overview_state["status"] = str(result.get("status") or "ok")
         _winline_overview_state["error"] = str(result.get("error") or "")
+        _winline_overview_state["refresh_failed_at"] = 0.0
     _winline_overview_persist_snapshot(
         text, str(result.get("html") or ""))
     # print, а не logger: прод читает print-лог. Одна строка на съём (~45 c+).
@@ -22631,6 +22644,27 @@ def _winline_card_dltv_draft_notify(
         return "none"
 
 
+def _winline_overview_refresh_attempt() -> bool:
+    """Одна попытка съёма для цикла; провал (в т.ч. исключение) пишет `refresh_failed_at`.
+
+    Без записи провала прежний снимок остался бы со статусом «ok» до 300 с, и гейт
+    присутствия судил бы по нему о линии, появившейся уже после него. Запись не
+    бросает: сбой записи не должен ронять цикл съёма.
+    """
+    try:
+        ok = bool(_winline_overview_refresh_once())
+    except Exception as exc:
+        logger.warning("WINLINE_OVERVIEW_REFRESH_RAISED: %s", exc)
+        ok = False
+    if not ok:
+        try:
+            with _winline_overview_lock:
+                _winline_overview_state["refresh_failed_at"] = time.time()
+        except Exception:
+            pass
+    return ok
+
+
 def _winline_overview_loop() -> None:
     # Бэкофф consecutive-промахов: без сессии/страницы поток не должен висеть
     # на 60-секундных таймаутах впритык (они же конкурируют с поллером за
@@ -22648,7 +22682,7 @@ def _winline_overview_loop() -> None:
             now = time.time()
             due = age >= max(10.0, ttl) and now >= next_retry_at
             if due:
-                ok = _winline_overview_refresh_once()
+                ok = _winline_overview_refresh_attempt()
                 if ok:
                     consecutive_fails = 0
                     with _winline_overview_lock:
@@ -35813,6 +35847,599 @@ def _record_bet_dispatch_ledger(
         logger.exception("Failed to append bet dispatch ledger entry for %s", match_key)
 
 
+# ---------------------------------------------------------------------------
+# Гейт присутствия матча в листинге Winline (владелец 10.10.2026: ставка по
+# «PuckChamp vs Old blood» пришла, а матча на Winline нет — владелец ставит
+# именно там). Стоит в единой точке доставки и держит ставку, пока КАРТОЧКИ
+# матча нет в обзоре Winline; без add_url/леджера/Telegram — ml_dispatch
+# перепроверяет каждый тик, и линия, появившаяся позже (на 00 её часто нет),
+# отпускает ставку сама. Любая неопределённость — пропуск (fail-open): промах
+# разбора имени («1win» -> «1W») или битый/протухший листинг ставку не убивают.
+#   PRESENT  карточка с ОБЕИМИ командами (или открытая котировка поллера <=30 мин)
+#   ONE_SIDE карточка только с ОДНОЙ командой -> пропуск + служебная строка про алиас
+#   TEXT_PAIR обе команды есть в ТЕКСТЕ страницы, но ни в одной разобранной
+#            карточке (парсер потерял карточку при смене разметки) -> пропуск
+#            + служебная строка «парсер?»
+#   TEXT_ONE_SIDE в ТЕКСТЕ страницы найдена ОДНА наша команда, в карточках нет
+#            ни одной -> пропуск + служебная строка «парсер или имя?» (карточка с
+#            одной командой уже пропускает, ONE_SIDE; имя в тексте значит, что
+#            разбор карточку, скорее всего, потерял). Поиск по тексту точный и
+#            не зависит от пробелов, для имён любой длины: `POTN 9KI` == `POTN9KI`,
+#            `OLD BLOOD` == `OLDBLOOD`, `AlphaBeta Gamma` == `Alpha Beta Gamma`
+#            (склейка слов страницы без пробелов; вхождение должно начинаться И
+#            заканчиваться на границе слова: `oldbloodline` не равно `old blood`,
+#            `1w` внутри `1win` не считается)
+#   UNKNOWN  листинг непригоден (stale, пустой, partial_load, обрезан по потолку
+#            хранения, нет карточек Dota 2, ошибка разбора, последний съём не
+#            сохранил снимок - `listing_refresh_failed`) / имён нет -> пропуск
+#   ABSENT   листинг здоров, ни одной команды нет ни в карточках, ни в тексте
+#            -> ставка ждёт линию (журнал несёт живые карточки листинга)
+# Откат: BET_REQUIRE_WINLINE_LISTING=0. Журнал смен класса:
+# runtime/winline_presence_gate.jsonl (WINLINE_PRESENCE_GATE_PATH).
+# ---------------------------------------------------------------------------
+WINLINE_PRESENCE_GATE_PATH_ENV = "WINLINE_PRESENCE_GATE_PATH"
+WINLINE_PRESENCE_GATE_MAX_MB_ENV = "WINLINE_PRESENCE_GATE_MAX_MB"
+_WINLINE_PRESENCE_POLLER_TTL_S = 1800.0
+_WINLINE_PRESENCE_STATE_LIMIT = 4000
+_WINLINE_PRESENCE_ALERT_ASYNC = True  # Telegram не должен тормозить доставку; тесты ставят False
+# Потолки хранения снимка обзора (см. запись `_winline_overview_state` в
+# `_winline_overview_refresh_once`): html режется на 1_500_000, text на 3_000_000.
+# Длина НА потолке = листинг, скорее всего, обрезан и «здоровым» не считается.
+_WINLINE_PRESENCE_HTML_STORE_CAP = 1_500_000
+_WINLINE_PRESENCE_TEXT_STORE_CAP = 3_000_000
+_WINLINE_PRESENCE_OK_STATUSES = frozenset({"ok", "test", ""})
+_WINLINE_PRESENCE_EXC_LOG_INTERVAL_S = 600.0
+
+_winline_presence_cards_lock = threading.Lock()
+_winline_presence_cards_cache: Dict[str, Any] = {"key": None, "cards": None, "error": ""}
+_winline_presence_state_lock = threading.Lock()
+_winline_presence_last_class: Dict[Tuple[str, str], str] = {}
+_winline_presence_alert_attempts: Dict[Tuple[str, str], int] = {}
+_winline_presence_alert_inflight: set = set()
+_winline_presence_text_cache: Dict[str, Any] = {"key": None, "concat": "", "bounds": None}
+_winline_presence_exc_last_log: Dict[str, float] = {}
+_WINLINE_PRESENCE_ALERT_DELIVERED = 99
+
+
+def _winline_presence_evict_oldest_half(
+    state: Dict[Any, Any], delivered_value: Any = None,
+) -> None:
+    """Освободить место в словаре состояния: убрать СТАРШУЮ половину по порядку вставки.
+
+    Полная очистка при потолке даёт повторный алерт по уже доставленной паре и
+    повторную запись смены класса. Строки, у которых значение == `delivered_value`
+    (доставленный алерт), уходят в последнюю очередь.
+    """
+    drop = len(state) // 2
+    if drop <= 0:
+        return
+    keys = list(state.keys())
+    if delivered_value is not None:
+        pending = [k for k in keys if state[k] != delivered_value]
+        delivered = [k for k in keys if state[k] == delivered_value]
+        keys = pending + delivered
+    for key in keys[:drop]:
+        state.pop(key, None)
+
+
+def _winline_presence_gate_enabled() -> bool:
+    raw = str(os.getenv("BET_REQUIRE_WINLINE_LISTING", "1") or "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _winline_presence_max_age_s() -> float:
+    return _safe_float_env("WINLINE_PRESENCE_MAX_AGE_S", float(WINLINE_OVERVIEW_MAX_AGE_S))
+
+
+def _winline_presence_listing_cards(html: str, fetched_at: float) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+    """Карточки-матчи обзора (без дуэлей игроков), разбор один раз на снимок.
+
+    Возвращает (cards | None, ошибка). Разбор HTML (~40 мс на 608 КБ) идёт под
+    СОБСТВЕННЫМ замком кэша: ml_dispatch зовёт доставку много раз в минуту на
+    каждую живую карту, а снимок меняется раз в ~45 с. Замок общего снимка здесь
+    не держится.
+    """
+    key = (float(fetched_at), len(html), hash(html))
+    with _winline_presence_cards_lock:
+        if _winline_presence_cards_cache.get("key") == key:
+            return _winline_presence_cards_cache.get("cards"), str(
+                _winline_presence_cards_cache.get("error") or "")
+        cards: Optional[List[Dict[str, Any]]] = None
+        error = ""
+        try:
+            import bookmaker_selenium_odds as _odds_mod
+            raw = _odds_mod.winline_enumerate_live_cards(html)
+            cards = []
+            for card in raw:
+                if card.get("prop_duel"):
+                    continue
+                team1 = str(card.get("team1") or "").strip()
+                team2 = str(card.get("team2") or "").strip()
+                if not team1 or not team2:
+                    continue
+                cards.append({
+                    "event_id": card.get("event_id"),
+                    "league": str(card.get("league") or ""),
+                    "team1": team1,
+                    "team2": team2,
+                    "live": bool(card.get("live")),
+                })
+        except Exception as exc:
+            cards = None
+            error = f"{type(exc).__name__}: {str(exc)[:120]}"
+        _winline_presence_cards_cache.update({"key": key, "cards": cards, "error": error})
+        return cards, error
+
+
+def _winline_presence_match_cards(
+    cards: List[Dict[str, Any]], radiant: str, dire: str,
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """('PRESENT'|'ONE_SIDE'|'ABSENT', карточка). Порядок команд не важен."""
+    one_side: List[Dict[str, Any]] = []
+    for card in cards:
+        team1, team2 = card["team1"], card["team2"]
+        r1 = _names_match_loosely(radiant, team1)
+        r2 = _names_match_loosely(radiant, team2)
+        d1 = _names_match_loosely(dire, team1)
+        d2 = _names_match_loosely(dire, team2)
+        if (r1 and d2) or (r2 and d1):
+            return "PRESENT", card
+        if r1 or r2 or d1 or d2:
+            one_side.append(card)
+    if one_side:
+        return "ONE_SIDE", next((c for c in one_side if c.get("live")), one_side[0])
+    return "ABSENT", None
+
+
+def _winline_presence_text_index(text: str, fetched_at: float) -> Tuple[str, Any]:
+    """Видимый текст страницы для точного поиска: (склейка слов без пробелов, границы слов).
+
+    Текст сворачивается `match_key` и режется на слова; `concat` - все слова подряд без
+    пробелов, `bounds` - отсортированные смещения границ слов в `concat` (0 и конец каждого
+    слова). Кэш на снимок (одна запись), строится без замка обзора и вне замка кэша.
+    """
+    key = (float(fetched_at), len(text), hash(text))
+    with _winline_presence_cards_lock:
+        if _winline_presence_text_cache.get("key") == key:
+            return (str(_winline_presence_text_cache.get("concat") or ""),
+                    _winline_presence_text_cache.get("bounds") or _pg_array("I"))
+    tokens = _team_match_key(text).split()
+    concat = "".join(tokens)
+    bounds = _pg_array("I", itertools.accumulate(map(len, tokens), initial=0))
+    with _winline_presence_cards_lock:
+        _winline_presence_text_cache.update({"key": key, "concat": concat, "bounds": bounds})
+    return concat, bounds
+
+
+def _winline_presence_form_in_text(concat: str, bounds: Any, joined: str) -> bool:
+    """Форма (без пробелов) есть в тексте, начинаясь и заканчиваясь на границах слов."""
+    size = len(joined)
+    start = 0
+    while True:
+        i = concat.find(joined, start)
+        if i < 0:
+            return False
+        if _winline_presence_is_bound(bounds, i) and _winline_presence_is_bound(bounds, i + size):
+            return True
+        start = i + 1
+
+
+def _winline_presence_is_bound(bounds: Any, pos: int) -> bool:
+    k = _pg_bisect_left(bounds, pos)
+    return k < len(bounds) and bounds[k] == pos
+
+
+def _winline_presence_name_in_text(concat: str, bounds: Any, name: str) -> List[str]:
+    """Формы имени (`search_forms`), найденные в тексте целыми словами (ключи без пробелов).
+
+    Поиск точный и не зависит от пробелов, для имён любой длины: форма без пробелов
+    ищется в склейке всех слов страницы, вхождение считается, только если оно начинается
+    и заканчивается на границе слов (`oldblood` в `oldbloodline` и `1w` в `1win` не
+    находятся, `AlphaBeta Gamma` == `Alpha Beta Gamma`). Формы короче двух символов и
+    состоящие только из слов-обёрток `search_forms` не отдаёт; пустой список = не найдено.
+    """
+    found: List[str] = []
+    for form in _team_search_forms(name, min_len=2):
+        joined = form.replace(" ", "")
+        if len(joined) < 2 or joined in found:
+            continue
+        if _winline_presence_form_in_text(concat, bounds, joined):
+            found.append(joined)
+    return found
+
+
+def _winline_presence_text_hits(
+    text: str, fetched_at: float, radiant: str, dire: str,
+) -> Tuple[int, str]:
+    """(сколько наших команд есть в видимом тексте страницы Winline: 0..2, какая найдена).
+
+    Страховка от частичного провала разбора: сменилась разметка одной карточки,
+    парсер её выбросил, остальные карточки держат листинг «здоровым». Точный поиск по
+    словам любой длины (границы слов, не зависит от пробелов: `POTN 9KI` == `POTN9KI`).
+    Слова-обёртки (`team`, `gaming`) сами по себе и формы короче двух символов не ищутся.
+    Одно и то же единственное вхождение не засчитывается за обе команды (тогда 1).
+    Вторая строка: "radiant" / "dire" при ровно одной найденной, иначе "".
+    """
+    if not text:
+        return 0, ""
+    concat, bounds = _winline_presence_text_index(text, fetched_at)
+    found_r = _winline_presence_name_in_text(concat, bounds, radiant)
+    found_d = _winline_presence_name_in_text(concat, bounds, dire)
+    if found_r and found_d:
+        if len(found_r) == 1 and found_r == found_d:
+            return 1, "radiant"
+        return 2, ""
+    if found_r:
+        return 1, "radiant"
+    if found_d:
+        return 1, "dire"
+    return 0, ""
+
+
+def _winline_presence_text_pair(
+    text: str, fetched_at: float, radiant: str, dire: str,
+) -> bool:
+    """Обе наши команды есть в видимом тексте страницы Winline (см. `_winline_presence_text_hits`)."""
+    return _winline_presence_text_hits(text, fetched_at, radiant, dire)[0] == 2
+
+
+def _winline_presence_poller_evidence(radiant: str, dire: str) -> Optional[Dict[str, Any]]:
+    """Открытая котировка поллера по этой паре (любая карта) не старше 30 мин."""
+    now = time.monotonic()
+    with _winline_current_map_state_lock:
+        entries = [(key, dict(state)) for key, state in _winline_odds_orientation_state.items()
+                   if isinstance(state, dict)]
+    for key, state in entries:
+        if state.get("status") != "open":
+            continue
+        try:
+            age = now - float(state["last_quote_mono"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (0.0 <= age <= _WINLINE_PRESENCE_POLLER_TTL_S):
+            continue
+        _quote_map, team1, team2 = _winline_parse_canonical_key(key)
+        if not team1 or not team2:
+            continue
+        if ((_names_match_loosely(radiant, team1) and _names_match_loosely(dire, team2))
+                or (_names_match_loosely(radiant, team2) and _names_match_loosely(dire, team1))):
+            return {"poller_key": str(key), "quote_age_s": round(age, 1)}
+    return None
+
+
+def _winline_presence_team_names(
+    ctx: Dict[str, Any], add_url_details: Any,
+) -> Tuple[str, str]:
+    details = add_url_details if isinstance(add_url_details, dict) else {}
+    for r_key, d_key, source in (
+        ("radiant_team_name", "dire_team_name", ctx),
+        ("radiant_team", "dire_team", details),
+    ):
+        radiant = str(source.get(r_key) or "").strip()
+        dire = str(source.get(d_key) or "").strip()
+        if (radiant and dire and not _is_placeholder_team_name(radiant)
+                and not _is_placeholder_team_name(dire)
+                and _winline_normalized_team_identity(radiant)
+                != _winline_normalized_team_identity(dire)):
+            return radiant, dire
+    return "", ""
+
+
+def _winline_presence_classify(
+    ctx: Dict[str, Any], add_url_details: Any,
+) -> Dict[str, Any]:
+    """Класс присутствия матча в листинге Winline + факты для журнала."""
+    radiant, dire = _winline_presence_team_names(ctx, add_url_details)
+    info: Dict[str, Any] = {"class": "UNKNOWN", "reason": "", "radiant": radiant, "dire": dire,
+                            "listing_age_s": None, "cards_n": None, "live_cards_n": None,
+                            "dota_cards_n": None, "card": None}
+    if not radiant or not dire:
+        info["reason"] = "team_names_missing"
+        return info
+    evidence = _winline_presence_poller_evidence(radiant, dire)
+    if evidence is not None:
+        info.update(evidence)
+        info.update({"class": "PRESENT", "reason": "poller_quote"})
+        return info
+    # Всё нужное копируем под одним замком; разбор и поиск идут уже без него.
+    with _winline_overview_lock:
+        html = str(_winline_overview_state.get("html") or "")
+        text = str(_winline_overview_state.get("text") or "")
+        status = str(_winline_overview_state.get("status") or "").strip().lower()
+        load_error = str(_winline_overview_state.get("error") or "").strip()
+        fetched_at = float(_winline_overview_state.get("fetched_at") or 0.0)
+        refresh_failed_at = float(_winline_overview_state.get("refresh_failed_at") or 0.0)
+    if not html or fetched_at <= 0.0:
+        info["reason"] = "listing_empty"
+        return info
+    age = time.time() - fetched_at
+    info["listing_age_s"] = round(age, 1)
+    if refresh_failed_at > fetched_at:
+        # Последний съём снимок не сохранил: сохранённый старше линии, которая могла
+        # появиться после него. Судить по нему нельзя (fail-open), ждём удачного съёма.
+        info["reason"] = "listing_refresh_failed"
+        return info
+    if age > _winline_presence_max_age_s():
+        info["reason"] = "listing_stale"
+        return info
+    if status not in _WINLINE_PRESENCE_OK_STATUSES or load_error:
+        # Съём шёл с ошибкой (`partial_load`) или это не лента: DOM мог быть недогружен.
+        info["reason"] = "listing_partial"
+        return info
+    if (len(html) >= _WINLINE_PRESENCE_HTML_STORE_CAP
+            or len(text) >= _WINLINE_PRESENCE_TEXT_STORE_CAP):
+        info["reason"] = "listing_truncated"  # хранение режет html/text на потолке
+        return info
+    cards, error = _winline_presence_listing_cards(html, fetched_at)
+    if cards is None:
+        info["reason"] = "parse_error:" + error
+        return info
+    info["cards_n"] = len(cards)
+    info["live_cards_n"] = sum(1 for c in cards if c.get("live"))
+    if not cards:
+        info["reason"] = "no_cards"
+        return info
+    # Общая лента (`feed`) несёт карточки ВСЕХ видов спорта: заголовок не `DOTA 2 | …`
+    # даёт пустую лигу. Доказательством здорового листинга считаются карточки Dota 2;
+    # сами пары сверяем по всем карточкам (лишняя карточка может только пропустить).
+    dota_cards = [c for c in cards if c.get("league")]
+    info["dota_cards_n"] = len(dota_cards)
+    if not dota_cards:
+        info["reason"] = "no_dota_cards"
+        return info
+    verdict, card = _winline_presence_match_cards(cards, radiant, dire)
+    info["class"] = verdict
+    info["card"] = card
+    info["reason"] = {"PRESENT": "pair_card", "ONE_SIDE": "one_side_card",
+                      "ABSENT": "no_card"}[verdict]
+    if verdict == "ABSENT":
+        text_hits, text_side = _winline_presence_text_hits(text, fetched_at, radiant, dire)
+        if text_hits >= 2:
+            info["class"] = "TEXT_PAIR"
+            info["reason"] = "names_in_text_not_in_cards"
+            return info
+        if text_hits == 1:
+            # Одна команда в тексте, карточки нет: как карточка с одной командой (ONE_SIDE) -
+            # пропуск; имя в тексте значит, что карточку, скорее всего, потерял разбор.
+            info["class"] = "TEXT_ONE_SIDE"
+            info["reason"] = "one_name_in_text_not_in_cards"
+            info["text_found"] = text_side
+            return info
+        # Для разбора задним числом: промах ОБОИХ имён (ставка зря ждёт) виден
+        # только по живым карточкам листинга, которые ни с кем не сопоставились.
+        info["live_cards"] = [f"{c['team1']} — {c['team2']}" for c in dota_cards
+                              if c.get("live")][:12]
+    return info
+
+
+def _winline_presence_journal_path() -> Optional[Path]:
+    raw = str(os.getenv(WINLINE_PRESENCE_GATE_PATH_ENV) or "").strip()
+    if raw:
+        return Path(raw)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None  # тесты без явного пути не пишут в боевой runtime/
+    return PROJECT_ROOT / "runtime" / "winline_presence_gate.jsonl"
+
+
+def _winline_presence_journal(row: Dict[str, Any]) -> None:
+    """Дописать строку смены класса. Fail-open, потолок размера как у регистратора цен."""
+    try:
+        path = _winline_presence_journal_path()
+        if path is None:
+            return
+        try:
+            cap_mb = float(os.getenv(WINLINE_PRESENCE_GATE_MAX_MB_ENV, "64") or 64)
+        except (TypeError, ValueError):
+            cap_mb = 64.0
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        payload = (json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        if size + len(payload) > cap_mb * 1024.0 * 1024.0:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as handle:
+            handle.write(payload)
+    except Exception:
+        logger.exception("winline presence journal write failed")
+
+
+def _winline_presence_note_class(
+    match_key: str, map_num: Any, info: Dict[str, Any], ctx: Dict[str, Any],
+) -> bool:
+    """Запомнить класс на (серия, карта); при смене класса — строка журнала. True при смене."""
+    state_key = (_signal_fingerprint_registry_key(match_key), str(map_num))
+    cls = str(info.get("class"))
+    with _winline_presence_state_lock:
+        if _winline_presence_last_class.get(state_key) == cls:
+            return False
+        if (state_key not in _winline_presence_last_class
+                and len(_winline_presence_last_class) >= _WINLINE_PRESENCE_STATE_LIMIT):
+            _winline_presence_evict_oldest_half(_winline_presence_last_class)
+        _winline_presence_last_class[state_key] = cls
+    card = info.get("card") if isinstance(info.get("card"), dict) else None
+    _winline_presence_journal({
+        "ts": round(time.time(), 3),
+        "match_key": str(match_key),
+        "map_num": map_num,
+        "radiant": info.get("radiant"),
+        "dire": info.get("dire"),
+        "class": cls,
+        "reason": info.get("reason"),
+        "listing_age_s": info.get("listing_age_s"),
+        "cards_n": info.get("cards_n"),
+        "live_cards_n": info.get("live_cards_n"),
+        "dota_cards_n": info.get("dota_cards_n"),
+        "card": ({k: card.get(k) for k in ("event_id", "team1", "team2", "live", "league")}
+                 if card else None),
+        "poller_key": info.get("poller_key"),
+        "text_found": info.get("text_found"),
+        "live_cards": info.get("live_cards"),
+        "ml_rule": ctx.get("ml_rule"),
+        "ml_market": ctx.get("ml_market"),
+    })
+    return True
+
+
+def _winline_presence_alert_one_side(
+    info: Dict[str, Any], map_num: Any, kind: str = "one_side",
+) -> None:
+    """Одна служебная строка на пару и вид: имя-промах (`one_side`), `text_pair` или `text_one_side`.
+
+    `one_side`: в листинге карточка только с одной из наших команд.
+    `text_pair`: обе команды есть в тексте страницы, но не в карточках (парсер?).
+    `text_one_side`: одна команда есть в тексте страницы, но не в карточках (парсер или имя?).
+    """
+    try:
+        card = info.get("card") or {}
+        pair = sorted([_winline_normalized_team_identity(info.get("radiant")),
+                       _winline_normalized_team_identity(info.get("dire"))])
+        key = (pair[0] if kind == "one_side" else f"{kind}|{pair[0]}", pair[1])
+        with _winline_presence_state_lock:
+            attempts = _winline_presence_alert_attempts.get(key, 0)
+            if attempts >= 3 or key in _winline_presence_alert_inflight:
+                return
+            if (key not in _winline_presence_alert_attempts
+                    and len(_winline_presence_alert_attempts) >= _WINLINE_PRESENCE_STATE_LIMIT):
+                _winline_presence_evict_oldest_half(
+                    _winline_presence_alert_attempts, _WINLINE_PRESENCE_ALERT_DELIVERED)
+            _winline_presence_alert_attempts[key] = attempts + 1
+            _winline_presence_alert_inflight.add(key)
+        if kind == "text_pair":
+            message = (
+                f"🔤 Winline: ставка по {info.get('radiant')} — {info.get('dire')} (карта {map_num}) "
+                f"пропущена гейтом присутствия: имена есть в тексте страницы Winline, но не в "
+                f"карточках — парсер? Проверь разметку обзора (winline_enumerate_live_cards); "
+                f"карточек Dota 2 в разборе: {info.get('dota_cards_n')}."
+            )
+            print(f"🔤 Winline presence text-pair: {info.get('radiant')} vs {info.get('dire')} "
+                  f"map{map_num} — names in page text, no card (parser?)")
+        elif kind == "text_one_side":
+            found = str(info.get("text_found") or "")
+            found_name = info.get("dire") if found == "dire" else info.get("radiant")
+            message = (
+                f"🔤 Winline: ставка по {info.get('radiant')} — {info.get('dire')} (карта {map_num}) "
+                f"пропущена гейтом присутствия: одна команда есть в тексте страницы Winline, "
+                f"но не в карточках — парсер или имя? В тексте найдена: {found_name}. "
+                f"Проверь разметку обзора (winline_enumerate_live_cards) и написание второй "
+                f"команды; карточек Dota 2 в разборе: {info.get('dota_cards_n')}."
+            )
+            print(f"🔤 Winline presence text-one-side: {info.get('radiant')} vs {info.get('dire')} "
+                  f"map{map_num} — one name in page text ({found_name}), no card (parser or name?)")
+        else:
+            message = (
+                f"🔤 Winline: ставка по {info.get('radiant')} — {info.get('dire')} (карта {map_num}) "
+                f"пропущена гейтом присутствия по ОДНОЙ команде: в листинге карточка "
+                f"«{card.get('team1')} — {card.get('team2')}» ({card.get('league')}, "
+                f"{'live' if card.get('live') else 'prematch'}). Если это та же пара — добавь "
+                f"алиас в base/team_name_aliases.py; иначе это следующий матч команды."
+            )
+            print(f"🔤 Winline presence one-side: {info.get('radiant')} vs {info.get('dire')} "
+                  f"map{map_num} — card {card.get('team1')} vs {card.get('team2')}")
+
+        def _send() -> None:
+            delivered = False
+            try:
+                delivered = bool(_winline_send_lifecycle_message(
+                    message, None, kind=f"presence_{kind}", key="|".join(key)))
+            except Exception:
+                delivered = False
+            finally:
+                with _winline_presence_state_lock:
+                    _winline_presence_alert_inflight.discard(key)
+                    if delivered:
+                        _winline_presence_alert_attempts[key] = _WINLINE_PRESENCE_ALERT_DELIVERED
+
+        if _WINLINE_PRESENCE_ALERT_ASYNC:
+            threading.Thread(target=_send, name="winline-presence-alert", daemon=True).start()
+        else:
+            _send()
+    except Exception:
+        logger.exception("winline presence %s alert failed", kind)
+
+
+def _winline_presence_log_gate_exception(match_key: str) -> None:
+    """`logger.exception` не чаще раза в 600 с на матч: гейт зовут каждый тик."""
+    try:
+        now = time.monotonic()
+        key = str(match_key)
+        with _winline_presence_state_lock:
+            last = _winline_presence_exc_last_log.get(key)
+            if last is not None and 0.0 <= now - last < _WINLINE_PRESENCE_EXC_LOG_INTERVAL_S:
+                return
+            if (key not in _winline_presence_exc_last_log
+                    and len(_winline_presence_exc_last_log) >= _WINLINE_PRESENCE_STATE_LIMIT):
+                _winline_presence_evict_oldest_half(_winline_presence_exc_last_log)
+            _winline_presence_exc_last_log[key] = now
+        logger.exception("winline presence gate failed (fail-open) for %s", match_key)
+    except Exception:
+        pass
+
+
+def _winline_presence_reject_for_delivery(
+    match_key: str,
+    message_text: Optional[str],
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    map_num: Any = None,
+    add_url_details: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Решение гейта присутствия: dict (ABSENT, ставка ждёт линию) или None (пропуск).
+
+    Только ставки: ctx.origin=="ml_dispatch" либо хедер «СТАВКА НА … x<mult>».
+    Любое исключение внутри — пропуск (гейт никогда не убивает ставку).
+    """
+    try:
+        if not _winline_presence_gate_enabled():
+            return None
+        ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+        text = str(message_text or "")
+        is_bet = (str(ctx.get("origin") or "") == "ml_dispatch"
+                  or _stake_multiplier_from_message(text) is not None)
+        if not is_bet or text.startswith("СТАВКА НА PIPELINE CHECK"):
+            return None
+        info = _winline_presence_classify(ctx, add_url_details)
+        changed = _winline_presence_note_class(match_key, map_num, info, ctx)
+        cls = info["class"]
+        if cls == "ONE_SIDE":
+            _winline_presence_alert_one_side(info, map_num)
+            return None
+        if cls == "TEXT_PAIR":
+            if changed:
+                print(f"   ℹ️ Гейт присутствия Winline: имена обеих команд есть в тексте "
+                      f"страницы, но не в карточках (парсер?) — ставка не задерживается: "
+                      f"{match_key}")
+            _winline_presence_alert_one_side(info, map_num, kind="text_pair")
+            return None
+        if cls == "TEXT_ONE_SIDE":
+            if changed:
+                print(f"   ℹ️ Гейт присутствия Winline: одна команда есть в тексте "
+                      f"страницы, но не в карточках (парсер или имя?) — ставка не "
+                      f"задерживается: {match_key}")
+            _winline_presence_alert_one_side(info, map_num, kind="text_one_side")
+            return None
+        if cls == "UNKNOWN":
+            if changed:
+                print(f"   ℹ️ Гейт присутствия Winline: листинг непригоден "
+                      f"({info.get('reason')}) — ставка не задерживается: {match_key}")
+            return None
+        if cls != "ABSENT":
+            return None
+        return {
+            "reason": "winline_line_absent",
+            "listing_age_s": info.get("listing_age_s"),
+            "cards_n": info.get("cards_n"),
+            "live_cards_n": info.get("live_cards_n"),
+            "radiant": info.get("radiant"),
+            "dire": info.get("dire"),
+            "target_side": str(ctx.get("target_side") or "") or None,
+            "first_hold": bool(changed),
+        }
+    except Exception:
+        _winline_presence_log_gate_exception(match_key)
+        return None
+
+
 def _deliver_and_persist_signal(
     match_key: str,
     message_text: str,
@@ -35988,6 +36615,37 @@ def _deliver_and_persist_signal(
                 f"{_late_win_model_block_detail(late_win_model_block)} — {match_key}"
             ),
         )
+        return False
+    # Матча нет в листинге Winline (владелец 10.10.2026): ставка ждёт линию. Как и
+    # у пола по кэфу ниже — без add_url/леджера/Telegram и ДО резервирования кэфа;
+    # ml_dispatch перепроверяет каждый тик и отпускает ставку, когда карточка
+    # появилась. Имя-промах и непригодный листинг сюда не попадают (fail-open).
+    winline_presence_block = _winline_presence_reject_for_delivery(
+        match_key,
+        message_text,
+        stake_multiplier_context,
+        map_num,
+        add_url_details=add_url_details,
+    )
+    if winline_presence_block is not None:
+        if winline_presence_block.get("first_hold"):
+            verdict = (
+                "   ⏸ Ставка ждёт линию Winline: матча нет в листинге "
+                f"(снимок {winline_presence_block.get('listing_age_s')} с назад, "
+                f"карточек {winline_presence_block.get('cards_n')}, "
+                f"live {winline_presence_block.get('live_cards_n')}) — {match_key}"
+            )
+            print(verdict)
+            try:
+                _record_delivery_gate_block(
+                    match_key,
+                    message_text,
+                    winline_presence_block,
+                    reason="winline_line_absent",
+                    verdict=verdict,
+                )
+            except Exception:
+                logger.exception("winline_line_absent gate block record failed for %s", match_key)
         return False
     reservation_context: Optional[Dict[str, Any]] = None
     if isinstance(bookmaker_reservation_context, dict) and bookmaker_reservation_context.get("token"):
