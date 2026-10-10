@@ -244,3 +244,42 @@ def test_sourcetv_zero_ids_stay_truthy_so_anonymous_sides_reach_the_gate() -> No
     assert runtime._extract_candidate_team_ids([0]) == []
     assert runtime._extract_candidate_team_ids([0, 9722899]) == [9722899]
     assert runtime._extract_candidate_team_ids(9722899) == [9722899]
+
+
+def test_bridge_roster_flag_is_reverified_not_trusted(
+    monkeypatch: pytest.MonkeyPatch,
+    gated_platform_ticket_10877,
+) -> None:
+    """Полю `_gated_tier12_side` из моста не верим на слово — перепроверяем.
+
+    Мост — файл на диске: он может пережить рестарт с другим порогом консенсуса
+    или остаться от старой версии probe. Поэтому cyberscore повторяет проверку
+    своим справочником (`_roster_gated_side_is_valid`) вместо того, чтобы считать
+    решение probe окончательным.
+
+    18.09.2026: боевое множество больше не содержит 10877, поэтому тикет здесь
+    подменён фикстурой `gated_platform_ticket_10877` — тест держит механизм
+    перепроверки флага, а не факт закрытия конкретного тикета.
+    """
+    monkeypatch.setattr(
+        runtime, "_get_team_tier", lambda tid: 2 if int(tid or 0) == 457 else 3
+    )
+    proven = {"side": "dire", "team_key": "puckchamp", "players": 4, "team_ids": [457]}
+    # Анонимная карта (оба id нулевые) проходит только благодаря флагу.
+    assert runtime._league_admits_with_known_side(10877, [0], [0], proven) is True
+    # Ниже порога консенсуса — не доказательство, даже при верном team_id.
+    assert runtime._league_admits_with_known_side(
+        10877, [0], [0], dict(proven, players=2)
+    ) is False
+    # Чужой id, которого нет в tier1/2, и бессмысленный ключ — не доказательство.
+    assert runtime._league_admits_with_known_side(
+        10877, [0], [0],
+        {"players": 5, "team_key": "Стек Без Словаря", "team_ids": [999]},
+    ) is False
+    # Мусор вместо словаря не должен ни открывать гейт, ни падать.
+    for junk in (None, "puckchamp", [], {}, {"players": "много"}):
+        assert runtime._league_admits_with_known_side(10877, [0], [0], junk) is False
+    # Не гейтовая лига — флаг не при чём.
+    assert runtime._league_admits_with_known_side(19924, [0], [0], proven) is False
+    # Точный признак сильнее приближённого: team_id работает и без флага.
+    assert runtime._league_admits_with_known_side(10877, [457], [0]) is True

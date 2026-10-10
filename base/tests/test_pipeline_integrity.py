@@ -3592,9 +3592,12 @@ def test_send_admin_log_tail_shows_journal_matches_newest_first(monkeypatch) -> 
     assert "Reason:" in sent_messages[0]["message"]
 
 
-def test_send_admin_log_tail_resends_snapshot_on_repeated_press(monkeypatch) -> None:
-    """No seen-state: every press returns the fresh snapshot again, so the
-    match shows its updated lifecycle status on repeated tail_log calls."""
+def test_send_admin_log_tail_wraps_when_pool_fits_one_page(monkeypatch) -> None:
+    """Одна страница: повторное нажатие пересылает тот же свежий снимок.
+
+    Курсор листания зациклен, поэтому там, где листать некуда, прежнее
+    поведение сохраняется — матч показывает обновившийся статус жизненного цикла.
+    """
     entries = {"a": _make_journal_entry(match_id="1", updated_ts=100.0)}
     _install_journal(monkeypatch, entries)
     sent_messages = _capture_send_message(monkeypatch)
@@ -3605,6 +3608,54 @@ def test_send_admin_log_tail_resends_snapshot_on_repeated_press(monkeypatch) -> 
     assert len(sent_messages) == 2
     assert sent_messages[0]["message"] == sent_messages[1]["message"]
     assert "Alpha vs Beta" in sent_messages[1]["message"]
+    # Метка страницы появляется только когда страниц больше одной.
+    assert "страница" not in sent_messages[1]["message"]
+
+
+def test_send_admin_log_tail_pages_backwards_by_four_maps(monkeypatch) -> None:
+    """Повторное нажатие показывает четыре карты СТАРШЕ, а не те же четыре.
+
+    09.09.2026, запрос alex: «он сейчас показывает 4 последние карты, сделай так
+    чтобы при повторном нажатии он показывал 4 карты до этой 4, а те — дальше, и
+    так далее». Прежнее поведение пересылало тот же снимок, и до истории было не
+    добраться: пул журнала 100 карт, а показывались только 4.
+    """
+    entries = {
+        f"m{idx}": _make_journal_entry(
+            match_id=str(idx),
+            updated_ts=float(idx),
+            radiant=f"Team{idx}",
+            dire=f"Other{idx}",
+        )
+        for idx in range(1, 11)
+    }
+    _install_journal(monkeypatch, entries)
+    sent_messages = _capture_send_message(monkeypatch)
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)   # карты 1-4
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)   # карты 5-8
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)   # карты 9-10
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)   # снова 1-4
+
+    assert len(sent_messages) == 4 + 4 + 2 + 4
+    page1 = "".join(item["message"] for item in sent_messages[0:4])
+    page2 = "".join(item["message"] for item in sent_messages[4:8])
+    page3 = "".join(item["message"] for item in sent_messages[8:10])
+    page4 = "".join(item["message"] for item in sent_messages[10:14])
+    # Первая страница — самые свежие, вторая — четыре карты ДО них.
+    for name in ("Team10", "Team9", "Team8", "Team7"):
+        assert name in page1
+    for name in ("Team6", "Team5", "Team4", "Team3"):
+        assert name in page2
+    assert "Team2" in page3 and "Team1" in page3
+    # Хвост пула короче страницы — это не ошибка и не пустая выдача.
+    assert len(sent_messages[8:10]) == 2
+    # Конец пула — возврат к началу, а не пустая страница.
+    assert page4 == page1
+    # Метка страницы и сквозной номер карты по всему пулу.
+    assert "[страница 1/3]" in sent_messages[0]["message"]
+    assert "[страница 2/3]" in sent_messages[4]["message"]
+    assert "[страница 3/3]" in sent_messages[8]["message"]
 
 
 def test_send_admin_log_tail_reports_no_matches(monkeypatch) -> None:

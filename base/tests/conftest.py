@@ -187,3 +187,16 @@ def gated_platform_ticket_10877(monkeypatch):
         frozenset({10877}),
     )
     return 10877
+
+
+@pytest.fixture(autouse=True)
+def _reset_admin_tail_page(monkeypatch):
+    """Сбрасывает курсор листания tail_log перед каждым тестом.
+
+    ``_send_admin_log_tail`` хранит номер страницы в переменной модуля, поэтому
+    без сброса тест, нажавший команду дважды, сдвинул бы курсор следующему тесту
+    и тот увидел бы не первую страницу.
+    """
+    for name, module in list(sys.modules.items()):
+        if name.rsplit(".", 1)[-1] == "cyberscore_try":
+            monkeypatch.setattr(module, "_admin_tail_page", 0, raising=False)
