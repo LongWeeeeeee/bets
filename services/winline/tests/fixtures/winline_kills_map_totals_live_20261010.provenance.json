@@ -1,0 +1,47 @@
+{
+  "captured_by": "winline-quicktab-week systemd unit on serv1",
+  "how": "Winline live event body inner_text; already-redacted _all dump copied unchanged from the local capture",
+  "files": {
+    "winline_kills_map_totals_live_parivision_aurora_20261010.txt": {
+      "source": "serv1:/root/main/runtime/winline_quick_tab/16899998_20261010T144346Z_all.txt",
+      "captured_at_utc": "2026-10-10T14:43:46Z",
+      "event_id": 16899998,
+      "kind": "live",
+      "league": "BLAST Slam",
+      "teams": [
+        "PARIVISION",
+        "TEAM AURORA"
+      ],
+      "command": "python3 -m services.winline.winline_kills_totals_collector --kinds live --quick-dump-dir /root/main/runtime/winline_quick_tab ...",
+      "fetched_by": "scp serv1:/root/main/runtime/winline_quick_tab/16899998_20261010T144346Z_all.txt",
+      "note": "Series 1:0 at break (Пер.); identical map-total ladders for maps 2 and 3 are present in the capture. No network used while adding this fixture."
+    },
+    "winline_kills_map_totals_live_midmap_legion_blasterbi_20261008.txt": {
+      "source": "serv1:/root/main/runtime/winline_quick_tab/16890543_20261008T184904Z_all.txt",
+      "captured_at_utc": "2026-10-08T18:49:04Z",
+      "event_id": 16890543,
+      "kind": "live",
+      "league": "PR Universe, Qualifier",
+      "teams": [
+        "LEGION",
+        "BLASTERBI"
+      ],
+      "command": "python3 -m services.winline.winline_kills_totals_collector --kinds live --quick-dump-dir /root/main/runtime/winline_quick_tab ...",
+      "fetched_by": "scp -r 'serv1:/root/main/runtime/winline_quick_tab/*_all.txt' (10.10.2026, lead backfill smoke runtime/artifacts/odds-winline/quick_tab_20261010_backfill)",
+      "note": "Map 3 in progress, series 1:1; scoreboard shape 'LEGION | 0 | 1 : 1 | 3 карта | 0 | BLASTERBI'; map-3 total ladder 59.5 present. index.jsonl entry full_markets=true."
+    },
+    "winline_kills_map_totals_live_two_groups_1w_parivision_20261009.txt": {
+      "source": "serv1:/root/main/runtime/winline_quick_tab/16892546_20261009T140352Z_all.txt",
+      "captured_at_utc": "2026-10-09T14:03:52Z",
+      "event_id": 16892546,
+      "kind": "live",
+      "teams": [
+        "1W",
+        "PARIVISION"
+      ],
+      "command": "python3 -m services.winline.winline_kills_totals_collector --kinds live --quick-dump-dir /root/main/runtime/winline_quick_tab ...",
+      "fetched_by": "scp -r 'serv1:/root/main/runtime/winline_quick_tab/*_all.txt' (10.10.2026, lead backfill smoke)",
+      "note": "Map-1 total ladder rendered as two column groups: Больше 49.5-52.5 / Меньше 49.5-52.5 / Больше 53.5 / Меньше 53.5 (5 rungs). 23 of 58 real map-total blocks have this shape."
+    }
+  }
+}

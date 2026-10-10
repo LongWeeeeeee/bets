@@ -8,6 +8,7 @@ authenticated project proxy in Camoufox; browser/IP failures never fall back.
 from __future__ import annotations
 
 import argparse
+import calendar
 import contextlib
 import fcntl
 import importlib.util
@@ -29,8 +30,11 @@ ALLOWED_COUNTRIES = {"DE", "US", "CA"}
 VALUE_FIELDS = tuple("kills_%s_%s" % (side, value)
                      for side in ("t1", "t2") for value in ("line", "over", "under"))
 LADDER_FIELDS = ("kills_t1_ladder", "kills_t2_ladder")
-# Rows written before ladders were recorded lack LADDER_FIELDS; they replay as None.
-DEDUPE_FIELDS = VALUE_FIELDS + LADDER_FIELDS
+MAP_TOTAL_FIELDS = ("kills_map_line", "kills_map_over", "kills_map_under", "kills_map_ladder",
+                    "kills_map_bands", "kills_t1_bands", "kills_t2_bands")
+# Rows written before ladders/map totals were recorded lack those fields; they replay as None,
+# so the first observation after the upgrade is written once even when team totals are unchanged.
+DEDUPE_FIELDS = VALUE_FIELDS + LADDER_FIELDS + MAP_TOTAL_FIELDS
 
 OPEN_EVENT_JS = """(id) => {
   const el = document.getElementById('eventId-' + id);
@@ -207,6 +211,83 @@ def parse_winline_team_kills_totals(body_text, map_num, team1, team2):
     return result
 
 
+def _kills_market_options(body_text, map_num, title):
+    """One exact line-normalized title; stop at the next map heading or footer."""
+    if not isinstance(body_text, str) or type(map_num) is not int or not 1 <= map_num <= 3:
+        return None
+    lines = [" ".join(line.split()) for line in body_text.splitlines() if line.strip()]
+    heading = "%d карта %s" % (map_num, title)
+    starts = [i for i, line in enumerate(lines) if line.casefold() == heading.casefold()]
+    if len(starts) != 1:
+        return None
+    start = starts[0] + 1
+    end = next((i for i in range(start, len(lines))
+                if re.match(r"\d+ карта(?:\s|$)", lines[i], re.I)
+                or lines[i].casefold() == "winline"), len(lines))
+    return lines[start:end]
+
+
+def parse_winline_map_kills_total(body_text, map_num):
+    """Bare map-total ladder; team totals and Roshan totals cannot match the title."""
+    options = _kills_market_options(body_text, map_num, "тотал убийств")
+    if not options:
+        return None
+    ladder = parse_kills_ladder(" " + " ".join(options), 0)
+    # Whole block consumed. Real pages split a long ladder into several column groups
+    # ("Больше" 4 rungs, "Меньше" 4, "Больше" 1, "Меньше" 1: dump 16892546_20261009T140352Z), so
+    # count tokens instead of assuming one group: every option is a group header or a
+    # (б|м line, price) pair, and every rung has both sides. A malformed extra group -> null.
+    if not ladder or not _ladder_groups_consumed(options, len(ladder)):
+        return None
+    return ladder
+
+
+def _ladder_groups_consumed(options, rungs_expected):
+    """Strict walk: (Больше|Меньше) followed by >=1 (б|м line, price) pairs of its own side, repeated."""
+    i, rungs = 0, {"б": 0, "м": 0}
+    while i < len(options):
+        side = {"Больше": "б", "Меньше": "м"}.get(options[i])
+        if side is None:
+            return False
+        i += 1
+        pairs = 0
+        while i < len(options) and options[i].startswith(side + " "):
+            if not (re.fullmatch(side + r" \d+(?:[.,]\d+)?", options[i])
+                    and i + 1 < len(options) and re.fullmatch(_NUMBER, options[i + 1])):
+                return False
+            i += 2
+            pairs += 1
+        if pairs == 0:
+            return False
+        rungs[side] += pairs
+    return rungs["б"] == rungs["м"] == rungs_expected
+
+
+def parse_winline_kills_bands(body_text, map_num, team=None):
+    """Count ranges with literal card-team orientation; malformed/duplicate markets stay null."""
+    title = "кол-во убийств"
+    if team is not None:
+        if not isinstance(team, str) or not team.strip():
+            return None
+        title += " " + " ".join(team.split())
+    options = _kills_market_options(body_text, map_num, title)
+    if not options or len(options) % 2:
+        return None
+    bands = []
+    for label, price_text in zip(options[::2], options[1::2]):
+        band = re.fullmatch(r"(\d+)(?:[-–−](\d+)|(\+))", label)
+        if band is None or not re.fullmatch(_NUMBER, price_text):
+            return None
+        lo, hi = int(band[1]), int(band[2]) if band[2] is not None else None
+        odds = _number(price_text)
+        if (hi is not None and hi < lo) or not math.isfinite(odds) or odds <= 1.0:
+            return None
+        if bands and (bands[-1]["hi"] is None or lo <= bands[-1]["hi"]):
+            return None
+        bands.append(dict(lo=lo, hi=hi, odds=odds))
+    return bands
+
+
 _QUICK_HEADER_RE = re.compile(
     r"(\d+) карта (исход 1X2|чет/нечет|фора) убийств в интервале (\d+)[-–−](\d+) минут", re.I)
 _QUICK_KINDS = {"исход 1x2": "1x2", "чет/нечет": "odd_even", "фора": "handicap"}
@@ -338,6 +419,70 @@ def parse_quick_dumps(directory):
     return len(rows)
 
 
+def build_all_totals_rows(entry, body_text, source_dump):
+    """Indexed default-view totals, with capture time and optional scoreboard state."""
+    wall = float(calendar.timegm(time.strptime(entry["ts_utc"], "%Y%m%dT%H%M%SZ")))
+    rows = build_rows(entry, body_text, wall=wall)
+    lines = [" ".join(line.split()) for line in body_text.splitlines() if line.strip()]
+    team1 = " ".join(entry["team1"].split()).casefold()
+    team2 = " ".join(entry["team2"].split()).casefold()
+    state = {}
+    # Captured scoreboard shapes (live dumps 08-10.10): break "team1 | a : b | Пер.[N] | team2";
+    # map in progress "team1 | N | a : b | k карта | M | team2" (N/M not interpreted).
+    status = re.compile(r"Пер\.\s*\d*|[1-3] карта", re.I)
+    for i in range(1, len(lines) - 2):
+        score = re.fullmatch(r"(\d+)\s*:\s*(\d+)", lines[i])
+        if not score or not status.fullmatch(lines[i + 1]):
+            continue
+        brk = lines[i - 1].casefold() == team1 and lines[i + 2].casefold() == team2
+        mid = (i >= 2 and i + 3 < len(lines) and lines[i - 2].casefold() == team1
+               and lines[i + 3].casefold() == team2
+               and lines[i - 1].isdigit() and lines[i + 2].isdigit())
+        if brk or mid:
+            state = dict(series_score="%s : %s" % score.groups(), series_state=lines[i + 1])
+            break
+    # full_markets=False: only the "Популярные" block rendered, so null totals mean "not loaded",
+    # not "market absent" (the history path skips such pages; here the flag travels with the row).
+    return [dict(row, ts_utc=entry["ts_utc"], live=bool(entry["live"]),
+                 full_markets=entry.get("full_markets"), source_dump=source_dump, **state)
+            for row in rows]
+
+
+def parse_all_dumps(directory):
+    """Offline append-only default-view backfill, idempotent on (source_dump, map_num).
+
+    Only indexed captures with *_all.txt are eligible; readyfail entries are skipped.
+    Run between collector cycles, as with parse_quick_dumps there is no writer lock.
+    """
+    directory = Path(directory)
+    path = directory / "totals.jsonl"
+
+    def key(row):
+        return (row["source_dump"], row["map_num"])
+
+    seen = set()
+    if path.exists():
+        with path.open(encoding="utf-8") as stream:
+            seen = {key(json.loads(line)) for line in stream}
+    dumps = {dump.name: dump for dump in directory.glob("*_all.txt")}
+    rows = []
+    with (directory / "index.jsonl").open(encoding="utf-8") as stream:
+        for line in stream:
+            entry = json.loads(line)
+            if entry.get("kind") == "readyfail":
+                continue
+            event_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(entry["event_id"]))
+            name = "%s_%s_all.txt" % (event_id, entry["ts_utc"])
+            if name not in dumps:
+                continue
+            for row in build_all_totals_rows(entry, dumps[name].read_text(encoding="utf-8"), name):
+                if key(row) not in seen:
+                    rows.append(row)
+                    seen.add(key(row))
+    _append_json_rows(path, rows)
+    return len(rows)
+
+
 def enumerate_cards(html):
     """Reuse only the existing pure listing-card helper, imported lazily."""
     if str(REPO / "base") not in sys.path:
@@ -364,6 +509,13 @@ def build_rows(card, body_text, wall=None):
                 row["kills_%s_%s" % (target, value)] = (totals[side] or {}).get(value)
         if card.get("score_text") is not None:
             row["score_text"] = card["score_text"]
+        ladder = parse_winline_map_kills_total(body_text, map_num)
+        values = main_rung(ladder) if ladder else (None, None, None)
+        row.update(zip(("kills_map_line", "kills_map_over", "kills_map_under"), values))
+        row["kills_map_ladder"] = ladder
+        row["kills_map_bands"] = parse_winline_kills_bands(body_text, map_num)
+        row["kills_t1_bands"] = parse_winline_kills_bands(body_text, map_num, card["team1"])
+        row["kills_t2_bands"] = parse_winline_kills_bands(body_text, map_num, card["team2"])
         rows.append(row)
     return rows
 
@@ -568,7 +720,7 @@ def capture_ready_failure(page, directory, card, hero, private_values, check_con
 
 def capture_quick_tab(page, directory, card, body_text, full_markets, private_values,
                       check_connection):
-    """Capture default/quick views and append window prices after a verified quick click."""
+    """Capture default-view totals and window prices after a verified quick click."""
     safe = _dump_redactor(private_values)
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -597,6 +749,9 @@ def capture_quick_tab(page, directory, card, body_text, full_markets, private_va
     if quick_clicked:
         _append_json_rows(directory / "windows.jsonl",
                           build_quick_window_rows(entry, quick_text, stem + "_quick.txt"))
+    # After windows.jsonl, so a totals parse problem can never cost the window prices.
+    _append_json_rows(directory / "totals.jsonl",
+                      build_all_totals_rows(entry, all_text, stem + "_all.txt"))
 
 
 def _cycle(args, stats):
@@ -789,7 +944,12 @@ def main(argv=None):
                         help="opt-in default/Быстрые event body capture directory (WINLINE_QUICK_DUMP_DIR)")
     parser.add_argument("--parse-quick-dumps", metavar="DIR",
                         help="offline backfill DIR/windows.jsonl from indexed quick dumps; no browser/network")
+    parser.add_argument("--parse-all-dumps", metavar="DIR",
+                        help="offline backfill DIR/totals.jsonl from indexed all dumps; no browser/network")
     args = parser.parse_args(argv)
+    if args.parse_all_dumps:
+        print("totals_written=%d" % parse_all_dumps(args.parse_all_dumps), flush=True)
+        return 0
     if args.parse_quick_dumps:
         print("windows_written=%d" % parse_quick_dumps(args.parse_quick_dumps), flush=True)
         return 0

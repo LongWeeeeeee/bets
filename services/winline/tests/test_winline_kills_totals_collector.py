@@ -21,6 +21,10 @@ SPEC.loader.exec_module(collector)
 
 QUICK_FIXTURE = "winline_quick_kill_windows_legion_blasterbi_20261008.txt"
 QUICK_DUMP = "16890543_20261008T184904Z_quick.txt"
+ALL_FIXTURE = "winline_kills_map_totals_live_parivision_aurora_20261010.txt"
+ALL_DUMP = "16899998_20261010T144346Z_all.txt"
+NEW_TOTAL_FIELDS = ("kills_map_line", "kills_map_over", "kills_map_under", "kills_map_ladder",
+                    "kills_map_bands", "kills_t1_bands", "kills_t2_bands")
 QUICK_MARKETS = [
     dict(map_num=3, window="5-15", market="1x2", p_t1=1.85, p_draw=7.63, p_t2=2.23),
     dict(map_num=3, window="5-15", market="odd_even", p_even=1.85, p_odd=1.85),
@@ -35,6 +39,145 @@ def quick_body():
 
 def quick_card():
     return dict(event_id="16890543", team1="LEGION", team2="BLASTERBI", live=True)
+
+
+def all_body():
+    return (FIXTURES / ALL_FIXTURE).read_text(encoding="utf-8")
+
+
+def all_entry():
+    return dict(event_id="16899998", team1="PARIVISION", team2="TEAM AURORA", live=True,
+                ts_utc="20261010T144346Z", quick_clicked=False)
+
+
+@pytest.mark.parametrize("map_num", [1, 2, 3])
+def test_map_total_prematch_rows(map_num):
+    rows = collector.build_rows(dict(card(), team1="TEAM AURORA", team2="1W"), body("aurora_1w"), wall=10)
+    row = next(r for r in rows if r["map_num"] == map_num)
+    last_rung = [54.5, 2.02, 1.80] if map_num == 1 else [54.5, 2.00, 1.82]
+    assert row["kills_map_ladder"] == [[52.5, 1.81, 2.01], [53.5, 1.90, 1.90], last_rung]
+    assert [row["kills_map_" + key] for key in ("line", "over", "under")] == [53.5, 1.90, 1.90]
+
+
+def test_map_total_preserves_existing_aurora_row_fields():
+    rows = collector.build_rows(dict(event_id="16855095", team1="TEAM AURORA", team2="1W", live=False),
+                                body("aurora_1w"), wall=10)
+    for row, map_num, over, under in zip(rows, (1, 2, 3), (1.93, 1.94, 1.94), (1.88, 1.87, 1.87)):
+        expected = dict(wall=10, event_id="16855095", kind="prematch", league="", team1="TEAM AURORA",
+                        team2="1W", map_num=map_num, source="winline_event_page",
+                        kills_t1_line=28.5, kills_t1_over=1.87, kills_t1_under=1.94,
+                        kills_t1_ladder=[[28.5, 1.87, 1.94]], kills_t2_line=27.5,
+                        kills_t2_over=over, kills_t2_under=under, kills_t2_ladder=[[27.5, over, under]])
+        assert {k: v for k, v in row.items() if k not in NEW_TOTAL_FIELDS} == expected
+
+
+@pytest.mark.parametrize("map_num", [2, 3])
+def test_map_total_live_rows(map_num):
+    rows = collector.build_rows(all_entry(), all_body(), wall=10)
+    assert [r["map_num"] for r in rows] == [2, 3]
+    row = next(r for r in rows if r["map_num"] == map_num)
+    assert row["kills_map_ladder"] == [[56.5, 1.75, 1.96], [57.5, 1.85, 1.85], [58.5, 1.95, 1.76]]
+    assert [row["kills_map_" + key] for key in ("line", "over", "under")] == [57.5, 1.85, 1.85]
+
+
+@pytest.mark.parametrize("map_num", [1, 2, 3])
+def test_map_total_count_bands_rows(map_num):
+    text = (FIXTURES / LADDER_BODY).read_text()
+    row = next(r for r in collector.build_rows(ladder_card(), text, wall=10) if r["map_num"] == map_num)
+    prices = {
+        1: ((5.15, 3.38, 3.25, 4.81, 5.15), (3.86, 2.81, 2.58, 6.29), (2.49, 3.36, 3.34, 6.17)),
+        2: ((5.15, 3.37, 3.26, 4.81, 5.15), (3.89, 2.81, 2.58, 6.29), (2.48, 3.37, 3.36, 6.17)),
+        3: ((5.18, 3.38, 3.25, 4.81, 5.15), (3.85, 2.82, 2.59, 6.33), (2.51, 3.36, 3.33, 6.17)),
+    }[map_num]
+    for target, bounds, odds in zip(
+            ("map", "t1", "t2"),
+            (((0, 40), (41, 50), (51, 60), (61, 70), (71, None)),
+             ((0, 20), (21, 30), (31, 40), (41, None)), ((0, 20), (21, 30), (31, 40), (41, None))),
+            prices):
+        assert row["kills_%s_bands" % target] == [dict(lo=lo, hi=hi, odds=price)
+                                                 for (lo, hi), price in zip(bounds, odds)]
+
+
+def test_map_total_absent_rows_keep_all_maps():
+    text = (FIXTURES / "winline_live_no_kills_totals_maddogs_20261005.txt").read_text()
+    rows = collector.build_rows(card(live=True), text, wall=10)
+    assert [r["map_num"] for r in rows] == [1, 2, 3]
+    assert all(row[key] is None for row in rows for key in NEW_TOTAL_FIELDS)
+
+
+def test_map_total_exact_heading_traps_and_duplicate():
+    text = body("aurora_1w")
+    # Leave the captured team and Roshan blocks intact, remove only the bare map titles.
+    trapped = re.sub(r"(?m)^([1-3] карта тотал убийств)$", r"\1 рошана", text)
+    rows = collector.build_rows(dict(card(), team1="TEAM AURORA", team2="1W"), trapped, wall=10)
+    assert all(row["kills_map_ladder"] is None for row in rows)
+    assert rows[0]["kills_t1_line"] == 28.5
+    duplicated = collector.build_rows(card(), text + "\n" + text, wall=10)
+    assert all(row["kills_map_ladder"] is None for row in duplicated)
+    assert collector.parse_winline_map_kills_total(trapped, 1) is None
+
+
+def test_map_total_bands_exact_team_names_and_malformed_block():
+    text = (FIXTURES / LADDER_BODY).read_text()
+    rows = collector.build_rows(dict(ladder_card(), team1=" yellow  submarine ", team2="CYBER"), text, wall=10)
+    assert all(row["kills_t1_bands"] and row["kills_t2_bands"] is None for row in rows)
+    malformed = collector.build_rows(ladder_card(), text.replace("0-40\n5.15", "0-40\n1.0", 1), wall=10)
+    assert malformed[0]["kills_map_bands"] is None and malformed[0]["kills_t1_bands"]
+    assert malformed[1]["kills_map_bands"] and malformed[2]["kills_map_bands"]
+
+
+def test_map_total_backfill_is_offline_and_idempotent(monkeypatch, tmp_path, capsys):
+    entry = all_entry()
+    (tmp_path / ALL_DUMP).write_bytes((FIXTURES / ALL_FIXTURE).read_bytes())
+    failed = dict(entry, kind="readyfail", ts_utc="20261010T144446Z")
+    (tmp_path / "16899998_20261010T144446Z_all.txt").write_text(all_body())
+    missing = dict(entry, ts_utc="20261010T144546Z")
+    orphan = tmp_path / "16899998_20261010T144646Z_all.txt"
+    orphan.write_text(all_body())
+    (tmp_path / "index.jsonl").write_text("\n".join(json.dumps(e) for e in (failed, entry, missing, entry)) + "\n")
+    # Existing windows and an earlier totals capture are preserved byte for byte.
+    windows = tmp_path / "windows.jsonl"
+    windows.write_text(json.dumps(dict(QUICK_MARKETS[0], source_dump=QUICK_DUMP)) + "\n")
+    old = json.dumps(dict(source_dump="earlier_all.txt", map_num=1)) + "\n"
+    totals = tmp_path / "totals.jsonl"
+    totals.write_text(old)
+    monkeypatch.setattr(collector, "_cycle", Mock(side_effect=AssertionError("offline only")))
+    assert collector.main(["--parse-all-dumps", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "totals_written=2\n"
+    assert totals.read_text().startswith(old)
+    rows = [json.loads(line) for line in totals.read_text().splitlines()[1:]]
+    assert [row["map_num"] for row in rows] == [2, 3]
+    assert all(row["source_dump"] == ALL_DUMP and row["ts_utc"] == entry["ts_utc"]
+               and row["live"] is True and row["event_id"] == entry["event_id"]
+               and row["team1"] == entry["team1"] and row["team2"] == entry["team2"]
+               and row["series_score"] == "1 : 0" and row["series_state"] == "Пер."
+               and row["wall"] == 1791643426.0 and row["kills_map_line"] == 57.5 for row in rows)
+    before = totals.read_bytes(), windows.read_bytes()
+    assert collector.parse_all_dumps(tmp_path) == 0
+    assert (totals.read_bytes(), windows.read_bytes()) == before
+
+
+@pytest.mark.parametrize("clicked", [False, True])
+def test_map_total_quick_capture_appends_totals_and_preserves_windows(monkeypatch, tmp_path, clicked):
+    page = Mock()
+    page.evaluate.return_value = dict(clicked=clicked, tabs=["Все", "Быстрые"])
+    page.locator.return_value.inner_text.return_value = quick_body()
+    monkeypatch.setattr(collector.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(collector.time, "strftime", lambda *args: all_entry()["ts_utc"])
+    check = Mock()
+    collector.capture_quick_tab(page, tmp_path, all_entry(), all_body(), True, (), check)
+    entry = json.loads((tmp_path / "index.jsonl").read_text())
+    rows = [json.loads(line) for line in (tmp_path / "totals.jsonl").read_text().splitlines()]
+    expected = collector.build_rows(entry, all_body(), wall=1791643426.0)
+    assert rows == [dict(row, ts_utc=entry["ts_utc"], live=True, full_markets=True, source_dump=ALL_DUMP,
+                         series_score="1 : 0", series_state="Пер.") for row in expected]
+    check.assert_called_once_with()
+    if clicked:
+        expected_windows = collector.build_quick_window_rows(entry, quick_body(), ALL_DUMP.replace("_all", "_quick"))
+        assert (tmp_path / "windows.jsonl").read_text() == "".join(
+            json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in expected_windows)
+    else:
+        assert not (tmp_path / "windows.jsonl").exists()
 
 
 def test_captured_quick_windows():
@@ -1433,3 +1576,64 @@ def test_readyfail_dump_errors_propagate(monkeypatch, tmp_path, capsys, stage, p
     output = capsys.readouterr()
     assert "status=5 error=%s" % ("RuntimeError" if proxy_failed else "ValueError") in output.out
     assert all(secret not in output.out + output.err for secret in (PROXY, EXIT, DIRECT))
+
+
+def test_history_writes_map_total_change_with_unchanged_team_totals(tmp_path):
+    """A map-total move alone is an observation; pre-upgrade rows replay once (captured aurora page)."""
+    path = tmp_path / "history.jsonl"
+    row = collector.build_rows(dict(card(), team1="TEAM AURORA", team2="1W"), body("aurora_1w"), wall=10)[0]
+    assert (row["kills_map_line"], row["kills_map_ladder"][0]) == (53.5, [52.5, 1.81, 2.01])
+    legacy = {k: v for k, v in row.items() if k not in collector.MAP_TOTAL_FIELDS}
+    path.write_text(json.dumps(legacy, ensure_ascii=False) + "\n", encoding="utf-8")
+    with collector.HistoryWriter(path) as writer:
+        assert writer.write(dict(row, wall=11))
+        assert not writer.write(dict(row, wall=12))
+        ladder = [list(rung) for rung in row["kills_map_ladder"]]
+        ladder[0][1] = 1.86
+        assert writer.write(dict(row, kills_map_ladder=ladder, wall=13))
+        assert writer.write(dict(row, kills_map_ladder=ladder, kills_map_line=54.5, wall=14))
+
+
+MIDMAP_FIXTURE = "winline_kills_map_totals_live_midmap_legion_blasterbi_20261008.txt"
+
+
+def test_totals_rows_mid_map_state_and_full_markets_flag():
+    """Captured mid-map page (map 3 running, 1:1): state parsed, full_markets travels with the row."""
+    text = (FIXTURES / MIDMAP_FIXTURE).read_text(encoding="utf-8")
+    entry = dict(ts_utc="20261008T184904Z", event_id="16890543", team1="LEGION", team2="BLASTERBI",
+                 live=True, full_markets=True)
+    rows = collector.build_all_totals_rows(entry, text, "16890543_20261008T184904Z_all.txt")
+    map3 = next(r for r in rows if r["map_num"] == 3)
+    assert (map3["series_score"], map3["series_state"]) == ("1 : 1", "3 карта")
+    assert map3["full_markets"] is True and map3["kills_map_line"] == 59.5
+    unrendered = collector.build_all_totals_rows(dict(entry, full_markets=False), text, "x_all.txt")
+    assert all(r["full_markets"] is False for r in unrendered)
+
+
+def test_map_total_valid_block_then_malformed_block_is_null():
+    """A partial ladder must not be returned when the market block is not fully consumed."""
+    text = ("2 карта тотал убийств\nБольше\nб 56.5\n1.75\nМеньше\nм 56.5\n1.96\n"
+            "Больше\nб 57.5\n1.85\nМеньше\nм 57.5\n")
+    assert collector.parse_winline_map_kills_total(text, 2) is None
+    live = (FIXTURES / ALL_FIXTURE).read_text(encoding="utf-8")
+    assert collector.parse_winline_map_kills_total(live, 2)[0] == [56.5, 1.75, 1.96]
+
+
+def test_map_total_ladder_split_into_two_column_groups():
+    """Captured page where a 5-rung map ladder is rendered as two Больше/Меньше groups."""
+    text = (FIXTURES / "winline_kills_map_totals_live_two_groups_1w_parivision_20261009.txt").read_text(
+        encoding="utf-8")
+    ladder = collector.parse_winline_map_kills_total(text, 1)
+    assert [rung[0] for rung in ladder] == [49.5, 50.5, 51.5, 52.5, 53.5]
+    assert ladder[0] == [49.5, 1.66, 2.13] and ladder[-1] == [53.5, 2.09, 1.69]
+
+
+@pytest.mark.parametrize("tail", ["Больше\n", "Меньше\nм 53.5\n", "б 54.5\n1.80\n"])
+def test_map_total_dangling_or_stray_group_is_null(tail):
+    """Verifier inputs (astra 10.10): an empty/partial trailing group must not pass as a full block."""
+    text = "1 карта тотал убийств\nБольше\nб 53.5\n1.9\nМеньше\nм 53.5\n1.9\n" + tail + "WINLINE\n"
+    assert collector.parse_winline_map_kills_total(text, 1) is None
+    two = (FIXTURES / "winline_kills_map_totals_live_two_groups_1w_parivision_20261009.txt").read_text(
+        encoding="utf-8")
+    assert collector.parse_winline_map_kills_total(two.replace("м 53.5\n1.69\n", "м 53.5\n1.69\nБольше\n", 1),
+                                                   1) is None
