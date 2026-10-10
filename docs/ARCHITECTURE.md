@@ -147,7 +147,8 @@ SHA точных входных журналов. До ≥300 enrolled за ≥3
 > «<account_id> (<лига>)»), кроме `spared_serious` — 37 серьёзных про (≥30 карт
 > с 7.39 в allowlist-лигах: Topson, Saksa, Yuma…); откат
 > `PLAYER_DENYLIST_JUNK_LEAGUES=0`, путь `PLAYER_DENYLIST_JUNK_LEAGUES_PATH`,
-> нет файла — громкая строка «NOT loaded» и пустое дополнение; команда —
+> нет или битый файл — громкая строка «NOT loaded», одно сообщение админу и
+> пустое дополнение (ставки идут), в бою с 32e30bcc; команда —
 > `SKIPPED_BET_TEAM_NAMES` / `SKIPPED_BET_TEAM_IDS` (Yangon Galacticos, team_id
 > 8944230/9546449, с 29.09.2026, reason `skip_team_denylist`): цель ставки — это
 > команда, названная в заголовке «СТАВКА НА …»; стороны radiant/dire и снимки
