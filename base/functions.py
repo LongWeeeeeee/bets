@@ -1933,10 +1933,20 @@ def send_message(
     require_delivery: bool = False,
     admin_only: bool = False,
     mirror_to_vk: bool = True,
-    silent: bool = False,
+    silent: Optional[bool] = None,
 ):
-    """silent=True — доставка без звука (disable_notification). Ставки шлём
-    обычным способом, шумные служебные потоки (кэфы Winline) — тихо."""
+    """silent=True — доставка без звука (disable_notification).
+
+    Звонят только ставки: точка доставки ставок (`_deliver_and_persist_signal`)
+    передаёт silent=False явно. silent=None (по умолчанию) — тихо для всего
+    остального с 10.10.2026 (владелец: «выключи все уведомления в
+    @lgwn_signal_bot кроме непосредственно ставок»); сообщение приходит, но без
+    звука. Откат: env TELEGRAM_NONBET_SOUND=1 (читается при каждом вызове).
+    Явные True/False выполняются как переданы."""
+    if silent is None:
+        silent = str(os.getenv("TELEGRAM_NONBET_SOUND", "") or "").strip().lower() not in (
+            "1", "true", "on", "yes",
+        )
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
         reply_markup = _build_admin_telegram_reply_markup()

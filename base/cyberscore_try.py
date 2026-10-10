@@ -35830,8 +35830,13 @@ def _deliver_and_persist_signal(
     map_num: Optional[int] = None,
     selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
     stake_multiplier_context: Optional[Dict[str, Any]] = None,
+    notify_sound: bool = True,
 ) -> bool:
     """Canonical delivery owner: prepare/reserve once, send, then commit/rollback odds state.
+
+    ``notify_sound`` — только ставки звонят (владелец 10.10.2026): default True оставляет
+    звук всем ставочным вызовам; информационные/служебные тексты (пропуск матча, odds-only,
+    DOTA2PROTRACKER, pipeline-probe) передают False -> Telegram disable_notification.
 
     Ordinary production callers must pass the stake-refreshed message without a prior
     bookmaker prepare. Minimal odds-only may preflight and hand an explicit reservation
@@ -36079,6 +36084,7 @@ def _deliver_and_persist_signal(
                 require_delivery=True,
                 admin_only=SIGNAL_SEND_ADMIN_ONLY,
                 mirror_to_vk=not SIGNAL_SEND_ADMIN_ONLY,
+                silent=not notify_sound,  # ставка звонит (notify_sound=True), остальное тихо (10.10.2026)
             )
         except TelegramSendError as exc:
             if exc.delivery_uncertain:
@@ -42483,6 +42489,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     minimal_odds_message,
+                    notify_sound=False,  # не ставка: без звука
                     current_map_observation=_imm_obs,
                     map_num=_imm_map,
                     add_url_reason="minimal_odds_only_signal_sent_now",
@@ -42669,6 +42676,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _deliver_and_persist_signal(
                     check_uniq_url,
                     skip_msg,
+                    notify_sound=False,  # не ставка: без звука
                     current_map_observation=_imm_obs,
                     map_num=_imm_map,
                     add_url_reason="skip_tier_undetermined",
@@ -43591,6 +43599,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     protracker_message_text,
+                    notify_sound=False,  # не ставка: без звука
                     current_map_observation=_imm_obs,
                     map_num=_imm_map,
                     add_url_reason="dota2protracker_signal_sent_now",
@@ -43699,6 +43708,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     pipeline_message_text,
+                    notify_sound=False,  # не ставка: без звука
                     current_map_observation=_imm_obs,
                     map_num=_imm_map,
                     add_url_reason="pipeline_send_every_parsed_match",

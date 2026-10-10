@@ -7,8 +7,10 @@ Ops scripts call this from their failure AND success branches so that silence
 becomes distinguishable from success. Never raises: exit code is always 0.
 
 Usage: notify_admin.py "text"   |   echo "text" | notify_admin.py
+Silent by default (disable_notification) since 10.10.2026; NOTIFY_ADMIN_SOUND=1 rings.
 """
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
@@ -28,11 +30,17 @@ def main() -> int:
         # that already talks to the owner, so it goes first, keys.Token stays as fallback.
         token = getattr(keys, "signal_bot_token", None) or keys.Token
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        data = urllib.parse.urlencode({
+        fields = {
             "chat_id": keys.Chat_id,
             "text": text,
             "disable_web_page_preview": "true",
-        }).encode()
+        }
+        # 10.10.2026 (owner, card ingame-qe6y): the signal bot rings only for bets.
+        # Every ops notice from here (rebuilds, top-up, snapshots) arrives silently;
+        # it is still delivered to the chat. Rollback: NOTIFY_ADMIN_SOUND=1.
+        if os.environ.get("NOTIFY_ADMIN_SOUND", "").strip().lower() not in ("1", "true", "on", "yes"):
+            fields["disable_notification"] = "true"
+        data = urllib.parse.urlencode(fields).encode()
         with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=20) as resp:
             ok = bool(json.load(resp).get("ok"))
         print("notify_admin:", "ok" if ok else "telegram refused", flush=True)

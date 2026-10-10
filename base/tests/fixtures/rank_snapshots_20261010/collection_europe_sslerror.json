@@ -1,0 +1,37 @@
+{
+  "schema": "valve-rank-collection-v1",
+  "started_at": 1791613147.486929,
+  "regions": {
+    "europe": {
+      "url": "https://www.dota2.com/webapi/ILeaderboard/GetDivisionLeaderboard/v0001?division=europe&leaderboard=0",
+      "status": "error",
+      "error": "HTTPSConnectionPool(host='www.dota2.com', port=443): Max retries exceeded with url: /webapi/ILeaderboard/GetDivisionLeaderboard/v0001?division=europe&leaderboard=0 (Caused by SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol (_ssl.c:1129)')))"
+    },
+    "se_asia": {
+      "url": "https://www.dota2.com/webapi/ILeaderboard/GetDivisionLeaderboard/v0001?division=se_asia&leaderboard=0",
+      "http_status": 200,
+      "status": "ok",
+      "players": 5002,
+      "source_sha256": "4322bf62e9d0dcd43f7bebcc6030302f3be57c226d844132f976577aa4e019fb",
+      "rank_updated_at": 1791612781
+    },
+    "americas": {
+      "url": "https://www.dota2.com/webapi/ILeaderboard/GetDivisionLeaderboard/v0001?division=americas&leaderboard=0",
+      "http_status": 200,
+      "status": "ok",
+      "players": 5011,
+      "source_sha256": "4d947107596f81d9677e23c782b1f3d0e87463d6561ac27d2c22fd6d24a73d6b",
+      "rank_updated_at": 1791612781
+    },
+    "china": {
+      "url": "https://www.dota2.com/webapi/ILeaderboard/GetDivisionLeaderboard/v0001?division=china&leaderboard=0",
+      "http_status": 200,
+      "status": "ok",
+      "players": 5005,
+      "source_sha256": "b3dab28ccc49678b9e28040a1bc6e95b5d1aa6de175d7efbe7b98363b2f61315",
+      "rank_updated_at": 1791612781
+    }
+  },
+  "complete": false,
+  "finished_at": 1791613159.424789
+}

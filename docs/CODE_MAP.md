@@ -329,6 +329,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 **Signal / STAR / ML decision**
 | env | default |
 |---|---|
+| `TELEGRAM_NONBET_SOUND` | `0` — с 10.10.2026 (владелец, ingame-qe6y) `functions.send_message(silent=None)` шлёт с `disable_notification`: @lgwn_signal_bot звонит только на ставки (`_deliver_and_persist_signal` передаёт `silent=False`); `1` = откат: звук у всего, что идёт через `send_message` без явного `silent`; 4 служебных вызова `_deliver_and_persist_signal(notify_sound=False)` (минимальные кэфы, «🚫 Пропуск матча», protracker-only, pipeline check) остаются тихими |
+| `NOTIFY_ADMIN_SOUND` | `0` — `scripts/ops/notify_admin.py` (ночная цепочка, пересборки, добор, снимки рангов) шлёт тихо с 10.10.2026; `1` = со звуком |
 | `CP1VS2_TOPUP_FALLBACK` | `0` (off) — вкл same-role top-up для `counterpick_1vs2`: дуо-матчап с `<COUNTERPICK_1VS2_MIN_MATCHES` точных игр добирается кросс-позиц (core pos1-3 / support pos4-5) агрегатом с весом λ, exact-игры как якорь (`functions._lookup_cp1vs2_topup_winrate`). Покрытые `>=15` не трогаются. Требует scoped-ключи: `cyberscore._draft_stats_lookup_keys` эмитит кросс-позиц дуо-ключи под тем же флагом. Валидировано (runtime/cp1vs2_topup_*): PUB ~+2пп точн.+покрытие, PRO нейтрально+~5-6пп покрытие. |
 | `CP1VS2_TOPUP_LAMBDA` | `0.35` — вес кросс-позиц инкремента в top-up бленде |
 | `SIGNAL_DECISION_MODE` | `ml` (`ml`/`star`) |
@@ -2295,10 +2297,15 @@ SHA256; `verify_snapshot(path)` reparses the retained source and compares fields
 Valve does not expose account IDs: these archives explicitly retain unresolved
 identity and are not directly accepted as account-bound ML metadata. Tied ranks
 and duplicate nicknames are retained, never silently resolved by name/country.
-Daily schedule: `scripts/run/collect_rank_snapshots.sh` (launchd `com.ingame.rank-snapshots`, 09:00,
-installed by `scripts/ops/install-rank-snapshots.sh`) skips when a complete snapshot for the current UTC
-date exists, otherwise runs the collector into `runtime/artifacts/misc/rank_snapshots/` (log
-`collect_<YYYYMMDD UTC>.log`) and sends one admin-chat line in any outcome. It replaced the Codex
+Daily schedule: `scripts/run/collect_rank_snapshots.sh` (launchd `com.ingame.rank-snapshots`, slots
+09/12/15/18/21 local = 06–18 UTC, installed by `scripts/ops/install-rank-snapshots.sh`) skips when a
+complete snapshot for the current UTC date exists, otherwise waits for the network (curl www.dota2.com,
+up to 20×30 s) and runs the collector up to 3 times (120 s apart) into
+`runtime/artifacts/misc/rank_snapshots/` (log `collect_<YYYYMMDD UTC>.log`). Success sends a ✅ admin
+line; a failure before 18:00 UTC only logs `deferred` (a later slot retries), a failure at/after 18:00
+UTC sends ⚠️ (the day is lost); every run first checks the previous UTC day and sends one ⚠️ if it has no complete snapshot (marker `.lost_alerted_<date>`, written only after `notify_admin: ok`, so an alert that failed in a DarkWake is retried); the run's UTC date and hour are fixed at its start, so a run that sleeps across 00 UTC reports its start day, so a slot caught up after 00 UTC still reports the loss. Why (ingame-qe6y): 07, 08 and 10.10.2026 the single 09:00 run fired in a
+battery DarkWake without network; 07 and 08.10 are lost. Test seams `RANK_SNAPSHOT_*`
+(`base/tests/test_collect_rank_snapshots_runner.py`). It replaced the Codex
 heartbeat automation `dota-2`, which stopped on 22.09.2026 (model 403, then the Codex app closed).
 
 User-authorized offline approximation: `PlayerHistory.features(...,
