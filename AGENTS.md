@@ -12,6 +12,17 @@
 
 ---
 
+## 🎯 Standing objective (owner 08.10.2026)
+
+**Objective: find a more profitable betting configuration and remove the problems that block or distort it** (data gaps, broken collectors, dead keys/proxies, measurement errors, prod defects). Without a narrower user request, every lead session works the frontier of this objective (`.orchestra/WORK_LOOP.md`): the next experiment, fix or deploy that most moves expected profit per bet on out-of-sample evidence (`docs/EXPERIMENTS.md` first).
+
+Operating mode (owner 08.10.2026, on top of `~/.claude/CLAUDE.md` §1):
+- **Never idle.** Before a turn ends with no live background task, launch the next independent node toward the objective. Waiting on a long rebuild or run is not a pause: run other independent nodes in parallel (up to 4 agents; writers each in their own worktree).
+- **Recommended option = decision.** When you can recommend, do it and report «решаю: X — потому что Y; откат: Z» (reversible betting gates behind an env flag included). `AskUserQuestion` only for a user-only action (STRATZ tokens, payment, hardware, OS permissions) with `[только вы]` in the question, or an irreversible/outward action with `[необратимо]`; launch all independent work first. Hook `~/.claude/hooks/recommend-gate.py` denies other questions that carry a recommended option.
+- **Stop only at an insurmountable obstacle** (e.g. paid STRATZ proxies dead — free ones do not work because each key is bound to its proxy) after all independent work is done; put the exact unblock step on the board.
+
+---
+
 ## 📑 Индекс знаний (читай нужный док под задачу)
 
 Перед работой определи область задачи и прочитай ТОЛЬКО релевантные доки (инструментом Read). НЕ сканируй исходники заново, если ответ есть в доке.
@@ -44,7 +55,7 @@
 
 **Codex:** используй нативные роли `explorer`, `deep_explorer`, `worker`,
 `hard_worker`, `reviewer`, `verifier`, `scribe`. План и интеграция — lead.
-**Claude Code:** используй установленный oh-my-claudecode и его роли.
+**Claude Code:** роли Fable-оркестра `claude-fable-orch:*` (OMC выключен с 22.09.2026).
 Имена инструментов одного harness не являются командами другого. RuFlo выключен.
 Консультация, коммит и правка 1–2 строк — lead; сложный независимый кусок можно
 делегировать с коротким заданием и проверкой результата. Автоматических цепочек
@@ -108,7 +119,7 @@ Claim закрепляет задачу и её файлы, а не весь п�
 Краткие инварианты. Деплой, sync и примеры запуска — `docs/RUNTIME_RULES.md`. Тесты: `pytest base/tests/ -v`.
 
 - **Отвечай пользователю на русском.** Код, идентификаторы, commit-сообщения и строки логов — на исходном языке.
-- Делай только поставленную задачу; ничего своевольного сверх неё. Неоднозначность / логическая ошибка у пользователя → сначала **спроси**.
+- Работай над поставленной задачей, а без узкой задачи — над постоянной целью выше. Неоднозначность → выбери вариант, лучше ведущий к цели, и назови допущение; логическая ошибка в указании → «возражение» с доказательством (`~/.claude/CLAUDE.md` §1). Спрашивай только в случаях §1: нельзя ничего рекомендовать, либо действие необратимо/наружу (удаление, push вне delivery-target, деньги).
 - **venv:** ТОЛЬКО `/Users/alex/Documents/ingame/venv_catboost/bin/python3`. Других venv не создавай и не используй.
 - **НИКОГДА не удаляй** файлы, папки, бэкапы, `.json` source dicts, sqlite DB, `*.bak_*`, `*.shards/`, логи, кэши — локально или на сервере — **без явного подтверждения**. Сомневаешься — спроси.
 - **Rebuild-then-replace, никогда delete-then-create.** Пиши новую версию в `<target>.tmp` и атомарно переименовывай поверх только после успешной сборки и проверки.
@@ -117,7 +128,14 @@ Claim закрепляет задачу и её файлы, а не весь п�
 - **`log.txt`:** усекать ТОЛЬКО при bug-fix деплое (git push → pull → restart). На тестах, пробах и логических изменениях — НЕ трогать.
 - **`map_id_check.txt`** (`~/.local/state/ingame/`, `MAP_ID_CHECK_PATH`) — единый для всех режимов; при любом перезапуске чисти.
 - В `base/keys.py` при чистке мёртвых прокси трогай только runtime proxy constants/pools; **НЕ трогай** `api_to_proxy` / `api_to_keys` и API-ключи. Приватные логи и данные ставок не выноси наружу.
-- **Долгие задачи** — только `nohup ... > runtime/<name>.log 2>&1 &` + `echo $!` для PID. Никогда не используй встроенный background-инструмент. Всегда давай кликабельную ссылку на лог и команду проверки статуса.
+- **Долгие задачи**, которые должны пережить сессию — `nohup ... > runtime/<name>.log 2>&1 &` + `echo $!` для PID, и в том же сообщении будильник: `run_in_background`-цикл ожидания или `Monitor` (`~/.claude/CLAUDE.md` §3; `wake-guard.sh` иначе отклонит запуск). Короткие задачи — штатный `run_in_background`. Всегда давай кликабельную ссылку на лог и команду проверки статуса.
 - **Деплой live pipeline:** git push `main` → на сервере `git pull --ff-only` → `systemctl stop cyberscore` → чисти `map_id_check.txt` → `systemctl start cyberscore`. **Правка логики ставки = рестарт прода + чистка `map_id_check.txt` в том же ходу.** `kill`/`pkill` НЕ использовать: systemd поднимет процесс сам и получится второй экземпляр (`docs/RUNTIME_RULES.md:13`); рестарт — через `scripts/run/restart_cyberscore.sh` (systemd-процедура).
 - **Production:** `serv1` — ssh-алиас из `~/.ssh/config` (сейчас `root@96.126.129.158`, хост `96300.koara.live`). В скриптах и командах пиши `serv1`, а не IP: адрес уже менялся, и скрипты с зашитым IP молча ломались (ночная доставка снимков 22–25.09.2026). Путь `/root/main`, python **3.12.3** в `/root/main/venv` (локальный venv — 3.9, поэтому перед рестартом гоняй `py_compile` + import-смоук на сервере). Юнит `cyberscore.service`, stdout/stderr — в `base/runtime/cyberscore_sourcetv.log`, НЕ в `log.txt`. `runtime/` — намеренно git-ignored scratch. На serv1 грязные `base/id_to_names.py` (611 legacy-блоков динамического tier2-onboarding'а; заморожен с 02.09.2026 — рантайм теперь пишет overlay `base/id_to_names_dynamic_tier2.json`, см. `base/tier_dynamic_overlay.py`) и `data/team_org_aliases.json` (ночная пересборка): перед `git pull` сверяй `git diff --name-only` с входящими коммитами.
 - **Doc-sync:** публичный контракт (сигнатура, env, CLI, формат I/O, поток сигнала) в том же ходу обнови в `docs/CODE_MAP.md` и/или `docs/ARCHITECTURE.md`. Внутренние правки док не трогают. Источник правды — код.
+
+<!-- orchestra-devspace:v1 -->
+For substantive main-agent work in any installed runtime, read `.orchestra/WORK_LOOP.md` once: objective frontier, evidence-backed final recheck and internal coordination. Preserve native model/effort and permissions. This shared task policy does not switch the selected runtime.
+
+## ChatGPT / DevSpace mode
+Only in a ChatGPT conversation explicitly using DevSpace, read `.devspace-orchestra/BRAIN_BOOTSTRAP.md` once. ChatGPT is the direct planner, coder, explorer and tester; do not invoke CCCC/Muse or native CLI subagents in this mode. A separate ChatGPT task chat is optional, receives a compact task packet, and uses an isolated worktree. No parent transcript is forwarded. Helpers: `.devspace-orchestra/bin/chat.py`. Result acceptance and delivery remain in the shared `.orchestra/runtime/`; use runtime `chatgpt`. These instructions do not change native Claude/Codex routing, models or permissions. Never run two writers in the same checkout.
+<!-- /orchestra-devspace:v1 -->
