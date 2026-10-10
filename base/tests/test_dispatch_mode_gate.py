@@ -618,7 +618,11 @@ def test_ml_early_kills_tier_gate_before_delivery(
     assert len(logged) == 1
     windows = [d for d in logged[0]["decisions"] if d["market"] == "kills_window"]
     assert bool(windows) is allowed
-    sent_markets = [kwargs["stake_multiplier_context"]["ml_market"] for _, kwargs in delivered]
+    # Same-side bets of one tick go out as one bundle (card ingame-0u31): its
+    # context lists every bundled market in "bundle_markets".
+    sent_markets = [market for _, kwargs in delivered
+                    for market in (kwargs["stake_multiplier_context"].get("bundle_markets")
+                                   or [kwargs["stake_multiplier_context"]["ml_market"]])]
     assert ("kills_window" in sent_markets) is allowed
     assert "kills_total" in sent_markets  # unchanged market, same ML evidence
     blocked = [s for s in logged[0]["skipped"] if s["reason"] == "kills_requires_tier1_team"]

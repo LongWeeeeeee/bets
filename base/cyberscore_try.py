@@ -45,7 +45,7 @@ from itertools import combinations, permutations
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Tuple, Union
+from typing import Optional, Dict, List, Any, Sequence, Tuple, Union
 import math
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
@@ -12837,13 +12837,9 @@ def _ml_dispatch_record_decisions(record: Dict[str, Any], *, dedup_view: Dict[st
         logger.exception("_ml_dispatch_record_decisions failed for %s", record.get("match_key"))
 
 
-def _ml_dispatch_deliver_decision(
+def _ml_dispatch_build_decision_message(
     decision,
     *,
-    match_key: str,
-    base_url: str,
-    ctx_map_num: int,
-    resolved_map_num: Optional[int],
     radiant_team_name: str,
     dire_team_name: str,
     live_league: Optional[Dict[str, Any]],
@@ -12862,12 +12858,17 @@ def _ml_dispatch_deliver_decision(
     full_message_text: Any,
     ml_laning_line: str,
     all_model_line: str,
-    ledger,
 ) -> Dict[str, Any]:
-    """Собрать сообщение по одному ``Decision`` и доставить через
-    `_deliver_and_persist_signal`. Возвращает view-запись для лога решений.
+    """Pure builder of ONE decision's single message (no delivery, no I/O).
+
+    Shared by the single path (`_ml_dispatch_deliver_decision`) and the same-team
+    bundle (`_ml_dispatch_deliver_bundle`), so the single message stays
+    byte-identical. ``panel_line`` is the "🤖 ... по панели ML:" line a
+    kills_panel_window message carries (empty for every other rule); the bundle
+    re-uses it for secondary members.
     """
     target_side_lower = str(decision.target_side or "").strip().lower()
+    panel_line = ""
 
     if decision.market == "win":
         model_line = _format_win_model_line(early_output, mid_output, all_output, all_model_line=all_model_line)
@@ -12901,7 +12902,6 @@ def _ml_dispatch_deliver_decision(
             special_header_mode="early_kills",
             kills_window_label=window_label,
         )
-        panel_line = ""
         floor_line = ""
         if decision.rule == "kills_panel_window":
             # E-359: informational break-even price (no block, no price check).
@@ -12934,7 +12934,95 @@ def _ml_dispatch_deliver_decision(
         "ml_rule": decision.rule,
         "ml_market": decision.market,
     }
-    dedup_key = (base_url, ctx_map_num, decision.market, decision.target_side)
+    add_url_details = {
+        "ml_rule": decision.rule,
+        "ml_market": decision.market,
+        "target_side": target_side_lower,
+        "expected_wr": decision.expected_wr,
+        "min_odds": decision.min_odds,
+    }
+    return {
+        "message_text": message_text,
+        "stake_context": stake_context,
+        "add_url_details": add_url_details,
+        "panel_line": panel_line,
+        "target_side_lower": target_side_lower,
+    }
+
+
+def _ml_dispatch_deliver_decision(
+    decision,
+    *,
+    match_key: str,
+    base_url: str,
+    ctx_map_num: int,
+    resolved_map_num: Optional[int],
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    early_output: Optional[Dict[str, Any]],
+    mid_output: Optional[Dict[str, Any]],
+    all_output: Optional[Dict[str, Any]],
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    full_message_text: Any,
+    ml_laning_line: str,
+    all_model_line: str,
+    ledger,
+    bundle_decisions: Sequence[Any] = (),
+    bundle_outcome: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Собрать сообщение по одному ``Decision`` и доставить через
+    `_deliver_and_persist_signal`. Возвращает view-запись для лога решений.
+
+    ``bundle_decisions`` (same-team bundle, card ingame-0u31): остальные решения
+    той же стороны; тогда уходит ОДНО сообщение со списком ставок, а ``decision``
+    — его primary. Пусто -> прежний путь без изменений. ``bundle_outcome`` — dict
+    вызывающего: `_deliver_and_persist_signal` пишет в него, что решили ЕЁ гейты
+    (``floor_blocked`` / ``too_long`` / ``primary_dedup`` / ``member_dedup``); при ``primary_dedup``
+    ml-леджер получает ключ только primary (семантика одиночного дедупа HEAD),
+    остальных членов вызывающий доставляет заново.
+    """
+    build_kwargs = dict(
+        radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
+        live_league=live_league, top=top, mid=mid, bot=bot,
+        protracker_payload=protracker_payload, team_elo_block=team_elo_block,
+        game_time_seconds=game_time_seconds, radiant_lead=radiant_lead,
+        early_output=early_output, mid_output=mid_output, all_output=all_output,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+        full_message_text=full_message_text, ml_laning_line=ml_laning_line,
+        all_model_line=all_model_line,
+    )
+    built = _ml_dispatch_build_decision_message(decision, **build_kwargs)
+    message_text = built["message_text"]
+    add_url_details = built["add_url_details"]
+    stake_context = built["stake_context"]
+    all_decisions = [decision, *bundle_decisions]
+    delivery_extra: Dict[str, Any] = {}
+    if bundle_decisions:
+        builts = [built] + [
+            _ml_dispatch_build_decision_message(d, **build_kwargs) for d in bundle_decisions]
+        markets = [d.market for d in all_decisions]
+        message_text = _ml_dispatch_compose_bundle_text(all_decisions, builts)
+        add_url_details = dict(add_url_details, bundle_markets=list(markets),
+                               bundle_rules=[d.rule for d in all_decisions])
+        stake_context = dict(stake_context, bundle_markets=list(markets))
+        if bundle_outcome is not None:
+            delivery_extra["bundle_outcome"] = bundle_outcome
+        delivery_extra["bundle_ledger_members"] = [
+            {"add_url_details": b["add_url_details"], "stake_multiplier_context": b["stake_context"],
+             # own single message: a kills row must not parse the win header's "x1"
+             "message_text": b["message_text"]}
+            for b in builts[1:]
+        ]
     current_map_observation = None
     if isinstance(resolved_map_num, int) and 1 <= resolved_map_num <= 5:
         current_map_observation = _bookmaker_enrich_delayed_match_state(
@@ -12945,21 +13033,21 @@ def _ml_dispatch_deliver_decision(
         match_key,
         message_text,
         add_url_reason="ml_dispatch",
-        add_url_details={
-            "ml_rule": decision.rule,
-            "ml_market": decision.market,
-            "target_side": target_side_lower,
-            "expected_wr": decision.expected_wr,
-            "min_odds": decision.min_odds,
-        },
+        add_url_details=add_url_details,
         map_num=resolved_map_num,
         current_map_observation=current_map_observation,
-        selected_side=target_side_lower,
+        selected_side=built["target_side_lower"],
         stake_multiplier_context=stake_context,
+        **delivery_extra,
     )
     if delivered:
         try:
-            ledger.add(dedup_key)
+            # primary_dedup: only the primary's own bet was "already sent" (HEAD single
+            # dedup); the other members were not sent and are delivered by the caller.
+            ledger_decisions = (
+                [decision] if (bundle_outcome or {}).get("primary_dedup") else all_decisions)
+            for d in ledger_decisions:
+                ledger.add((base_url, ctx_map_num, d.market, d.target_side))
             ledger.save()
         except Exception:
             logger.exception("ml_dispatch ledger save failed for %s", match_key)
@@ -12969,6 +13057,199 @@ def _ml_dispatch_deliver_decision(
         "rule": decision.rule,
         "status": "delivered" if delivered else "blocked",
     }
+
+
+# --- Same-team bundle (owner 10.10.2026, card ingame-0u31): one Telegram message
+# per team at 00 with the list of ALL bets and their recommended prices on top.
+_ML_DISPATCH_BUNDLE_MARKET_ORDER = {"win": 0, "kills_window": 1, "kills_total": 2}
+
+
+def _ml_dispatch_bundle_enabled() -> bool:
+    """``ML_DISPATCH_BUNDLE_SAME_TEAM`` (default on); read at call time."""
+    raw = str(os.getenv("ML_DISPATCH_BUNDLE_SAME_TEAM", "1") or "").strip().lower()
+    return raw not in ("0", "false", "off", "no")
+
+
+def _ml_dispatch_bundle_groups(decisions) -> List[List[Any]]:
+    """Group ``timing == "now"`` decisions by (target side, normalized target
+    team), first-seen order of groups; inside a group win -> kills_window ->
+    kills_total (stable). A decision whose side is not radiant/dire is never
+    bundled (own group). Bundling off -> one group per decision in the original
+    order."""
+    decisions = list(decisions)
+    if not _ml_dispatch_bundle_enabled():
+        return [[d] for d in decisions]
+    groups: Dict[Any, List[Any]] = {}
+    for index, d in enumerate(decisions):
+        side = str(d.target_side or "").strip().lower()
+        if side not in ("radiant", "dire"):
+            groups[("unbundled", index)] = [d]
+            continue
+        team = str(normalize_team_name_display(str(d.target_team or ""))).strip().lower()
+        groups.setdefault((side, team), []).append(d)
+    return [
+        sorted(members, key=lambda d: _ML_DISPATCH_BUNDLE_MARKET_ORDER.get(d.market, 3))
+        for members in groups.values()
+    ]
+
+
+def _ml_dispatch_bundle_item(decision) -> str:
+    """One bullet of the list on top of the bundle message."""
+    if decision.market == "win":
+        label = "Победа x1"
+    elif decision.market == "kills_window":
+        window = ""
+        for reason in decision.reasons:
+            if str(reason).startswith("window="):
+                window = str(reason).split("=", 1)[1].replace("_", "-")
+                break
+        label = f"Ранние килы {window}" if window else "Ранние килы"
+    else:  # kills_total: gate and min_odds are for P(side >= 30 kills), E-281
+        label = "Тотал килов БОЛЬШЕ (ИТБ 29,5)"
+    price_known = decision.market in ("win", "kills_total") or (
+        decision.market == "kills_window" and getattr(decision, "floor_informational", False))
+    price = "пол не задан"
+    if price_known:
+        try:
+            value = float(decision.min_odds)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and math.isfinite(value) and value > 0:
+            price = f"от кэфа {value:.2f}"
+    return f"• {label} — {price}"
+
+
+def _ml_dispatch_compose_bundle_text(decisions, builts) -> str:
+    """Primary's single text with the bet list under the (unchanged) first line."""
+    lines = str(builts[0]["message_text"]).split("\n")
+    if len(lines) > 1 and lines[1].startswith("Ставить от кэфа "):
+        del lines[1]  # the price now lives in the list
+    team = normalize_team_name_display(str(decisions[0].target_team or ""))
+    block = [f"Ставки на {team} ({len(decisions)}):"]
+    block.extend(_ml_dispatch_bundle_item(d) for d in decisions)
+    # Model line each secondary single message would add (kills_panel_window).
+    for built in builts[1:]:
+        extra = str(built.get("panel_line") or "").strip()
+        if extra and extra not in "\n".join(lines) and extra not in block:
+            block.append(extra)
+    lines[1:1] = block
+    return "\n".join(lines)
+
+
+def _ml_dispatch_deliver_bundle(
+    decisions, bundle_outcome: Dict[str, Any], **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Deliver >=2 same-side decisions as ONE message (through the single
+    `_deliver_and_persist_signal` call site of `_ml_dispatch_deliver_decision`);
+    returns one view per member as if the message carried all of them.
+    ``bundle_outcome`` is filled by the delivery gates; the caller
+    (`_ml_dispatch_deliver_group`) corrects the views when a gate left members out."""
+    markets = [d.market for d in decisions]
+    primary_view = _ml_dispatch_deliver_decision(
+        decisions[0], bundle_decisions=list(decisions[1:]),
+        bundle_outcome=bundle_outcome, **kwargs)
+    return [
+        {"market": d.market, "target_side": d.target_side, "rule": d.rule,
+         "status": primary_view["status"], "bundle": list(markets)}
+        for d in decisions
+    ]
+
+
+_ML_DISPATCH_BUNDLE_BUILD_KEYS = (
+    "radiant_team_name", "dire_team_name", "live_league", "top", "mid", "bot",
+    "protracker_payload", "team_elo_block", "game_time_seconds", "radiant_lead",
+    "early_output", "mid_output", "all_output", "radiant_heroes_and_pos",
+    "dire_heroes_and_pos", "full_message_text", "ml_laning_line", "all_model_line",
+)
+
+
+def _ml_dispatch_deliver_group(
+    decisions, *, match_key: str, resolved_map_num: Optional[int], **kwargs: Any,
+) -> List[Dict[str, Any]]:
+    """Deliver one same-side group: a single decision goes through the unchanged
+    single path, >=2 become one bundle message. Returns the `delivered` view
+    entries (one per decision) with attempt timestamps. ``kwargs`` are the
+    `_ml_dispatch_deliver_decision` keyword arguments (base_url, ctx_map_num,
+    ledger and the message inputs)."""
+
+    def _single(decision) -> List[Dict[str, Any]]:
+        started = time.time()
+        view = _ml_dispatch_deliver_decision(
+            decision, match_key=match_key, resolved_map_num=resolved_map_num, **kwargs)
+        view.update(attempt_started_at=started, attempt_finished_at=time.time())
+        return [view]
+
+    decisions = list(decisions)
+    if len(decisions) == 1:
+        return _single(decisions[0])
+
+    build_kwargs = {k: kwargs[k] for k in _ML_DISPATCH_BUNDLE_BUILD_KEYS}
+    builts = [_ml_dispatch_build_decision_message(d, **build_kwargs) for d in decisions]
+    views: List[Dict[str, Any]] = []
+    # Members whose OWN single message is already sent (fingerprint = map +
+    # first line) keep the unchanged single path (in-delivery dedup -> True,
+    # `*_cross_instance_dedup`, ml ledger add): bundling them would let the
+    # primary's header alone decide for the whole bundle and lose the rest. This is
+    # only the fast path for the sequential case; the race (a header taken between
+    # here and the send) is decided atomically inside `_deliver_and_persist_signal`.
+    fresh_decisions: List[Any] = []
+    for decision, built in zip(decisions, builts):
+        already_sent = None
+        try:
+            already_sent = _signal_fingerprint_already_sent(match_key, built["message_text"])
+        except Exception:
+            logger.exception("ml_dispatch bundle fingerprint pre-check failed for %s", match_key)
+        if already_sent:
+            views.extend(_single(decision))
+        else:
+            fresh_decisions.append(decision)
+    decisions = fresh_decisions
+    if len(decisions) <= 1:
+        for decision in decisions:
+            views.extend(_single(decision))
+        return views
+    # Every per-member decision (win floor, dedup, length incl. the footer) is taken by
+    # `_deliver_and_persist_signal` at HEAD's own gate points and reported through
+    # ``bundle_outcome``; this loop only re-delivers what a gate left out. A plain
+    # False (hold/denylist/uncertain/proven send failure) applies to every member and
+    # is NEVER retried. With the odds gate active the win price is only known
+    # after the in-delivery reservation, so the win goes alone via the single path.
+    if decisions[0].market == "win" and (
+            bool(BOOKMAKER_PREFETCH_ENABLED) and BOOKMAKER_PREFETCH_GATE_MODE == "odds"):
+        views.extend(_single(decisions[0]))
+        decisions = decisions[1:]
+    while decisions:
+        if len(decisions) == 1:
+            views.extend(_single(decisions[0]))
+            break
+        outcome: Dict[str, Any] = {}
+        started = time.time()
+        bundle_views = _ml_dispatch_deliver_bundle(
+            decisions, outcome, match_key=match_key, resolved_map_num=resolved_map_num, **kwargs)
+        finished = time.time()
+        for view in bundle_views:
+            view.update(attempt_started_at=started, attempt_finished_at=finished)
+        if outcome.get("too_long") or outcome.get("member_dedup"):
+            # too_long: final payload (list + footer) over Telegram's 4096, nothing was
+            # reserved or sent. member_dedup: a member's own header is owned by another
+            # sender (or its reservation failed); everything the attempt reserved is
+            # released, nothing was sent. Either way: one message per bet, each through
+            # its own gates and its own reservation (the contested one dedups -> True).
+            for decision in decisions:
+                views.extend(_single(decision))
+            break
+        if outcome.get("floor_blocked") or outcome.get("primary_dedup"):
+            # The primary (the win) was decided alone, exactly as HEAD's single path
+            # would: blocked by the floor (no ml ledger key) or deduplicated against
+            # an already-owned fingerprint (its own key only). No message carried it.
+            primary_view = bundle_views[0]
+            primary_view.pop("bundle", None)
+            views.append(primary_view)
+            decisions = decisions[1:]
+            continue
+        views.extend(bundle_views)
+        break
+    return views
 
 
 def _ml_dispatch_draft_input(radiant, dire, details, source, resolution):
@@ -13230,12 +13511,13 @@ def _ml_dispatch_tick(
 
         delivered_view: List[Dict[str, Any]] = []
         if mode == "ml":
-            for decision in result.decisions:
-                if decision.timing != "now":
-                    continue
-                attempt_started_at = time.time()
-                delivery = _ml_dispatch_deliver_decision(
-                    decision,
+            # Same-team bundle (card ingame-0u31): decisions with the same target
+            # side go out as ONE message; `ML_DISPATCH_BUNDLE_SAME_TEAM=0` -> one
+            # message per decision exactly as before.
+            for group in _ml_dispatch_bundle_groups(
+                    [d for d in result.decisions if d.timing == "now"]):
+                delivered_view.extend(_ml_dispatch_deliver_group(
+                    group,
                     match_key=match_key,
                     base_url=base_url,
                     ctx_map_num=ctx_map_num,
@@ -13257,10 +13539,7 @@ def _ml_dispatch_tick(
                     ml_laning_line=ml_laning_line,
                     all_model_line=all_model_line,
                     ledger=ledger,
-                )
-                delivery.update(attempt_started_at=attempt_started_at,
-                                attempt_finished_at=time.time())
-                delivered_view.append(delivery)
+                ))
 
         record = {
             "ts": time.time(),
@@ -36642,8 +36921,23 @@ def _deliver_and_persist_signal(
     selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
     stake_multiplier_context: Optional[Dict[str, Any]] = None,
     notify_sound: bool = True,
+    bundle_ledger_members: Optional[Sequence[Dict[str, Any]]] = None,
+    bundle_outcome: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Canonical delivery owner: prepare/reserve once, send, then commit/rollback odds state.
+
+    ``bundle_ledger_members`` / ``bundle_outcome`` (same-team ml_dispatch bundle, card
+    ingame-0u31): the per-member decisions stay at HEAD's gate points and the function
+    TELLS the caller what happened through ``bundle_outcome`` (a dict the caller passes
+    and reads; keys are set only when members are present): ``floor_blocked`` (the win
+    floor blocked the primary; nothing reserved/sent), ``too_long`` (the final payload
+    incl. the position footer exceeds Telegram's 4096; nothing reserved/sent),
+    ``primary_dedup`` (the primary's own fingerprint is owned by another sender: HEAD
+    single dedup semantics, returns True with nothing sent), ``member_dedup`` (a
+    member's own fingerprint is owned by another sender or its reservation raised:
+    everything reserved in this call is released, returns False with nothing sent,
+    the caller delivers every member through the single path). No key = every other
+    outcome, where the return value alone decides (False is never retried).
 
     ``notify_sound`` — только ставки звонят (владелец 10.10.2026): default True оставляет
     звук всем ставочным вызовам; информационные/служебные тексты (пропуск матча, odds-only,
@@ -36876,6 +37170,8 @@ def _deliver_and_persist_signal(
         map_num=map_num,
     )
     if ml_min_odds_block is not None:
+        if bundle_outcome is not None and bundle_ledger_members:
+            bundle_outcome["floor_blocked"] = True
         if reservation_context is not None:
             _bookmaker_rollback_odds_delivery(
                 match_key, reservation_context=reservation_context
@@ -36894,12 +37190,29 @@ def _deliver_and_persist_signal(
     pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
     if pos_warning and pos_warning not in message_text:
         message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
+    if bundle_ledger_members and len(message_text) > 4096:
+        # Bundle: Telegram rejects >4096 chars and send_message does not split, so
+        # the FINAL payload (list + footer) decides. Nothing reserved or sent yet:
+        # the caller falls back to one message per bet (each with its own gates).
+        if bundle_outcome is not None:
+            bundle_outcome["too_long"] = True
+        if reservation_context is not None:
+            _bookmaker_rollback_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
+        print(
+            f"   ✂️ Склейка ставок {len(message_text)} симв. > 4096 — "
+            f"отправляю по одной ставке: {match_key}"
+        )
+        return False
     # DLTV draft-vote больше не дописывается отдельным футером: значение живёт
     # star-метрикой ``dltv_rating`` внутри All-блока (см. _apply_dltv_rating_star_metric).
     # Атомарно резервируем dedup-ключ ДО отправки — закрывает гонку между
     # delayed-sender потоком и главным циклом (дубль одной ставки в одну секунду).
     reserved, dedup_key = _signal_fingerprint_try_reserve(match_key, message_text)
     if not reserved:
+        if bundle_outcome is not None and bundle_ledger_members:
+            bundle_outcome["primary_dedup"] = True
         # Another path owns delivery; release our bookmaker reservation so map can retry
         # only if this ownership never progressed to confirmed send.
         if reservation_context is not None:
@@ -36919,6 +37232,57 @@ def _deliver_and_persist_signal(
         except Exception:
             logger.exception("add_url failed after cross-instance dedup for %s", match_key)
         return True
+    # Bundle: reserve every member's own single-header key together with the primary,
+    # so a concurrent sender cannot also send a member's bet while this one is in
+    # flight. A member key owned by another sender (or a reservation that raises)
+    # means that bet must not ride in the bundle (it would be a duplicate message):
+    # release everything reserved in THIS call, tell the caller (``member_dedup``)
+    # and send nothing; the caller delivers every member through the single path,
+    # where the contested bet dedups on its own key exactly like HEAD.
+    member_dedup_keys: List[str] = []
+
+    def _release_member_reservations() -> None:
+        for member_key in member_dedup_keys:
+            try:
+                _signal_fingerprint_release(member_key)
+            except Exception:
+                logger.exception("bundle member fingerprint release failed for %s", match_key)
+
+    member_conflict: Optional[str] = None
+    for member in bundle_ledger_members or ():
+        if not member.get("message_text"):
+            continue
+        try:
+            member_reserved, member_key = _signal_fingerprint_try_reserve(
+                match_key, member["message_text"]
+            )
+        except Exception:
+            logger.exception("bundle member fingerprint reserve failed for %s", match_key)
+            member_conflict = "reserve_error"
+            break
+        if not member_reserved:
+            member_conflict = str(member_key)
+            break
+        if member_key:
+            member_dedup_keys.append(member_key)
+    if member_conflict is not None and bundle_outcome is not None:
+        _release_member_reservations()
+        try:
+            _signal_fingerprint_release(dedup_key)
+        except Exception:
+            logger.exception("bundle primary fingerprint release failed for %s", match_key)
+        bundle_outcome["member_dedup"] = True
+        if reservation_context is not None:
+            _bookmaker_rollback_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
+        print(
+            "   🔁 Член склейки: заголовок ставки уже у другого отправителя или "
+            f"резерв не удался (fingerprint={member_conflict}) — склейка не "
+            f"отправлена, ставки уйдут по одной: {match_key}"
+        )
+        return False
+
     try:
         try:
             send_message(
@@ -36943,9 +37307,20 @@ def _deliver_and_persist_signal(
                     f"   ⚠️ Uncertain Telegram delivery for {match_key}; "
                     "URL не будет заблокирован вне map_id_check.txt"
                 )
+                # Bundle: every member's own single header is "maybe sent" too,
+                # so a later tick cannot resend the secondary bets (no ledger rows).
+                for member in bundle_ledger_members or ():
+                    if member.get("message_text"):
+                        try:
+                            _signal_fingerprint_mark_sent(match_key, member["message_text"])
+                        except Exception:
+                            logger.exception(
+                                "bundle member fingerprint mark failed for %s", match_key
+                            )
                 return False
             # Доказанная неудача отправки — снимаем резерв, чтобы повтор смог отправить.
             _signal_fingerprint_release(dedup_key)
+            _release_member_reservations()
             if reservation_context is not None:
                 _bookmaker_rollback_odds_delivery(
                     match_key, reservation_context=reservation_context
@@ -36954,6 +37329,7 @@ def _deliver_and_persist_signal(
         except Exception:
             # Unexpected send-boundary failure: same rollback as confirmed False path.
             _signal_fingerprint_release(dedup_key)
+            _release_member_reservations()
             if reservation_context is not None:
                 _bookmaker_rollback_odds_delivery(
                     match_key, reservation_context=reservation_context
@@ -36978,6 +37354,26 @@ def _deliver_and_persist_signal(
         selected_side=selected_side,
         stake_multiplier_context=stake_multiplier_context,
     )
+    # Same-team ml_dispatch bundle: one ledger row per bet (own market/rule/min_odds).
+    try:
+        for member in bundle_ledger_members or ():
+            if member.get("message_text"):
+                try:  # the member's own single header is now "sent" too
+                    _signal_fingerprint_mark_sent(match_key, member["message_text"])
+                except Exception:
+                    logger.exception("bundle member fingerprint mark failed for %s", match_key)
+            _record_bet_dispatch_ledger(
+                match_key,
+                message_text=member.get("message_text") or message_text,
+                add_url_reason=add_url_reason,
+                add_url_details=member.get("add_url_details"),
+                map_num=map_num,
+                current_map_observation=current_map_observation,
+                selected_side=selected_side,
+                stake_multiplier_context=member.get("stake_multiplier_context"),
+            )
+    except Exception:
+        logger.exception("bundle member ledger rows failed for %s", match_key)
     decelerate_winline_current_map_polling(match_key)
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
