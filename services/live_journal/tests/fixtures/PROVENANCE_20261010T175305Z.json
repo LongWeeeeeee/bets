@@ -1,0 +1,42 @@
+{
+ "captured_utc": "20261010T175305Z",
+ "host": "Mac (one-off probe, session 34bf0f53)",
+ "note": "key redacted in urls",
+ "files": {
+  "getTopLiveGame_partner0_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/?key=<STEAM_API_KEY>&partner=0",
+   "bytes": 13011
+  },
+  "getTopLiveGame_partner1_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/?key=<STEAM_API_KEY>&partner=1",
+   "bytes": 13617
+  },
+  "getTopLiveGame_partner2_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/?key=<STEAM_API_KEY>&partner=2",
+   "bytes": 13011
+  },
+  "getTopLiveGame_partner3_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/?key=<STEAM_API_KEY>&partner=3",
+   "bytes": 13011
+  },
+  "getPlayerSummaries_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=<STEAM_API_KEY>&steamids=76561198048536965,76561199633852211,76561198263881305,76561199164138409,76561198350281192,76561198314838954,76561198142040677,76561198277092513,76561198243811282,76561199634751902",
+   "bytes": 6538
+  },
+  "getRecentlyPlayedGames_visible_88271237_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key=<STEAM_API_KEY>&steamid=76561198048536965",
+   "bytes": 178
+  },
+  "getRecentlyPlayedGames_private_1673586483_20261010T175305Z.json.gz": {
+   "http_status": 200,
+   "url": "https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v1/?key=<STEAM_API_KEY>&steamid=76561199633852211",
+   "bytes": 15
+  }
+ }
+}

@@ -28,6 +28,24 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 ---
 
+## `services/live_journal/` — сборщики эфемерных живых данных на serv1 (10.10.2026, ingame-m5zf)
+
+Отдельные процессы; живой конвейер ставок не читают и не меняют. Пишут только дописыванием в
+`$LIVE_JOURNAL_DIR` (по умолчанию `runtime/live_journal/`), файл на сутки UTC, ничего не удаляют.
+
+| Модуль / юнит | Что пишет | Расписание |
+|---|---|---|
+| `ticks_tap.py` · `services/systemd/ingame-live-ticks.service` (Type=simple, Restart=always) | `ticks_YYYYMMDD.jsonl`, схема `live_ticks.v1`: `event` tick/gone, `wall` (время чтения), `src_mtime`, `src_ts` (поле `timestamp` дампа пробы, на каждой строке), `match_id`, `game_time`, `radiant_lead`, `radiant_score`/`dire_score` (килы), `spectators`, лига/серия/команды; `picks` (= `_cyberscore_heroes_and_pos`) и `extra` (`fast_picks`, `league_name`, `player_hint`, `status`; без `timestamp`) только в первой строке карты и при изменении. Источник — `runtime/sourcetv_matches.json` пробы (резолвер `base.sourcetv_bridge.resolve_sourcetv_matches_path`, `--src`). Строка при первом появлении, при `game_time` +≥`--min-gap-s` (30), смене счёта или пиков; `gone` после `--gone-after-s` (120 с) отсутствия. Состояние в памяти: после рестарта первая строка карты повторяется | опрос `--poll-s` 5 с по mtime |
+| `steam_sampler.py toplive` · `ingame-live-toplive.{service,timer}` | `toplive_YYYYMMDD.jsonl`, `live_toplive.v1`: сырые игры `IDOTA2Match_570/GetTopLiveGame` (partner 0–3, дедуп по lobby_id/match_id, без логотипов), `partners` | `*:0/10` |
+| `steam_sampler.py playtime` · `ingame-live-playtime.{service,timer}` | `playtime_YYYYMMDD.jsonl`, `live_playtime.v1`: видимость профиля, `dota_playtime_2weeks_min`/`_forever_min`, `recent_private`; без имён/аватаров. Аккаунты — `picks` из `ticks_*.jsonl` + `runtime/pos_resolution.jsonl` за 60 дней (`--max-accounts` 3000, `--max-calls` 3500, `--sleep-s` 0.5) | `01:40 UTC` |
+
+Ключ — `base.keys.STEAM_API_KEY`. На HTTP 429/403/5xx или 3 сетевых ошибках подряд прогон Steam
+останавливается с exit 0 до следующего слота. Юниты: Nice 19, CPUWeight 10, IO idle, MemoryMax 256M,
+логи `runtime/artifacts/misc/live_journal_{ticks,steam}.log`. Склейка с ценами: `wall` против
+`wall` в `runtime/winline_odds_history.jsonl`. Идеи на этих данных: ingame-kkm0, ingame-7gt5.
+
+---
+
 ## Offline kills-v3 full-coverage research (E-328)
 
 - `base/tools/kills_v3_research.py`: `--history-start` и `--query-start` принимают

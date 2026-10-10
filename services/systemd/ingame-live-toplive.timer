@@ -1,0 +1,11 @@
+[Unit]
+Description=Ingame Steam top live snapshots every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=false
+RandomizedDelaySec=60
+Unit=ingame-live-toplive.service
+
+[Install]
+WantedBy=timers.target

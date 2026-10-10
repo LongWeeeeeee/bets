@@ -1,0 +1,24 @@
+[Unit]
+Description=Append-only SourceTV live ticks journal
+
+[Service]
+Type=simple
+WorkingDirectory=/root/main
+ExecStart=/root/main/venv/bin/python3 -m services.live_journal.ticks_tap
+Restart=always
+RestartSec=30
+Environment=HOME=/root
+Environment=PYTHONDONTWRITEBYTECODE=1
+# serv1 is prod-first: lowest priority and bounded memory.
+Nice=19
+CPUWeight=10
+IOSchedulingClass=idle
+MemoryHigh=128M
+MemoryMax=256M
+MemorySwapMax=0
+OOMScoreAdjust=1000
+StandardOutput=append:/root/main/runtime/artifacts/misc/live_journal_ticks.log
+StandardError=append:/root/main/runtime/artifacts/misc/live_journal_ticks.log
+
+[Install]
+WantedBy=multi-user.target

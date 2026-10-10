@@ -1,0 +1,11 @@
+[Unit]
+Description=Ingame daily Steam pro account playtime snapshots
+
+[Timer]
+OnCalendar=*-*-* 01:40:00 UTC
+Persistent=false
+RandomizedDelaySec=60
+Unit=ingame-live-playtime.service
+
+[Install]
+WantedBy=timers.target
