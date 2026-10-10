@@ -23,6 +23,19 @@ if str(BASE_DIR) not in sys.path:
 
 import sourcetv_probe as probe  # noqa: E402
 import cyberscore_try as runtime  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _restore_winline_overview_state(monkeypatch):
+    """runtime._winline_overview_inject_for_tests mutates a module global in place.
+
+    Without a restore the injected listing outlives the test and later files see a
+    foreign Winline listing (suite pollution, 10.10.2026). Swap in a copy so
+    monkeypatch puts the original dict back.
+    """
+    monkeypatch.setattr(runtime, "_winline_overview_state", dict(runtime._winline_overview_state))
+
 
 DOTA_LIVE_CARD = (
     "DOTA 2 | EPL Season MOUZ KLIM SANI4 2карта 16' +68 1 0 16 5 2К "

@@ -781,3 +781,22 @@ def test_fioo_successful_refresh_in_the_loop_leaves_the_hold(gate_env, monkeypat
     assert swept == [1]
     assert gate_env.deliver("PuckChamp", "Old blood") is False
     assert _rows(gate_env.journal)[-1]["class"] == "ABSENT"
+
+
+# Suite pollution, 10.10.2026: a listing left in the module global by an earlier test file met
+# a fake clock, the listing age came out at -91.7M s, passed the `> max age` check and was
+# judged healthy -> ABSENT -> the bet was held.  A listing from the future is uncertain.
+def test_listing_from_the_future_is_sent_as_clock_skew(gate_env):
+    gate_env.set_listing(fetched_ago=-3600.0)
+    assert gate_env.deliver("PuckChamp", "Old blood") is True
+    assert len(gate_env.sent) == 1 and not gate_env.blocked
+    last = _rows(gate_env.journal)[-1]
+    assert last["class"] == "UNKNOWN" and last["reason"] == "listing_clock_skew"
+    assert last["listing_age_s"] < -3000
+
+
+def test_small_negative_listing_age_is_still_judged(gate_env):
+    """Seconds of skew between the fetch thread and the gate must not disable the hold."""
+    gate_env.set_listing(fetched_ago=-5.0)
+    assert gate_env.deliver("PuckChamp", "Old blood") is False
+    assert _rows(gate_env.journal)[-1]["class"] == "ABSENT"

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,105 @@ if str(BASE_DIR) not in sys.path:
 
 import bookmaker_selenium_odds as odds_parser  # noqa: E402
 import cyberscore_try as runtime  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _restore_winline_overview_state(monkeypatch, tmp_path):
+    """runtime._winline_overview_inject_for_tests mutates a module global in place.
+
+    Without a restore the injected listing outlives the test and later files see a
+    foreign Winline listing (suite pollution, 10.10.2026). Swap in a copy so
+    monkeypatch puts the original dict back.
+    """
+    monkeypatch.setattr(runtime, "_winline_overview_state", dict(runtime._winline_overview_state))
+    # `_winline_overview_refresh_once` persists the snapshot; never into the real runtime/.
+    monkeypatch.setenv(runtime.WINLINE_OVERVIEW_SNAPSHOT_ENV, str(tmp_path / "overview_snapshot.json"))
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_browser_in_first_admission(monkeypatch):
+    """No real Camoufox work from these tests, even without the conftest guard.
+
+    Two tests drive the real `get_heads()`, which starts the Winline current-map
+    poller scheduler (10.10.2026, card ingame-z33d). In a HEAD-based copy without
+    the conftest guard that thread could start a real browser through the proxy
+    pool. Per-test monkeypatches of these names still win (applied later). The
+    scheduler is joined here, while the guard is still installed.
+    """
+    attempts = []
+
+    def forbidden(*_args, **_kwargs):
+        attempts.append("real camoufox launch in first_admission test")
+        raise AssertionError(attempts[-1])
+
+    monkeypatch.setattr(runtime, "_run_shared_camoufox_job", forbidden)
+    monkeypatch.setattr(runtime._SharedCamoufoxSession, "submit", forbidden)  # noqa: SLF001
+    if runtime.camoufox is not None:
+        monkeypatch.setattr(runtime.camoufox.Camoufox, "__enter__", forbidden)
+        monkeypatch.setattr(runtime.camoufox.AsyncCamoufox, "__aenter__", forbidden)
+        from camoufox.pkgman import CamoufoxFetcher
+        monkeypatch.setattr(CamoufoxFetcher, "__init__", forbidden)
+    try:
+        yield attempts
+    finally:
+        runtime.stop_winline_current_map_polling_scheduler(join_timeout_s=2)
+        assert not attempts, attempts
+
+
+@pytest.fixture(autouse=True)
+def _restore_winline_runtime_state():
+    """Undo the module state `runtime.get_heads()` / `_winline_first_*` leave behind.
+
+    test_non_allowlisted_league_filtered_without_crash and
+    test_weak_pair_flows_through_league_filter drive the real `get_heads()` call
+    site. It registers the SourceTV series in the current-map registry, creates a
+    real `WinlineCurrentMapOddsPoller` in `_winline_current_map_pollers`, starts the
+    scheduler thread and writes the service generation (`_winline_current_map_service_gen`
+    pid 0 -> this pid). Later `test_winline_current_map_polling_wiring.py` tests then see
+    a foreign live poller (its camoufox attempt trips the "real camoufox launch in unit
+    test" guard) and a non-empty service generation (`service_generation_change`
+    replaces the expected terminal reasons `source_stale` / `source_absent`).
+    Pre-existing order dependence (HEAD 99cd3821), 10.10.2026.
+
+    Every non-callable `_winline*` / `_manual_sourcetv*` / `_dltv_decided*` module global is snapshotted
+    before the test. Containers are restored IN PLACE (other modules hold references to
+    them), everything else by rebinding; the scheduler thread is stopped first if the
+    test started one.
+    """
+    skip = {"_winline_overview_state"}  # swapped for a copy by the fixture above
+    containers = (dict, list, set, deque)
+    saved = {}
+    for name, value in list(vars(runtime).items()):
+        if name in skip or not name.startswith(("_winline", "_manual_sourcetv", "_dltv_decided")):
+            continue
+        if callable(value) and not isinstance(value, containers):
+            continue
+        saved[name] = (value, value.copy() if isinstance(value, containers) else None)
+    thread_before = runtime._winline_current_map_scheduler_thread  # noqa: SLF001
+    try:
+        yield
+    finally:
+        thread_now = runtime._winline_current_map_scheduler_thread  # noqa: SLF001
+        if thread_now is not None and thread_now is not thread_before:
+            runtime.stop_winline_current_map_polling_scheduler(join_timeout_s=2)
+        for name, (value, snapshot) in saved.items():
+            if snapshot is None:
+                setattr(runtime, name, value)
+                continue
+            current = getattr(runtime, name, None)
+            if current is not value:
+                setattr(runtime, name, value)
+            if isinstance(value, dict):
+                value.clear()
+                value.update(snapshot)
+            elif isinstance(value, list):
+                value[:] = snapshot
+            elif isinstance(value, set):
+                value.clear()
+                value.update(snapshot)
+            else:  # deque
+                value.clear()
+                value.extend(snapshot)
 
 
 @pytest.fixture(autouse=True)

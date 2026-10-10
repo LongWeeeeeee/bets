@@ -6837,6 +6837,20 @@ PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS = _safe_float_env(
 NETWORTH_STATUS_PREMATCH_MODEL_BET_SEND = "prematch_model_bet_send"
 _prematch_model_bet_sent_urls: set = set()
 _prematch_model_bet_sent_lock = threading.Lock()
+
+
+def _prematch_model_bet_sent_journal_path() -> Path:
+    """Журнал отправленных ставок предматчевой модели (ingame-r9lb, 10.10.2026).
+
+    Раньше путь был зашит как `/root/main/runtime/...`: любой прогон тестов на
+    serv1 из копии кода (`/root/tests-*`) дописывал фикстурные ставки в БОЕВОЙ
+    журнал (45 из 330 строк на 10.10 — пачки по 5 строк в одну секунду).
+    На serv1 PROJECT_ROOT = /root/main, так что боевой путь не меняется.
+    """
+    override = str(os.getenv("PREMATCH_MODEL_BET_SENT_PATH") or "").strip()
+    if override:
+        return Path(override)
+    return PROJECT_ROOT / "runtime" / "prematch_model_bet_sent.jsonl"
 # Kills bets ("СТАВКА НА Ранние килы" / standalone lane_adv kills) are only
 # dispatched when at least one team in the match is in the Tier-1 list
 # (id_to_names.tier_one_teams). Default ON; set KILLS_REQUIRE_TIER1_TEAM=0 to
@@ -34813,8 +34827,9 @@ def _try_dispatch_prematch_model_bet(
                     "model_elo": win_model_veto.last_model_elo(bet.get("index")),
                     "fill": win_model_veto.last_fill(bet.get("index")),
                 }
-                with open("/root/main/runtime/prematch_model_bet_sent.jsonl", "a",
-                          encoding="utf-8") as _f:
+                _sent_path = _prematch_model_bet_sent_journal_path()
+                _sent_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_sent_path, "a", encoding="utf-8") as _f:
                     _f.write(_json.dumps(_rec, ensure_ascii=False) + chr(10))
             except Exception as _exc:                # noqa: BLE001
                 print(f"[win_model] журнал ставки не записан: {_exc}", flush=True)
@@ -36352,6 +36367,7 @@ _WINLINE_PRESENCE_HTML_STORE_CAP = 1_500_000
 _WINLINE_PRESENCE_TEXT_STORE_CAP = 3_000_000
 _WINLINE_PRESENCE_OK_STATUSES = frozenset({"ok", "test", ""})
 _WINLINE_PRESENCE_EXC_LOG_INTERVAL_S = 600.0
+_WINLINE_PRESENCE_CLOCK_SKEW_S = 60.0  # возраст листинга < -60 с = часы разошлись, листингу не верим
 
 _winline_presence_cards_lock = threading.Lock()
 _winline_presence_cards_cache: Dict[str, Any] = {"key": None, "cards": None, "error": ""}
@@ -36621,6 +36637,12 @@ def _winline_presence_classify(
         # Последний съём снимок не сохранил: сохранённый старше линии, которая могла
         # появиться после него. Судить по нему нельзя (fail-open), ждём удачного съёма.
         info["reason"] = "listing_refresh_failed"
+        return info
+    if age < -_WINLINE_PRESENCE_CLOCK_SKEW_S:
+        # Снимок «из будущего» (сдвиг часов, подменённые часы, битый fetched_at):
+        # возраст неизвестен, а отрицательный возраст не проходит проверку на протухание
+        # и сходил бы за свежий. Любой неуверенный листинг пропускает ставку (fail-open).
+        info["reason"] = "listing_clock_skew"
         return info
     if age > _winline_presence_max_age_s():
         info["reason"] = "listing_stale"

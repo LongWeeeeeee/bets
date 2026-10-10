@@ -72,13 +72,17 @@ def _load_dup_pair_rows() -> list[dict]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_prematch_model_bet_dedup_state(monkeypatch):
+def _reset_prematch_model_bet_dedup_state(monkeypatch, tmp_path):
     """Изоляция от других тестов/прогонов: in-memory дедуп-сет модели и
     карточный отпечаток общего реестра — модульные глобалы, живущие дольше
     одного теста. Очистка идёт ДО тела теста — тесты, которым нужен
     прогретый `_SIGNAL_DEDUP_FINGERPRINTS` (как в проде), заполняют его сами
     внутри теста, уже после этой очистки."""
     monkeypatch.setenv("PREMATCH_ML_ENABLED", "1")
+    # Журнал отправленных ставок — во временный каталог: прогон на serv1 из копии
+    # кода дописывал фикстурные ставки в боевой журнал (ingame-r9lb).
+    monkeypatch.setenv("PREMATCH_MODEL_BET_SENT_PATH",
+                       str(tmp_path / "prematch_model_bet_sent.jsonl"))
     runtime._prematch_model_bet_sent_urls.clear()
     runtime._SIGNAL_DEDUP_FINGERPRINTS.clear()
     yield
@@ -273,3 +277,31 @@ def test_same_map_dedup_with_series_wins_shaped_live_league(
     assert result_first is True
     assert result_second is False
     assert sent.call_count == 1
+
+
+# --- Journal path (card ingame-r9lb, 10.10.2026) ------------------------------------------------
+# The writer used the literal /root/main/runtime/prematch_model_bet_sent.jsonl, so a serv1 test run
+# from ANY copy dir appended fixture bets to the PROD journal (45 of 330 rows on 10.10, bursts of 5
+# rows in one second).  On the Mac the literal path is absent and the write failed silently.
+
+def test_sent_bet_journal_row_lands_where_the_journal_path_points(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    row0, _ = _load_dup_pair_rows()
+    journal = tmp_path / "redirected" / "prematch_model_bet_sent.jsonl"
+    monkeypatch.setenv("PREMATCH_MODEL_BET_SENT_PATH", str(journal))
+    monkeypatch.setattr(runtime, "PREMATCH_MODEL_BET_ENABLED", True)
+    monkeypatch.setattr(win_model_veto, "model_bet", lambda *_blocks: _make_bet(row0))
+    monkeypatch.setattr(runtime, "_deliver_and_persist_signal", MagicMock(return_value=True))
+
+    assert _dispatch_row(row0, monkeypatch=monkeypatch) is True
+    rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["match_key"] == row0["match_key"]
+    assert rows[0]["side"] == row0["side"] and rows[0]["map_num"] == row0["map_num"]
+
+
+def test_sent_bet_journal_default_is_under_project_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PREMATCH_MODEL_BET_SENT_PATH", raising=False)
+    path = runtime._prematch_model_bet_sent_journal_path()
+    assert path == runtime.PROJECT_ROOT / "runtime" / "prematch_model_bet_sent.jsonl"
