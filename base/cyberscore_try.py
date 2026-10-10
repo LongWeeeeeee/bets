@@ -5730,6 +5730,8 @@ LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS = _safe_int_env(
     "LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS",
     120,
 )
+LIVE_ELO_ORPHAN_OD_BACKOFF = os.getenv("LIVE_ELO_ORPHAN_OD_BACKOFF", "1").strip().lower() not in {"0", "false", "off", "no"}
+LIVE_ELO_ORPHAN_OD_DAY_RESERVE = max(0, _safe_int_env("LIVE_ELO_ORPHAN_OD_DAY_RESERVE", 300))
 
 
 def _safe_float_env(name: str, default: float) -> float:
@@ -30227,6 +30229,115 @@ _OPENDOTA_ORPHAN_LOG_EVERY_SECONDS = 600.0
 # this size keeps the dict bounded in a process that runs for weeks.
 _OPENDOTA_ORPHAN_LOG_MAX_KEYS = 512
 
+# Retry state is process-local; the lock also reserves an in-flight lookup so
+# concurrent sweeps cannot request the same orphan before its failure is stored.
+_OPENDOTA_ORPHAN_OD_RETRY: Dict[int, Tuple[int, float, bool]] = {}
+_OPENDOTA_ORPHAN_OD_IN_FLIGHT: set[int] = set()
+_OPENDOTA_ORPHAN_OD_LOCK = threading.Lock()
+_OPENDOTA_ORPHAN_OD_DELAYS = (600.0, 1800.0, 7200.0, 21600.0)
+_OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL = 0.0
+_OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL = 0.0
+
+
+def _reset_opendota_orphan_backoff_state() -> None:
+    """Clear process-local backoff state when no orphan lookups are running."""
+    global _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL, _OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL
+    with _OPENDOTA_ORPHAN_OD_LOCK:
+        _OPENDOTA_ORPHAN_OD_RETRY.clear()
+        _OPENDOTA_ORPHAN_OD_IN_FLIGHT.clear()
+        _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL = 0.0
+        _OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL = 0.0
+
+
+def _opendota_orphan_now() -> float:
+    return time.time()
+
+
+def _opendota_orphan_begin(match_id: int) -> bool:
+    global _OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL
+    now = _opendota_orphan_now()
+    with _OPENDOTA_ORPHAN_OD_LOCK:
+        if now < _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL:
+            if _OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL != _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL:
+                _OPENDOTA_ORPHAN_OD_DAY_LOGGED_UNTIL = _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL
+                logger.warning(
+                    "orphan live ELO: OpenDota daily quota paused until %s UTC",
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(_OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL)),
+                )
+            return False
+        if match_id in _OPENDOTA_ORPHAN_OD_IN_FLIGHT:
+            return False
+        failures, next_at, logged = _OPENDOTA_ORPHAN_OD_RETRY.get(match_id, (0, 0.0, False))
+        if now < next_at:
+            if not logged:
+                _OPENDOTA_ORPHAN_OD_RETRY[match_id] = (failures, next_at, True)
+                logger.warning(
+                    "orphan live ELO: OpenDota lookup for match %s paused until %s UTC",
+                    match_id, time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(next_at)),
+                )
+            return False
+        _OPENDOTA_ORPHAN_OD_IN_FLIGHT.add(match_id)
+        return True
+
+
+def _opendota_orphan_response_pause(resp: Any) -> bool:
+    """Record a shared UTC daily pause; return whether this is a minute-only 429."""
+    global _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL
+    remaining_day = None
+    for name, value in (getattr(resp, "headers", None) or {}).items():
+        if str(name).lower() == "x-rate-limit-remaining-day":
+            try:
+                remaining_day = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+    daily_limit = False
+    if resp.status_code == 429:
+        daily_limit = remaining_day is not None and remaining_day <= 0
+        if not daily_limit:
+            try:
+                error = str(resp.json().get("error", "")).lower()
+                daily_limit = "daily" in error and "limit" in error
+            except Exception:
+                pass
+    reserve_reached = (
+        resp.status_code == 200 and remaining_day is not None
+        and remaining_day < LIVE_ELO_ORPHAN_OD_DAY_RESERVE
+    )
+    if daily_limit or reserve_reached:
+        # OpenDota provides no reset-day header. Epoch-day boundaries are UTC,
+        # independent of the runtime's local timezone (MSK in production).
+        until = (int(_opendota_orphan_now()) // 86400 + 1) * 86400 + 60
+        with _OPENDOTA_ORPHAN_OD_LOCK:
+            _OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL = max(_OPENDOTA_ORPHAN_OD_DAY_PAUSE_UNTIL, until)
+    return (
+        resp.status_code == 429 and not daily_limit
+        and remaining_day is not None and remaining_day > 0
+    )
+
+
+def _opendota_orphan_end(match_id: int, success: bool, minute_limited: bool) -> None:
+    now = _opendota_orphan_now()
+    with _OPENDOTA_ORPHAN_OD_LOCK:
+        _OPENDOTA_ORPHAN_OD_IN_FLIGHT.discard(match_id)
+        if success:
+            _OPENDOTA_ORPHAN_OD_RETRY.pop(match_id, None)
+            return
+        failures = _OPENDOTA_ORPHAN_OD_RETRY.get(match_id, (0, 0.0, False))[0]
+        if minute_limited:
+            delay = 120.0
+        else:
+            failures = min(failures + 1, len(_OPENDOTA_ORPHAN_OD_DELAYS))
+            delay = _OPENDOTA_ORPHAN_OD_DELAYS[failures - 1]
+        if (
+            match_id not in _OPENDOTA_ORPHAN_OD_RETRY
+            and len(_OPENDOTA_ORPHAN_OD_RETRY) >= _OPENDOTA_ORPHAN_LOG_MAX_KEYS
+        ):
+            # Evict one earliest retry rather than clearing all active backoffs.
+            oldest = min(_OPENDOTA_ORPHAN_OD_RETRY, key=lambda key: _OPENDOTA_ORPHAN_OD_RETRY[key][1])
+            del _OPENDOTA_ORPHAN_OD_RETRY[oldest]
+        _OPENDOTA_ORPHAN_OD_RETRY[match_id] = (failures, now + delay, False)
+
 
 def _log_opendota_orphan_lookup_failure(match_id: Any, reason: str) -> None:
     """Причина отказа OpenDota на подборе сирот — в лог, раз в 10 минут на пару.
@@ -30240,7 +30351,7 @@ def _log_opendota_orphan_lookup_failure(match_id: Any, reason: str) -> None:
         key = (int(match_id), str(reason))
     except (TypeError, ValueError):
         key = (0, str(reason))
-    now = time.time()
+    now = _opendota_orphan_now()
     with _OPENDOTA_ORPHAN_LOG_LOCK:
         last = _OPENDOTA_ORPHAN_LOG_LAST.get(key)
         if last is not None and now - last < _OPENDOTA_ORPHAN_LOG_EVERY_SECONDS:
@@ -30267,8 +30378,9 @@ def _fetch_finished_sourcetv_series_scores(
     sourcetv-серии регистрируются с first_team_is_radiant=True, поэтому слот
     победителя = first при radiant_win. HTTP к dltv.org для псевдо-URL даёт
     только 404-ретраи — поэтому одна быстрая попытка в OpenDota без прокси.
-    Возвращает None, пока матч ещё не появился в OpenDota (повтор в следующем
-    цикле sweep'а); причина отказа (HTTP-статус) пишется в лог.
+    Возвращает None, пока матч ещё не появился в OpenDota или действует пауза
+    повторов/дневной квоты; причина отказа (HTTP-статус) пишется в лог.
+    LIVE_ELO_ORPHAN_OD_BACKOFF=0 возвращает попытку в каждом sweep'е.
 
     `result_out`, если передан, получает `radiant_win` и `duration_seconds`
     (поле `duration` того же ответа; None, если его нет) — длительность нужна
@@ -30276,41 +30388,52 @@ def _fetch_finished_sourcetv_series_scores(
     Ответ с чужим `match_id` отвергается целиком; `result_out` заполняется
     только когда `match_id` ответа равен запрошенному.
     """
+    backoff = LIVE_ELO_ORPHAN_OD_BACKOFF
+    if backoff and not _opendota_orphan_begin(match_id):
+        return None
+    success = minute_limited = False
     try:
-        resp = requests.get(
-            f"https://api.opendota.com/api/matches/{int(match_id)}",
-            timeout=10,
-        )
-    except Exception as exc:
-        _log_opendota_orphan_lookup_failure(match_id, f"request error {type(exc).__name__}")
-        return None
-    if resp.status_code != 200:
-        _log_opendota_orphan_lookup_failure(match_id, f"HTTP {resp.status_code}")
-        return None
-    try:
-        payload = resp.json()
-        radiant_win = payload.get("radiant_win")
-    except Exception:
-        _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 with unreadable JSON")
-        return None
-    if radiant_win is None:
-        _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 without radiant_win (not parsed yet)")
-        return None
-    payload_match_id = _coerce_int(payload.get("match_id"))
-    if payload_match_id > 0 and payload_match_id != int(match_id):
-        _log_opendota_orphan_lookup_failure(
-            match_id, f"HTTP 200 for another match_id {payload_match_id}")
-        return None
-    if result_out is not None and payload_match_id == int(match_id):
-        od_duration = _coerce_int(payload.get("duration"))
-        result_out["radiant_win"] = bool(radiant_win)
-        result_out["duration_seconds"] = od_duration if od_duration > 0 else None
-        result_out["match_id"] = int(match_id)
-    prev_first = max(_coerce_int((previous_scores or {}).get("first")), 0)
-    prev_second = max(_coerce_int((previous_scores or {}).get("second")), 0)
-    if radiant_win:
-        return prev_first + 1, prev_second
-    return prev_first, prev_second + 1
+        try:
+            resp = requests.get(
+                f"https://api.opendota.com/api/matches/{int(match_id)}",
+                timeout=10,
+            )
+        except Exception as exc:
+            _log_opendota_orphan_lookup_failure(match_id, f"request error {type(exc).__name__}")
+            return None
+        if backoff:
+            minute_limited = _opendota_orphan_response_pause(resp)
+        if resp.status_code != 200:
+            _log_opendota_orphan_lookup_failure(match_id, f"HTTP {resp.status_code}")
+            return None
+        try:
+            payload = resp.json()
+            radiant_win = payload.get("radiant_win")
+        except Exception:
+            _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 with unreadable JSON")
+            return None
+        if radiant_win is None:
+            _log_opendota_orphan_lookup_failure(match_id, "HTTP 200 without radiant_win (not parsed yet)")
+            return None
+        payload_match_id = _coerce_int(payload.get("match_id"))
+        if payload_match_id > 0 and payload_match_id != int(match_id):
+            _log_opendota_orphan_lookup_failure(
+                match_id, f"HTTP 200 for another match_id {payload_match_id}")
+            return None
+        if result_out is not None and payload_match_id == int(match_id):
+            od_duration = _coerce_int(payload.get("duration"))
+            result_out["radiant_win"] = bool(radiant_win)
+            result_out["duration_seconds"] = od_duration if od_duration > 0 else None
+            result_out["match_id"] = int(match_id)
+        prev_first = max(_coerce_int((previous_scores or {}).get("first")), 0)
+        prev_second = max(_coerce_int((previous_scores or {}).get("second")), 0)
+        success = True
+        if radiant_win:
+            return prev_first + 1, prev_second
+        return prev_first, prev_second + 1
+    finally:
+        if backoff:
+            _opendota_orphan_end(match_id, success, minute_limited)
 
 
 def _sweep_orphaned_live_elo(seen_series_keys: set, reason: str = "") -> int:
@@ -30351,7 +30474,7 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
         return []
 
     seen = {str(item).strip() for item in seen_series_keys if str(item).strip()}
-    now_ts = int(time.time())
+    now_ts = int(_opendota_orphan_now())
     finalized: List[Dict[str, Any]] = []
 
     for raw_series_key, raw_state in list(pending_series.items()):

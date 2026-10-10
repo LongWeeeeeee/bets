@@ -19,11 +19,22 @@ import ast
 import sys
 from pathlib import Path
 
+import pytest
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 SOURCE = (BASE_DIR / "cyberscore_try.py").read_text(encoding="utf-8")
+
+import cyberscore_try as cs  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolate_orphan_od_state():
+    cs._reset_opendota_orphan_backoff_state()
+    yield
+    cs._reset_opendota_orphan_backoff_state()
 
 
 def _sweep_function() -> ast.FunctionDef:

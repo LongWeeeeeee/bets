@@ -37,6 +37,13 @@ FIXTURE = BASE_DIR / "tests/fixtures/opendota_match_8830340000_20260919.json.gz"
 MATCH_ID = 8830340000
 
 
+@pytest.fixture(autouse=True)
+def isolate_orphan_od_state():
+    cs._reset_opendota_orphan_backoff_state()
+    yield
+    cs._reset_opendota_orphan_backoff_state()
+
+
 def _opendota_payload() -> dict:
     with gzip.open(FIXTURE, "rt", encoding="utf-8") as fh:
         return json.load(fh)

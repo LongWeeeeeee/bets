@@ -1,0 +1,13 @@
+{
+  "_capture": {
+    "date_utc": "2026-10-10T16:10Z",
+    "command": "curl -sS -m 60 -D /dev/stderr -o od_one.json https://api.opendota.com/api/matches/9037351109  (from the Mac; egress IP = serv1 96.126.129.158)",
+    "note": "Real daily-quota 429 from OpenDota. OpenDota sends no x-rate-limit-reset-day header; the day resets at 00:00 UTC."
+  },
+  "status_code": 429,
+  "headers": {
+    "x-rate-limit-remaining-minute": "59",
+    "x-rate-limit-remaining-day": "-3015"
+  },
+  "body": {"error": "daily api limit exceeded"}
+}
