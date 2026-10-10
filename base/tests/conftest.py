@@ -200,3 +200,29 @@ def _reset_admin_tail_page(monkeypatch):
     for name, module in list(sys.modules.items()):
         if name.rsplit(".", 1)[-1] == "cyberscore_try":
             monkeypatch.setattr(module, "_admin_tail_page", 0, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_real_camoufox_browser(monkeypatch):
+    """No unit test may start a real Camoufox browser (card ingame-4vud, 10.10.2026).
+
+    check_head -> dota2protracker -> shared Camoufox worker launched a real
+    browser from test_problem_candidates_are_shown_without_odds, through the
+    production proxy pool; on a fresh venv CamoufoxFetcher first downloaded a
+    1.29 GB browser. Only the real library classes are blocked, so tests that
+    inject fakes are unaffected; a launch attempt raises like a failed start.
+    """
+    try:
+        import camoufox
+        from camoufox.pkgman import CamoufoxFetcher
+    except Exception:  # camoufox not installed: nothing to guard
+        return
+
+    def _forbidden(*_args, **_kwargs):
+        raise RuntimeError("real Camoufox browser launch is forbidden in unit tests")
+
+    for cls_name, method in (("Camoufox", "__enter__"), ("AsyncCamoufox", "__aenter__")):
+        cls = getattr(camoufox, cls_name, None)
+        if cls is not None:
+            monkeypatch.setattr(cls, method, _forbidden)
+    monkeypatch.setattr(CamoufoxFetcher, "__init__", _forbidden)

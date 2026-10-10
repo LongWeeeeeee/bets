@@ -5539,13 +5539,15 @@ def test_check_head_skips_denied_league_title_before_draft(
 
 
 def test_find_skipped_player_account_ids_scans_both_sides() -> None:
+    # The Ilbirs ids (21270361, 860145568) left the denylist on 20.04.2026
+    # (48e6d40f); use the two current egxrdemxn accounts (card ingame-4vud).
     hits = runtime._find_skipped_player_account_ids(
-        [21270361, 111],
-        [860145568, 222],
+        [390015464, 111],
+        [1250582363, 222],
     )
 
-    assert hits["radiant"] == [21270361]
-    assert hits["dire"] == [860145568]
+    assert hits["radiant"] == [390015464]
+    assert hits["dire"] == [1250582363]
 
 
 def test_target_side_skipped_player_hits_filters_to_stake_side() -> None:
