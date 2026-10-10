@@ -53,7 +53,28 @@ log.setLevel(logging.INFO)
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 SOURCETV_MATCHES_PATH = str(resolve_sourcetv_matches_path(_PROJECT_ROOT))
 
-KEY       = "4C5768B425A5FBDCE3C04C67815BAAD4"
+def _load_steam_api_key():
+    """Steam Web API key from env, else from the untracked base/keys.py.
+
+    The repo is public: no key literal may live in tracked code
+    (base/tests/test_no_hardcoded_steam_keys.py enforces this).
+    """
+    key = (os.environ.get("SOURCETV_STEAM_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        try:
+            from keys import STEAM_API_KEY as _k  # direct-script start (systemd)
+        except ImportError:
+            from base.keys import STEAM_API_KEY as _k  # package import
+    except ImportError:
+        _k = ""
+    # Empty is allowed at import time (tests, tooling); the __main__ entry
+    # point refuses to start the probe without a key.
+    return str(_k or "").strip()
+
+
+KEY       = _load_steam_api_key()
 CREDS_DIR = os.path.expanduser("~/.config/dota_probe")
 
 with open(os.path.join(os.path.dirname(__file__), "hero_features_processed.json")) as _f:
@@ -2087,5 +2108,10 @@ if __name__ == "__main__":
     a = p.parse_args()
     if not a.login_only and not a.league:
         p.error("--league обязателен (если только не --login-only)")
+    if not a.login_only and not KEY:
+        raise SystemExit(
+            "sourcetv_probe: no Steam Web API key: set SOURCETV_STEAM_API_KEY "
+            "or define STEAM_API_KEY in base/keys.py"
+        )
     run(a.username, a.password, league_ids=a.league or [0],
         match_id=a.match or None, interval=a.interval, login_only=a.login_only)

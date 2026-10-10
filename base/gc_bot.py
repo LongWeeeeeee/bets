@@ -16,7 +16,10 @@ logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %
 log = logging.getLogger("gc_bot")
 log.setLevel(logging.INFO)
 
-STEAM_API_KEY = "4C5768B425A5FBDCE3C04C67815BAAD4"
+try:
+    from keys import STEAM_API_KEY  # untracked base/keys.py (repo is public: no literal here)
+except ImportError:
+    from base.keys import STEAM_API_KEY
 GAME_STATES = {0:"INIT",1:"LOADING",2:"DRAFT",3:"STRATEGY",4:"PRE_GAME",5:"IN_GAME",6:"POST_GAME"}
 
 with open("/Users/alex/Documents/ingame/base/hero_features_processed.json") as _f:
