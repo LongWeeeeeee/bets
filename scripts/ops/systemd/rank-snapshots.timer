@@ -1,0 +1,11 @@
+[Unit]
+Description=Valve rank snapshot slots 06/09/12/15/18 UTC (a slot after a complete snapshot for the UTC day is a no-op)
+
+[Timer]
+# UTC explicitly: the runner's lost-day threshold (LAST_SLOT_UTC_HOUR=18) is the last slot here.
+OnCalendar=*-*-* 06,09,12,15,18:00:00 UTC
+Persistent=true
+Unit=rank-snapshots.service
+
+[Install]
+WantedBy=timers.target

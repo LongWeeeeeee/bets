@@ -847,6 +847,7 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 **Артефакт: `data/prematch_model_artifact_v3.npz`** (env `PREMATCH_ARTIFACT`). Именно v3, а не v2: цепочка сборки `build_prematch_artifact.py` → `_v2.py` → `add_org_identity.py`, и последний шаг добавляет опознание организации по составу. Раннер — `scripts/run/rebuild_prematch_snapshot.sh` (собирает локально, доставляет на serv1 атомарным переименованием).
 
 **Ночная цепочка про-корпуса на двух машинах** (с 03.10.2026, board ingame-loel). Одни и те же скрипты работают в двух режимах через общую обвязку `scripts/run/lib_pro_chain.sh` (подключается `source`):
+- **С 10.10.2026 на Маке сбора нет** (владелец: «убери любой сбор с мака», карточка ingame-qe6y): джоба launchd `com.ingame.pro-corpus-topup` снята (плист перенесён в резервную копию, `scripts/ops/install-pro-corpus-topup.sh` без `INGAME_ALLOW_MAC_COLLECTION=1` отказывает), добор и доставку делает только serv1 (`pro-chain-nightly.timer`, корпус `/root/pro_chain/pro_heroes_data/json_parts_split_from_object/*.json.gz`). Локальный корпус Мака (`pro_heroes_data/json_parts_split_from_object/*.json`) больше не растёт; его нумерация частей разошлась с serv1 после 16.09 (одинаковое имя части ≠ одинаковые карты), поэтому части serv1 в локальный каталог не подмешивать — для свежих данных копировать каталог serv1 целиком в отдельный.
 - `PRO_CHAIN_MODE=remote` (Мак, автоопределение: нет `/root/main/.git`) — дерево сборки = этот checkout, прод = `serv1:/root/main` по ssh/scp; поведение как до переноса (тест `tests/test_pro_chain_rebuild_shell.py` сверяет шаги и доставки с исходным скриптом).
 - `PRO_CHAIN_MODE=local` (serv1) — дерево сборки `/root/pro_chain` (git worktree), прод `PROD_ROOT=/root/main` на той же машине; доставка `prod_stage`/`prod_commit` = cp в `.tmp` + сверка sha1 + mv. `pro_chain_guard` выходит с кодом 2, если дерево сборки совпадает с боевым.
 - `PRO_CHAIN_SHADOW=1` — собрать всё, не доставить ничего (ни записи под `PROD_ROOT`, ни перебазировки ELO, ни systemctl); несостоявшиеся доставки пишутся в `PRO_CHAIN_SUMMARY` (TSV путь/sha1/байт). Добор в тени пропускается (квота OpenDota), если не задан `PRO_CHAIN_SHADOW_TOPUP=1`.
@@ -2297,16 +2298,27 @@ SHA256; `verify_snapshot(path)` reparses the retained source and compares fields
 Valve does not expose account IDs: these archives explicitly retain unresolved
 identity and are not directly accepted as account-bound ML metadata. Tied ranks
 and duplicate nicknames are retained, never silently resolved by name/country.
-Daily schedule: `scripts/run/collect_rank_snapshots.sh` (launchd `com.ingame.rank-snapshots`, slots
-09/12/15/18/21 local = 06–18 UTC, installed by `scripts/ops/install-rank-snapshots.sh`) skips when a
-complete snapshot for the current UTC date exists, otherwise waits for the network (curl www.dota2.com,
-up to 20×30 s) and runs the collector up to 3 times (120 s apart) into
-`runtime/artifacts/misc/rank_snapshots/` (log `collect_<YYYYMMDD UTC>.log`). Success sends a ✅ admin
-line; a failure before 18:00 UTC only logs `deferred` (a later slot retries), a failure at/after 18:00
-UTC sends ⚠️ (the day is lost); every run first checks the previous UTC day and sends one ⚠️ if it has no complete snapshot (marker `.lost_alerted_<date>`, written only after `notify_admin: ok`, so an alert that failed in a DarkWake is retried); the run's UTC date and hour are fixed at its start, so a run that sleeps across 00 UTC reports its start day, so a slot caught up after 00 UTC still reports the loss. Why (ingame-qe6y): 07, 08 and 10.10.2026 the single 09:00 run fired in a
-battery DarkWake without network; 07 and 08.10 are lost. Test seams `RANK_SNAPSHOT_*`
-(`base/tests/test_collect_rank_snapshots_runner.py`). It replaced the Codex
-heartbeat automation `dota-2`, which stopped on 22.09.2026 (model 403, then the Codex app closed).
+Daily schedule (since 10.10.2026 on serv1 only; owner: no collection on the Mac): systemd
+`rank-snapshots.timer` (slots 06/09/12/15/18 UTC, `Persistent=true`) starts `rank-snapshots.service`
+(Nice 19, CPUWeight 10, idle IO, MemoryMax 1G) → `scripts/run/collect_rank_snapshots.sh`; units in
+`scripts/ops/systemd/`, installed by `scripts/ops/install-rank-snapshots.sh` (run on serv1; refuses on
+macOS). Archive: `/root/main/runtime/artifacts/misc/rank_snapshots/` (the Mac archive up to 10.10 was
+copied there, sha256 equal; log `collect_<YYYYMMDD UTC>.log`). The runner finds the repo root from its
+own path and uses `venv_catboost` if present, else `venv`. It skips when a complete snapshot for the
+run's start UTC date exists; otherwise it waits for the network (curl www.dota2.com, up to 20 checks × (15 s curl + 30 s)) and runs the collector up to 3 times (120 s apart,
+each capped at `RANK_SNAPSHOT_COLLECT_TIMEOUT`=300 s via `timeout`, or perl `alarm` on macOS;
+admin-chat sends capped at `RANK_SNAPSHOT_NOTIFY_TIMEOUT`=60 s; unit
+`TimeoutStartSec=4500`), stopping at the first complete snapshot for the start
+date (or the current date after 00 UTC). Success sends a silent ✅ admin line. A failure before 18:00
+UTC only logs `deferred` (a later slot retries). A failure at/after 18:00 UTC sends ⚠️ (the day is
+lost). Every run first checks the previous UTC day and sends one ⚠️ if that day has no complete
+snapshot (marker `.lost_alerted_<date>`, written only after `notify_admin: ok`, so an undelivered alert
+is retried). The run's UTC date and hour are read once at its start, so a run that ends after 00 UTC
+reports its start day. Why (ingame-qe6y): 24.09–10.10 the job ran under launchd on the Mac, and on 07,
+08 and 10.10 the 09:00 run fired in a battery DarkWake without network; 07 and 08.10 are lost. Test
+seams `RANK_SNAPSHOT_*` (`base/tests/test_collect_rank_snapshots_runner.py`). Before 24.09 the Codex
+heartbeat automation `dota-2` collected (stopped 22.09: model 403, then the Codex app closed; paused
+10.10).
 
 User-authorized offline approximation: `PlayerHistory.features(...,
 time_policy="calendar_period")` / export `--time-policy calendar_period` uses

@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- СНЯТО 10.10.2026: сбор рангов перенесён на serv1 (systemd rank-snapshots.timer,
+         scripts/ops/systemd/, установка scripts/ops/install-rank-snapshots.sh на serv1).
+         Владелец: «убери любой сбор с мака ранги в том числе пусть парсятся с serv1».
+         На Mac этот плист больше не ставить; копия снятой джобы — в
+         runtime/artifacts/misc/rank_snapshots_fix_20261010/. -->
     <key>Label</key>
     <string>com.ingame.rank-snapshots</string>
     <!-- Ежедневный снимок региональных лидербордов Valve (ingame-enwj).

@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- СНЯТО 10.10.2026: добор про-корпуса на Mac выключен. Владелец: «убери любой сбор
+         с мака». Тот же добор каждую ночь делает serv1 (pro-chain-nightly.timer 03:02 MSK,
+         scripts/pro_chain/pro_nightly_chain.sh, корпус /root/pro_chain/pro_heroes_data);
+         прод питается им с 07.10. Свежий корпус для исследований на Mac — копировать с serv1.
+         Этот плист на Mac больше не ставить (install-pro-corpus-topup.sh отказывает). -->
     <key>Label</key>
     <string>com.ingame.pro-corpus-topup</string>
     <!-- Ночной добор свежих про-карт в корпус.

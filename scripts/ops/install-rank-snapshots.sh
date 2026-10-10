@@ -1,27 +1,30 @@
 #!/bin/bash
-# Ставит ежедневный снимок лидербордов Valve в расписание launchd (замена автоматизации
-# Codex «dota-2», которая молча встала 22.09.2026; подробности в шапке
-# scripts/run/collect_rank_snapshots.sh).
+# Ставит ежедневный снимок лидербордов Valve в расписание systemd на serv1 (запускать НА
+# serv1 под root). С 10.10.2026 сбор идёт только на serv1 — владелец: «убери любой сбор с
+# мака ранги в том числе пусть парсятся с serv1» (карточка ingame-qe6y). Прежняя джоба
+# launchd com.ingame.rank-snapshots на Mac снята; подробности в шапке
+# scripts/run/collect_rank_snapshots.sh.
 #
-# launchd читает копию из ~/Library/LaunchAgents: плист в репозитории сам ничего не
-# планирует. /bin/bash должен иметь «Полный доступ к диску» (у остальных com.ingame.*
-# он уже есть), иначе джоба молча падает с exit 126.
+# Слоты 06/09/12/15/18 UTC; слот после полного снимка за сутки UTC ничего не делает.
+# Лог прогона: /root/main/runtime/artifacts/misc/rank_snapshots/collect_<YYYYMMDD UTC>.log
+# Разовый прогон: systemctl start rank-snapshots.service
+# Снять:          systemctl disable --now rank-snapshots.timer
 set -eu
-REPO=/Users/alex/Documents/ingame
-LABEL=com.ingame.rank-snapshots
-SRC="$REPO/scripts/ops/$LABEL.plist"
-DST="$HOME/Library/LaunchAgents/$LABEL.plist"
-cp "$SRC" "$DST"
-plutil -lint "$DST" >/dev/null
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$DST"
-launchctl print "gui/$(id -u)/$LABEL" | grep -E "state|program|runs" | head -5
-
-echo
-echo "поставлено: $LABEL, ежедневно в 09:00; повтор в те же сутки UTC пропускается"
-echo "разовый прогон:  launchctl kickstart gui/$(id -u)/$LABEL"
-echo "снять:           launchctl bootout gui/$(id -u)/$LABEL"
-echo "лог прогона:     runtime/artifacts/misc/rank_snapshots/collect_<YYYYMMDD UTC>.log"
-echo "прежнюю автоматизацию Codex «dota-2» стоит выключить в приложении Codex, чтобы при"
-echo "его запуске она не дублировала сбор (дубль безвреден: скрипт и heartbeat проверяют"
-echo "наличие снимка за сутки UTC)."
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "install-rank-snapshots.sh: только serv1 (Linux). На Mac сбор снят 10.10.2026." >&2
+  exit 1
+fi
+REPO=/root/main
+mkdir -p "$REPO/runtime/artifacts/misc/rank_snapshots"
+# Проверка до копирования: битый юнит не должен попасть в /etc/systemd/system, где его
+# подхватил бы чужой daemon-reload (hard-verifier 10.10 INFO).
+systemd-analyze verify "$REPO/scripts/ops/systemd/rank-snapshots.service" "$REPO/scripts/ops/systemd/rank-snapshots.timer"
+install -m 0644 "$REPO/scripts/ops/systemd/rank-snapshots.service" /etc/systemd/system/rank-snapshots.service
+install -m 0644 "$REPO/scripts/ops/systemd/rank-snapshots.timer" /etc/systemd/system/rank-snapshots.timer
+systemctl daemon-reload
+systemctl enable --now rank-snapshots.timer
+# Первое включение без сохранённой отметки ждёт следующего слота (Persistent=true
+# догоняет только пропущенное после первой отметки) — сразу один прогон в фоне;
+# если за сегодня UTC полный снимок уже есть, он только пишет «skip:» в лог.
+systemctl start --no-block rank-snapshots.service
+systemctl list-timers rank-snapshots.timer --no-pager | head -3

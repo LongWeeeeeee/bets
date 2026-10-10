@@ -9,6 +9,13 @@
 # ТРЕБУЕТСЯ РАЗОВО: `/bin/bash` в списке «Полный доступ к диску». Без него агент
 # launchd не может прочитать скрипт в ~/Documents (TCC, exit 126), причём промпт
 # macOS фоновым агентам не показывает — отказ молчаливый.
+# СНЯТО 10.10.2026 (владелец: «убери любой сбор с мака», карточка ingame-qe6y): добор
+# про-корпуса делает только serv1 (pro-chain-nightly.timer). Вернуть на Mac — только по
+# решению владельца: INGAME_ALLOW_MAC_COLLECTION=1 bash scripts/ops/install-pro-corpus-topup.sh
+if [ "${INGAME_ALLOW_MAC_COLLECTION:-0}" != "1" ]; then
+  echo "install-pro-corpus-topup.sh: сбор на Mac снят 10.10.2026; добор идёт на serv1 (pro-chain-nightly.timer)." >&2
+  exit 1
+fi
 set -eu
 REPO=/Users/alex/Documents/ingame
 LABEL=com.ingame.pro-corpus-topup

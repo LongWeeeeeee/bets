@@ -2,31 +2,41 @@
 # Ежедневный снимок четырёх региональных лидербордов Valve (europe/se_asia/americas/china)
 # для исследования рангов игроков (карточка ingame-enwj, E-295).
 #
-# Зачем отдельная джоба launchd. До 24.09.2026 снимки собирала автоматизация Codex
-# «dota-2» (heartbeat в 09:00, ~/.codex/automations/dota-2). Она молча перестала
-# работать: 22.09 запрос к модели треда вернул 403 Forbidden, и ход кончился без вызова
-# сборщика; с 23.09 приложение Codex закрыто, и heartbeat не срабатывает вовсе.
-# Снимков за 22–23.09 нет и не будет: Valve отдаёт только текущую таблицу.
-# Сбору не нужен LLM-агент — достаточно одного вызова python.
+# Где работает. С 10.10.2026 — только на serv1 (владелец: «убери любой сбор с мака ранги в
+# том числе пусть парсятся с serv1»): systemd rank-snapshots.timer, слоты 06/09/12/15/18 UTC,
+# юниты scripts/ops/systemd/rank-snapshots.{service,timer}, установка
+# scripts/ops/install-rank-snapshots.sh (на serv1). Архив перенесён туда же:
+# /root/main/runtime/artifacts/misc/rank_snapshots (22 снимка до 10.10 включительно).
 #
-# DarkWake (карточка ingame-qe6y, 10.10.2026). 07, 08 и 10.10 прогон 09:00 стартовал
-# в тёмном пробуждении Mac на батарее (pmset: «DarkWake from Deep Idle … Using BATT»,
-# обратно в сон через ~2 с): DNS/TLS падали (gaierror, SSLEOFError), сборщик звался
-# один раз, 07 и 08.10 потеряны навсегда, и их тревоги не ушли по той же мёртвой сети.
-# Теперь: (1) ждём сеть до RANK_SNAPSHOT_NET_TRIES×RANK_SNAPSHOT_NET_SLEEP секунд;
+# История. До 24.09.2026 снимки собирала автоматизация Codex «dota-2» (heartbeat в 09:00);
+# 22.09 запрос к модели вернул 403, с 23.09 приложение Codex закрыто — снимков за 22–23.09
+# нет и не будет (Valve отдаёт только текущую таблицу). 24.09–10.10 сбор шёл джобой launchd
+# на Mac; 07, 08 и 10.10 её прогон 09:00 стартовал в тёмном пробуждении Mac на батарее
+# (pmset: «DarkWake from Deep Idle … Using BATT», сна через ~2 с): DNS/TLS падали,
+# 07 и 08.10 потеряны (карточка ingame-qe6y). Отсюда устойчивость прогона, которая
+# осталась и на serv1:
+# (1) ждём сеть до RANK_SNAPSHOT_NET_TRIES×RANK_SNAPSHOT_NET_SLEEP секунд;
 # (2) до RANK_SNAPSHOT_ATTEMPTS попыток сборщика с паузой RANK_SNAPSHOT_RETRY_SLEEP;
-# (3) launchd зовёт скрипт в 09/12/15/18/21 по местному времени (MSK = UTC+3,
-# т.е. 06/09/12/15/18 UTC); (4) провал до 18:00 UTC — только строка в логе
-# («deferred»): следующий слот тех же суток UTC повторит сбор. Тревога — только когда
-# слотов в этих сутках UTC больше нет и снимок за день потерян.
+# (3) провал до 18:00 UTC — только строка в логе («deferred»): следующий слот тех же суток
+# UTC повторит сбор. Тревога — только когда слотов в этих сутках UTC больше нет и снимок
+# за день потерян.
 #
-# Повторный запуск в те же сутки UTC ничего не делает: если за текущую дату UTC уже
+# Повторный запуск в те же сутки UTC ничего не делает: если за дату старта (UTC) уже
 # есть collection.json с complete=true, сборщик не зовётся.
-# Тишина ≠ успех: успех и потерянный день — строка в админ-чат (scripts/ops/notify_admin.py).
+# Тишина ≠ успех: успех и потерянный день — строка в админ-чат (scripts/ops/notify_admin.py,
+# без звука с 10.10.2026).
 # Переменные RANK_SNAPSHOT_* — швы для теста base/tests/test_collect_rank_snapshots_runner.py.
 set -u
-cd /Users/alex/Documents/ingame
-PY=venv_catboost/bin/python3
+# Корень репозитория — от места скрипта, а не зашитый путь Mac (на serv1 это /root/main).
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 1
+# Интерпретатор: venv_catboost на Mac, venv на serv1 (python 3.12).
+if [ -n "${RANK_SNAPSHOT_PY:-}" ]; then
+  PY=$RANK_SNAPSHOT_PY
+elif [ -x venv_catboost/bin/python3 ]; then
+  PY=venv_catboost/bin/python3
+else
+  PY=venv/bin/python3
+fi
 OUT=${RANK_SNAPSHOT_OUT:-runtime/artifacts/misc/rank_snapshots}
 COLLECT_CMD=${RANK_SNAPSHOT_COLLECT_CMD:-$PY -m base.tools.collect_rank_snapshots}
 NOTIFY_CMD=${RANK_SNAPSHOT_NOTIFY_CMD:-$PY scripts/ops/notify_admin.py}
@@ -35,9 +45,17 @@ NET_TRIES=${RANK_SNAPSHOT_NET_TRIES:-20}
 NET_SLEEP=${RANK_SNAPSHOT_NET_SLEEP:-30}
 ATTEMPTS=${RANK_SNAPSHOT_ATTEMPTS:-3}
 RETRY_SLEEP=${RANK_SNAPSHOT_RETRY_SLEEP:-120}
-# Последний слот launchd — 21:00 MSK = 18:00 UTC; провал в нём или позже = день потерян.
-# Допущение: часовой пояс Mac — MSK (UTC+3, без перехода на летнее время). При смене
-# пояса поправить порог или слоты plist; страховка — проверка вчерашних суток в начале.
+# Потолок одной попытки сборщика (astra 10.10, MEDIUM): timeout=30 в сборщике ограничивает
+# ожидание каждого чтения, а не всю загрузку; зависший ответ иначе держал бы юнит до
+# TimeoutStartSec и съедал оставшиеся попытки. Обычный сбор четырёх регионов — секунды.
+COLLECT_TIMEOUT=${RANK_SNAPSHOT_COLLECT_TIMEOUT:-300}
+# Потолок одной отправки в админ-чат (astra 10.10, MEDIUM раунда 2): timeout=20 в
+# notify_admin.py — на каждую операцию сокета, а не на весь ответ; тревога за вчера
+# шлётся ДО сбора, и зависшая отправка не должна съесть слот.
+NOTIFY_TIMEOUT=${RANK_SNAPSHOT_NOTIFY_TIMEOUT:-60}
+# Последний слот таймера — 18:00 UTC (OnCalendar задан в UTC, от пояса serv1 не зависит);
+# провал в нём или позже = день потерян. Меняешь слоты rank-snapshots.timer — поправь порог
+# (тест сверяет их); страховка — проверка вчерашних суток в начале прогона.
 LAST_SLOT_UTC_HOUR=${RANK_SNAPSHOT_LAST_SLOT_UTC_HOUR:-18}
 mkdir -p "$OUT"
 LOG="$OUT/collect_$(date -u +%Y%m%d).log"
@@ -51,10 +69,12 @@ day = (dt.date.fromisoformat(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2]
 for f in glob.glob(sys.argv[1] + "/*/collection.json"):
     try:
         j = json.load(open(f))
+        t = j.get("started_at")
+        # Битый started_at в одном файле не должен ронять разбор всего архива (hard-verifier 10.10 INFO).
+        d = dt.datetime.fromtimestamp(float(t), dt.timezone.utc).date() if t else None
     except Exception:
         continue
-    t = j.get("started_at")
-    if j.get("complete") is True and t and dt.datetime.fromtimestamp(float(t), dt.timezone.utc).date() == day:
+    if j.get("complete") is True and d == day:
         print(f)
         break
 EOF
@@ -67,12 +87,12 @@ have_complete_today() { have_complete_on "$(date -u +%F)"; }
 # «notify_admin: ok» (astra 10.10: маркер тревоги ставился и при упавшей отправке).
 notify() {
   local out
-  out=$($NOTIFY_CMD 2>&1)
+  out=$(run_bounded "$NOTIFY_TIMEOUT" $NOTIFY_CMD 2>&1)
   echo "$out"
   echo "$out" | grep -q "notify_admin: ok"
 }
 
-# Страховка (hard-verifier 10.10, LOW a/b): если слот 21:00 проспан и launchd догнал
+# Страховка (hard-verifier 10.10, LOW a/b): если последний слот проспан и таймер догнал
 # его уже после 00:00 UTC, провал «сегодняшнего» прогона не скажет, что вчерашние сутки
 # потеряны. Поэтому каждый прогон сначала проверяет вчерашние сутки UTC: нет полного
 # снимка и тревоги о нём ещё не было -> одна строка ⚠️ и маркер .lost_alerted_<дата>.
@@ -89,6 +109,18 @@ alert_lost_yesterday() {
   return 0
 }
 
+# Запустить команду с потолком времени: coreutils timeout на serv1, perl alarm на macOS
+# (там timeout нет). По истечении процесс получает SIGTERM/SIGALRM, код != 0.
+run_bounded() {
+  local secs=$1
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  else
+    perl -e '$t = shift @ARGV; alarm $t; exec @ARGV or die "exec: $!"' "$secs" "$@"
+  fi
+}
+
 wait_network() {
   local i
   for ((i = 1; i <= NET_TRIES; i++)); do
@@ -103,12 +135,14 @@ wait_network() {
 }
 
 run_collect() {
-  # Час старта, а не конца: прогон, уснувший вместе с Mac и проснувшийся после 18 UTC,
-  # не должен объявлять сутки потерянными, пока слот 21:00 ещё впереди.
-  # Дата и час фиксируются вместе (astra 10.10): прогон, начатый в 18 UTC и уснувший до
-  # 01 UTC, должен назвать потерянными сутки старта, а не следующие.
-  local start_utc_hour=${RANK_SNAPSHOT_UTC_HOUR:-$(date -u +%H)}
-  local start_utc_date=${RANK_SNAPSHOT_UTC_DATE:-$(date -u +%F)}
+  # Час старта, а не конца: прогон, затянувшийся за 18 UTC, не должен объявлять сутки
+  # потерянными, пока последний слот ещё впереди.
+  # Дата и час фиксируются вместе и одним вызовом date (astra 10.10, hard-verifier LOW):
+  # прогон, начатый в 18 UTC и закончившийся после 00 UTC, называет сутки старта.
+  local now_utc_date now_utc_hour
+  read -r now_utc_date now_utc_hour <<<"$(date -u '+%F %H')"
+  local start_utc_hour=${RANK_SNAPSHOT_UTC_HOUR:-$now_utc_hour}
+  local start_utc_date=${RANK_SNAPSHOT_UTC_DATE:-$now_utc_date}
   alert_lost_yesterday "$start_utc_date"
   local have
   have=$(have_complete_on "$start_utc_date")
@@ -123,9 +157,15 @@ run_collect() {
       rc=75
     else
       rc=0
-      $COLLECT_CMD --output "$OUT" || rc=$?
+      run_bounded "$COLLECT_TIMEOUT" $COLLECT_CMD --output "$OUT" || rc=$?
       echo "attempt $attempt: collect_exit=$rc"
-      [ -n "$(have_complete_today)" ] && break
+      # Полный снимок за сутки старта (или за текущие, если прогон перешёл 00 UTC) — готово.
+      # Раньше смотрели только текущие сутки: снимок, снятый до 00 UTC, а проверенный после,
+      # не засчитывался, и удачный сбор объявлялся потерянным (hard-verifier 10.10 LOW).
+      if [ -n "$(have_complete_on "$start_utc_date")" ] || [ -n "$(have_complete_today)" ]; then
+        rc=0
+        break
+      fi
       [ "$rc" -eq 0 ] && rc=1
     fi
     [ "$attempt" -lt "$ATTEMPTS" ] && sleep "$RETRY_SLEEP"
@@ -154,7 +194,7 @@ EOF
   fi
   [ "$rc" -eq 0 ] && rc=1
   if [ "$((10#$start_utc_hour))" -lt "$LAST_SLOT_UTC_HOUR" ]; then
-    echo "deferred: $ATTEMPTS attempts failed (started ${start_utc_hour}h UTC); a later launchd slot today retries, no alert"
+    echo "deferred: $ATTEMPTS attempts failed (started ${start_utc_hour}h UTC); a later timer slot today retries, no alert"
   elif [ -e "$OUT/.lost_alerted_$start_utc_date" ]; then
     echo "lost-day alert for $start_utc_date already delivered; no duplicate"
   else
@@ -164,8 +204,8 @@ EOF
   return "$rc"
 }
 
-# Под launchd работать в переднем плане: ушедший в фон скрипт launchd сочтёт завершённым
-# и убьёт группу процессов (та же развилка, что в topup_pro_corpus.sh).
+# Под systemd (Type=oneshot) работать в переднем плане: ушедший в фон процесс systemd убьёт
+# вместе с cgroup юнита, как только главный процесс выйдет.
 if [ -t 1 ]; then
   run_collect >> "$LOG" 2>&1 &
   echo "сбор запущен в фоне, PID $!, лог: $LOG"

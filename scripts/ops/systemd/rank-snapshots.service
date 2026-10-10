@@ -1,0 +1,23 @@
+[Unit]
+Description=Valve regional rank leaderboard snapshot (ingame-enwj/E-295; moved from the Mac to serv1 10.10.2026, card ingame-qe6y)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/main
+Environment=HOME=/root
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Foreground runner: a backgrounded child would be killed with the unit cgroup on exit.
+ExecStart=/bin/bash /root/main/scripts/run/collect_rank_snapshots.sh
+# serv1 is prod-first (owner 08.10.2026): lowest priority, small memory cap; 4 HTTP GETs a day.
+Nice=19
+CPUWeight=10
+IOSchedulingClass=idle
+MemoryHigh=512M
+MemoryMax=1G
+MemorySwapMax=0
+OOMScoreAdjust=1000
+# Худший случай: 3 попытки × (20 проверок сети × (15 с curl + 30 с) + 300 с сборщика)
+# + 2 паузы × 120 с + 2 отправки в чат × 60 с = 3960 с; 4500 с — с запасом (astra 10.10).
+TimeoutStartSec=4500
