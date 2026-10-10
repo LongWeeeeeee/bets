@@ -141,7 +141,13 @@ SHA точных входных журналов. До ≥300 enrolled за ≥3
 > состав YACHE123 с 02.10.2026: Fortunes 457637739, Krish 349495318, Seimei
 > 242835570, Tsukimoto 285319482, Ace12 274078636), reason
 > `skip_player_denylist`, по составу стороны ставки, лог «игрок из denylist
-> (<имена>)»; команда —
+> (<имена>)»; с 10.10.2026 (ingame-h886) при импорте к нему добавляются
+> 19 126 игроков «мусорных» лиг из `data/player_denylist_junk_leagues.json`
+> (Destiny League, Mad Dogs League, AD2L, RD2L, IDL, League of Lads; метка
+> «<account_id> (<лига>)»), кроме `spared_serious` — 37 серьёзных про (≥30 карт
+> с 7.39 в allowlist-лигах: Topson, Saksa, Yuma…); откат
+> `PLAYER_DENYLIST_JUNK_LEAGUES=0`, путь `PLAYER_DENYLIST_JUNK_LEAGUES_PATH`,
+> нет файла — громкая строка «NOT loaded» и пустое дополнение; команда —
 > `SKIPPED_BET_TEAM_NAMES` / `SKIPPED_BET_TEAM_IDS` (Yangon Galacticos, team_id
 > 8944230/9546449, с 29.09.2026, reason `skip_team_denylist`): цель ставки — это
 > команда, названная в заголовке «СТАВКА НА …»; стороны radiant/dire и снимки

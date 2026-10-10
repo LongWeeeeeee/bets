@@ -5502,6 +5502,67 @@ def _normalize_player_account_id(raw_id: Any) -> int:
     return value if 0 < value < 2 ** 32 else 0
 
 
+# Junk-league regulars (owner 10.10.2026, card ingame-h886): every player with
+# a map in Destiny League, Mad Dogs League, AD2L, RD2L, IDL or League of Lads
+# (STRATZ league fetch, 257 leagues) joins the player denylist above, so bets
+# ON his team are blocked and bets on the opponent still go. Serious pros
+# (>=30 maps since 7.39 in allowlisted leagues: Topson, Saksa, Yuma, ...) are
+# listed under "spared_serious" and never banned. Rollback:
+# PLAYER_DENYLIST_JUNK_LEAGUES=0 (drop-in) and restart.
+JUNK_LEAGUE_PLAYER_DENYLIST_PATH = Path(
+    os.getenv("PLAYER_DENYLIST_JUNK_LEAGUES_PATH")
+    or (PROJECT_ROOT / "data" / "player_denylist_junk_leagues.json")
+)
+
+
+def _load_junk_league_player_denylist(path: Path, enabled: bool) -> Dict[int, str]:
+    """account_id -> log label from the junk-league data file; {} when off/broken."""
+    if not enabled:
+        print("ℹ️ junk-league player denylist off (PLAYER_DENYLIST_JUNK_LEAGUES=0)")
+        return {}
+    # Any malformed shape disables only this addition (loud line + one admin
+    # alert); it must never break the import of the live bot.
+    labels: Dict[int, str] = {}
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        families = payload["families"]
+        spared_raw = payload.get("spared_serious") or {}
+        if not isinstance(families, dict) or not isinstance(spared_raw, dict):
+            raise TypeError("families and spared_serious must be JSON objects")
+        spared = {_normalize_player_account_id(raw_id) for raw_id in spared_raw}
+        for family, raw_ids in sorted(families.items()):
+            if not isinstance(raw_ids, list):
+                raise TypeError(f"family {family!r} must be a list of account ids")
+            for raw_id in raw_ids:
+                account_id = _normalize_player_account_id(raw_id)
+                if account_id <= 0 or account_id in spared or account_id in labels:
+                    continue
+                labels[account_id] = f"{account_id} ({family})"
+    except (OSError, ValueError, AttributeError, TypeError, KeyError) as exc:
+        print(
+            f"⚠️ junk-league player denylist NOT loaded ({type(exc).__name__}): {path}"
+        )
+        _report_missing_runtime_file(
+            "junk-league player denylist", path, details=type(exc).__name__,
+        )
+        return {}
+    print(
+        f"🚫 junk-league player denylist: {len(labels)} players, "
+        f"{len(spared)} serious pros spared ({Path(path).name})"
+    )
+    return labels
+
+
+for _junk_account_id, _junk_label in _load_junk_league_player_denylist(
+    JUNK_LEAGUE_PLAYER_DENYLIST_PATH,
+    str(os.getenv("PLAYER_DENYLIST_JUNK_LEAGUES", "1")).strip().lower()
+    not in {"0", "false", "no", "off"},
+).items():
+    # Hand-picked names above keep their labels.
+    SKIPPED_PLAYER_NAMES.setdefault(_junk_account_id, _junk_label)
+    SKIPPED_PLAYER_ACCOUNT_IDS.add(_junk_account_id)
+
+
 def _target_side_skipped_player_hits(
     skipped_player_hits: Optional[Dict[str, List[int]]],
     target_side: Optional[str],

@@ -1,0 +1,70 @@
+{
+ "_capture": {
+  "date": "2026-10-10",
+  "lineups": "STRATZ match(id){leagueId players{steamAccountId isRadiant}} via runtime/experiments/misc/junk_players/lineups.py on serv1 (/root/pro_chain, nice 19) over the bet map ids of runtime/artifacts/star-dispatch/scoreboard_20261010/all_ids.json",
+  "team_names": "runtime/artifacts/star-dispatch/scoreboard_20261010/bets.jsonl (ml_dispatch decisions, delivered bets on these maps)",
+  "why": "9037351109 CDUB fields menace 871439294 (AD2L 41 / RD2L 112 / LoL 2 maps, 26 allowlisted pro maps); 9037218370 Amaru fields AMINN 184131721 (RD2L 4, 2 pro maps); 9022834804 OG fields Topson 94054712 (AD2L 15, 45 allowlisted pro maps: spared serious pro)"
+ },
+ "maps": {
+  "9037351109": {
+   "match_id": 9037351109,
+   "league_id": 20359,
+   "radiant_team_name": "NEW GROWTH",
+   "dire_team_name": "CDUB",
+   "radiant_player_ids": [
+    1131665504,
+    338769995,
+    138535219,
+    329589381,
+    131246802
+   ],
+   "dire_player_ids": [
+    205389770,
+    871439294,
+    70540189,
+    167291622,
+    250375405
+   ]
+  },
+  "9037218370": {
+   "match_id": 9037218370,
+   "league_id": 20359,
+   "radiant_team_name": "Belial Gaming",
+   "dire_team_name": "Amaru",
+   "radiant_player_ids": [
+    93317034,
+    1072085335,
+    181538301,
+    934879355,
+    109851300
+   ],
+   "dire_player_ids": [
+    317465188,
+    232763274,
+    403233811,
+    188558734,
+    184131721
+   ]
+  },
+  "9022834804": {
+   "match_id": 9022834804,
+   "league_id": 19102,
+   "radiant_team_name": "OG",
+   "dire_team_name": "BETBOOM TEAM",
+   "radiant_player_ids": [
+    100594231,
+    402583877,
+    181267255,
+    94054712,
+    355168766
+   ],
+   "dire_player_ids": [
+    172099728,
+    317880638,
+    165564598,
+    175311897,
+    196878136
+   ]
+  }
+ }
+}
